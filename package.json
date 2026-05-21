@@ -1,0 +1,28 @@
+{
+  "name": "orbit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-first chat control surface for coordinating Claude Code agents.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "test": "node --test --import tsx tests/mention-router.test.ts tests/message-store.test.ts tests/ansi-text-extractor.test.ts tests/turn-detector.test.ts tests/terminal-transcript-store.test.ts tests/claude-output-detector.test.ts",
+    "test:glob": "node --test --import tsx tests/*.test.ts",
+    "test:pty": "node tests/pty-shell.test.mjs"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.13"
+  }
+}

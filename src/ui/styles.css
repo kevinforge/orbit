@@ -1,0 +1,528 @@
+:root {
+  color: #18202a;
+  background: #f4f5f7;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
+  background: #ffffff;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px 14px;
+  border-right: 1px solid #dde1e7;
+  background: #f7f8fa;
+}
+
+.brandBlock {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.brandMark {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  color: #151a21;
+}
+
+.connection {
+  max-width: 88px;
+  overflow: hidden;
+  border: 1px solid #d6dbe2;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #5b6675;
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection.live {
+  border-color: #b8d7c1;
+  color: #1e6b3a;
+  background: #edf8f0;
+}
+
+.connection.offline {
+  border-color: #e4c4c4;
+  color: #a03838;
+  background: #fff1f1;
+}
+
+.agentList {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agentButton {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  grid-template-areas:
+    "dot text"
+    ". status";
+  gap: 4px 10px;
+  width: 100%;
+  min-height: 64px;
+  border: 1px solid #dce1e7;
+  border-radius: 8px;
+  padding: 10px;
+  color: #202834;
+  background: #ffffff;
+  text-align: left;
+}
+
+.agentButton:hover,
+.agentButton.selected {
+  border-color: #9aa8ba;
+  background: #f0f3f7;
+}
+
+.statusDot {
+  grid-area: dot;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #aab2bd;
+}
+
+.statusDot.idle {
+  background: #5dbb7f;
+}
+
+.statusDot.running,
+.statusDot.starting {
+  background: #f0b84b;
+}
+
+.statusDot.error,
+.statusDot.stopped {
+  background: #d45b5b;
+}
+
+.agentText {
+  grid-area: text;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agentText strong,
+.agentText small,
+.agentStatus {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentText strong {
+  font-size: 14px;
+}
+
+.agentText small,
+.agentStatus {
+  color: #687386;
+  font-size: 12px;
+}
+
+.agentStatus {
+  grid-area: status;
+}
+
+.channel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  background: #ffffff;
+}
+
+.channelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px 22px;
+  border-bottom: 1px solid #dde1e7;
+}
+
+.channelHeader h1,
+.eyebrow {
+  margin: 0;
+}
+
+.channelHeader h1 {
+  overflow: hidden;
+  color: #141a22;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eyebrow {
+  margin-bottom: 3px;
+  color: #6b7584;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.quickActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quickActions button,
+.composer > button {
+  min-height: 36px;
+  border: 1px solid #cfd6df;
+  border-radius: 7px;
+  padding: 0 12px;
+  color: #1e2631;
+  background: #ffffff;
+}
+
+.quickActions button:hover,
+.quickActions button.active,
+.composer > button:hover:not(:disabled) {
+  border-color: #9aa8ba;
+  background: #f3f5f8;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px;
+  background: #fbfcfd;
+}
+
+.emptyState {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #5f6c7c;
+  background: #ffffff;
+  line-height: 1.5;
+}
+
+.message {
+  max-width: min(760px, 88%);
+  min-width: 0;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #ffffff;
+}
+
+.message.user {
+  align-self: flex-end;
+  border-color: #cdd9e8;
+  background: #f2f6fb;
+}
+
+.message.agent {
+  align-self: flex-start;
+}
+
+.message.system {
+  align-self: center;
+  max-width: min(720px, 100%);
+  border-style: dashed;
+  color: #555f70;
+  background: #fafafa;
+}
+
+.messageMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 7px;
+  color: #697587;
+  font-size: 12px;
+}
+
+.messageMeta strong {
+  color: #222a35;
+}
+
+.messageMeta span {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #eef2f6;
+}
+
+.messageBody {
+  overflow-wrap: anywhere;
+  color: #18202a;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.plainText {
+  white-space: pre-wrap;
+}
+
+.markdown {
+  display: grid;
+  gap: 10px;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown p,
+.markdown ul {
+  margin: 0;
+}
+
+.markdown h1 {
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.markdown h2 {
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.markdown h3,
+.markdown h4 {
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.markdown ul {
+  padding-left: 20px;
+}
+
+.markdown li + li {
+  margin-top: 4px;
+}
+
+.markdown code {
+  border: 1px solid #d8dee7;
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: #273242;
+  background: #f3f6f9;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+
+.markdownTableWrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid #dfe4ea;
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  background: #f4f6f8;
+  font-weight: 700;
+}
+
+.composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px 22px;
+  border-top: 1px solid #dde1e7;
+  background: #ffffff;
+}
+
+.composerInputWrap {
+  position: relative;
+  min-width: 0;
+}
+
+.composer input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid #cfd6df;
+  border-radius: 7px;
+  padding: 0 12px;
+  color: #17202b;
+  background: #ffffff;
+  outline: none;
+}
+
+.composer input:focus {
+  border-color: #7f8fa4;
+  box-shadow: 0 0 0 3px #dce5f0;
+}
+
+.mentionMenu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  display: grid;
+  gap: 4px;
+  width: min(240px, 100%);
+  border: 1px solid #d6dce4;
+  border-radius: 8px;
+  padding: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgb(20 26 34 / 12%);
+}
+
+.mentionMenu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 9px;
+  color: #1e2631;
+  background: transparent;
+  text-align: left;
+}
+
+.mentionMenu button:hover,
+.mentionMenu button.selected {
+  background: #f0f3f7;
+}
+
+.mentionMenu small {
+  color: #687386;
+  font-size: 12px;
+}
+
+.composer > button {
+  min-width: 0;
+  color: #ffffff;
+  border-color: #202936;
+  background: #202936;
+}
+
+.composer button:hover:not(:disabled) {
+  color: #ffffff;
+  border-color: #111820;
+  background: #111820;
+}
+
+@media (max-width: 860px) {
+  body {
+    overflow: auto;
+  }
+
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100vh;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #dde1e7;
+  }
+
+  .agentList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .channelHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .quickActions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .message {
+    max-width: 100%;
+  }
+
+  .composer {
+    grid-template-columns: 1fr;
+  }
+}
