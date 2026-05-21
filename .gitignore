@@ -1,0 +1,14 @@
+node_modules/
+dist/
+output/
+.local/
+
+.env
+.env.*
+*.log
+
+spikes/
+
+coverage/
+.DS_Store
+Thumbs.db
