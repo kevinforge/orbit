@@ -35,3 +35,39 @@ test("list returns messages in insertion order as a copy", () => {
 
   assert.deepEqual(store.list().map((message) => message.content), ["one", "two"]);
 });
+
+test("get returns message by id or null", () => {
+  const store = new MessageStore();
+  const msg = store.append({ kind: "user", content: "hello" });
+
+  assert.equal(store.get(msg.id)?.content, "hello");
+  assert.equal(store.get("nonexistent"), null);
+});
+
+test("markRouteState updates route state and returns the message", () => {
+  const store = new MessageStore();
+  const msg = store.append({ kind: "user", content: "@agent1 hello" });
+
+  const updated = store.markRouteState(msg.id, "routed");
+  assert.equal(updated?.routeState, "routed");
+  assert.equal(store.get(msg.id)?.routeState, "routed");
+});
+
+test("markRouteState returns null for unknown id", () => {
+  const store = new MessageStore();
+  assert.equal(store.markRouteState("nonexistent", "routed"), null);
+});
+
+test("append preserves routing metadata", () => {
+  const store = new MessageStore();
+  const msg = store.append({
+    kind: "agent",
+    agentId: "agent1",
+    content: "done",
+    parentMessageId: "msg_000000",
+    routeDepth: 2,
+  });
+
+  assert.equal(msg.parentMessageId, "msg_000000");
+  assert.equal(msg.routeDepth, 2);
+});
