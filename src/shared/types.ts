@@ -13,6 +13,8 @@ export type ChatMessageKind = "user" | "agent" | "system";
 
 export type ChatMessageStatus = "sent" | "running" | "done" | "error";
 
+export type MessageRouteState = "unprocessed" | "ignored" | "routed" | "blocked";
+
 export type ChatMessage = {
   id: string;
   kind: ChatMessageKind;
@@ -21,6 +23,9 @@ export type ChatMessage = {
   createdAt: string;
   status?: ChatMessageStatus;
   runId?: string;
+  parentMessageId?: string;
+  routeState?: MessageRouteState;
+  routeDepth?: number;
 };
 
 export type NewChatMessage = Omit<ChatMessage, "id" | "createdAt"> & {

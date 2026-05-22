@@ -88,14 +88,12 @@ export function App() {
       return;
     }
 
-    const routedContent = startsWithKnownMention(trimmed) ? trimmed : `@${selectedAgent} ${trimmed}`;
-
     setIsSending(true);
     try {
       const response = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: routedContent }),
+        body: JSON.stringify({ content: trimmed }),
       });
 
       if (!response.ok) {
@@ -466,10 +464,6 @@ function normalizeState(nextState: AppState): AppState {
       agent2: "",
     },
   };
-}
-
-function startsWithKnownMention(value: string): boolean {
-  return /^@agent[12]\b/.test(value);
 }
 
 function findMentionDraft(value: string, cursorIndex: number): { start: number; end: number; query: string } | null {

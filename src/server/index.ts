@@ -1,15 +1,16 @@
 import http from "node:http";
 
 import { AgentRegistry } from "../core/agent-registry.ts";
+import { ChannelRouter } from "../core/channel-router.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { MessageStore } from "../core/message-store.ts";
-import { routeMention } from "../core/mention-router.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import type { AgentId } from "../shared/types.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 
 const AGENT_IDS = ["agent1", "agent2"] as const;
+const MAX_ROUTE_DEPTH = 5;
 const port = Number(process.env.ORBIT_PORT ?? 4317);
 
 const eventBus = new EventBus();
@@ -26,6 +27,61 @@ eventBus.subscribe((event) => {
 });
 
 agents.startAll();
+
+const channelRouter = new ChannelRouter({
+  availableAgents: AGENT_IDS,
+  maxRouteDepth: MAX_ROUTE_DEPTH,
+  createSystemMessage(content: string, parentMessageId?: string) {
+    const msg = messages.add({ kind: "system", content, status: "done", parentMessageId });
+    eventBus.publish({ type: "message.created", message: msg });
+    return msg;
+  },
+  startAgentRun(agentId: AgentId, prompt: string, sourceMessage) {
+    const runId = createRunId(agentId);
+    const routeDepth = (sourceMessage.routeDepth ?? 0) + 1;
+
+    const agentMessage = messages.add({
+      kind: "agent",
+      agentId,
+      runId,
+      content: `${getAgentLabel(agentId)} 正在处理...`,
+      status: "running",
+      parentMessageId: sourceMessage.id,
+      routeDepth,
+    });
+    eventBus.publish({ type: "message.created", message: agentMessage });
+
+    void agents
+      .get(agentId)
+      .send(runId, prompt)
+      .then((result) => {
+        const updated = messages.update(agentMessage.id, {
+          content: result,
+          status: "done",
+        });
+        eventBus.publish({ type: "message.updated", message: updated });
+        eventBus.publish({
+          type: "run.completed",
+          agentId,
+          runId,
+          resultMessageId: updated.id,
+        });
+        channelRouter.process(updated);
+      })
+      .catch((error: unknown) => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const updated = messages.update(agentMessage.id, {
+          content: `${getAgentLabel(agentId)} 执行失败：${errorMessage}`,
+          status: "error",
+        });
+        eventBus.publish({ type: "message.updated", message: updated });
+        eventBus.publish({ type: "run.failed", agentId, runId, error: errorMessage });
+      });
+  },
+  markMessageRouted(messageId: string, routeState) {
+    messages.markRouteState(messageId, routeState);
+  },
+});
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -88,50 +144,9 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   const userMessage = messages.add({ kind: "user", content, status: "sent" });
   eventBus.publish({ type: "message.created", message: userMessage });
 
-  const route = routeMention(content, AGENT_IDS);
-  if (!route.ok) {
-    const systemMessage = messages.add({ kind: "system", content: route.message, status: "done" });
-    eventBus.publish({ type: "message.created", message: systemMessage });
-    sendJson(res, 200, { ok: false, message: route.message });
-    return;
-  }
+  channelRouter.process(userMessage);
 
-  const runId = createRunId(route.agentId);
-  const agentMessage = messages.add({
-    kind: "agent",
-    agentId: route.agentId,
-    runId,
-    content: `${getAgentLabel(route.agentId)} 正在处理...`,
-    status: "running",
-  });
-  eventBus.publish({ type: "message.created", message: agentMessage });
-  sendJson(res, 202, { ok: true, runId, messageId: agentMessage.id });
-
-  void agents
-    .get(route.agentId)
-    .send(runId, route.prompt)
-    .then((result) => {
-      const updated = messages.update(agentMessage.id, {
-        content: result,
-        status: "done",
-      });
-      eventBus.publish({ type: "message.updated", message: updated });
-      eventBus.publish({
-        type: "run.completed",
-        agentId: route.agentId,
-        runId,
-        resultMessageId: updated.id,
-      });
-    })
-    .catch((error: unknown) => {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const updated = messages.update(agentMessage.id, {
-        content: `${getAgentLabel(route.agentId)} 执行失败：${errorMessage}`,
-        status: "error",
-      });
-      eventBus.publish({ type: "message.updated", message: updated });
-      eventBus.publish({ type: "run.failed", agentId: route.agentId, runId, error: errorMessage });
-    });
+  sendJson(res, 200, { ok: true, messageId: userMessage.id });
 }
 
 async function handleClaudeStopHook(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

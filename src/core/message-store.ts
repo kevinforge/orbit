@@ -1,4 +1,4 @@
-import type { ChatMessage, NewChatMessage } from "../shared/types.ts";
+import type { ChatMessage, MessageRouteState, NewChatMessage } from "../shared/types.ts";
 
 export class MessageStore {
   private messages: ChatMessage[] = [];
@@ -32,6 +32,21 @@ export class MessageStore {
 
   list(): ChatMessage[] {
     return [...this.messages];
+  }
+
+  get(id: string): ChatMessage | null {
+    return this.messages.find((message) => message.id === id) ?? null;
+  }
+
+  markRouteState(id: string, routeState: MessageRouteState): ChatMessage | null {
+    const index = this.messages.findIndex((message) => message.id === id);
+    if (index === -1) {
+      return null;
+    }
+
+    const updated = { ...this.messages[index], routeState };
+    this.messages[index] = updated;
+    return updated;
   }
 
   private createId(): string {
