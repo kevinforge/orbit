@@ -8,7 +8,7 @@ const hookPath = fileURLToPath(new URL("../scripts/claude-user-prompt-hook.mjs",
 test("UserPromptSubmit hook is quiet for ordinary prompts", async () => {
   const { stdout } = await runHook("agent1", {
     hook_event_name: "UserPromptSubmit",
-    prompt: "你好",
+    prompt: "hello",
   });
 
   assert.equal(stdout, "");
@@ -17,13 +17,16 @@ test("UserPromptSubmit hook is quiet for ordinary prompts", async () => {
 test("UserPromptSubmit hook emits additionalContext for agent collaboration prompts", async () => {
   const { stdout } = await runHook("agent1", {
     hook_event_name: "UserPromptSubmit",
-    prompt: "让 agent2 帮我检查一下",
+    prompt: "ask agent2 to inspect this",
   });
 
   const output = JSON.parse(stdout);
   assert.equal(output.hookSpecificOutput.hookEventName, "UserPromptSubmit");
   assert.match(output.hookSpecificOutput.additionalContext, /You are Agent 1 \(agent1\)/);
-  assert.match(output.hookSpecificOutput.additionalContext, /@agent2/);
+  assert.match(output.hookSpecificOutput.additionalContext, /@agent2:/);
+  assert.match(output.hookSpecificOutput.additionalContext, /Plain @agent mentions without a colon are references only/);
+  assert.match(output.hookSpecificOutput.additionalContext, /Execute only the assignment addressed to @agent1:/);
+  assert.equal(output.hookSpecificOutput.additionalContext.includes("@agent:"), false);
 });
 
 async function runHook(agentId: string, input: unknown): Promise<{ stdout: string; stderr: string }> {

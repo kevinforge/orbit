@@ -52,69 +52,94 @@ function createRouter(options?: Partial<{ availableAgents: readonly AgentId[]; m
   return { router, systemMessages, agentRuns, routeStates };
 }
 
-test("user @agent1 triggers startAgentRun", () => {
+test("user assignment triggers agent run with full channel message", () => {
   const { router, agentRuns, routeStates } = createRouter();
-  router.process(createUserMessage("@agent1 do something"));
+  const content = "@agent1: do something";
+  router.process(createUserMessage(content));
 
   assert.equal(agentRuns.length, 1);
   assert.equal(agentRuns[0].agentId, "agent1");
-  assert.equal(agentRuns[0].prompt, "do something");
+  assert.equal(agentRuns[0].prompt, content);
+  assert.equal(agentRuns[0].prompt.includes("Orbit private routing context"), false);
   assert.equal(routeStates[0]?.state, "routed");
 });
 
-test("user message without @ creates system prompt", () => {
-  const { router, systemMessages, agentRuns, routeStates } = createRouter();
-  router.process(createUserMessage("hello"));
-
-  assert.equal(agentRuns.length, 0);
-  assert.equal(systemMessages.length, 1);
-  assert.ok(systemMessages[0].content.includes("@agent1"));
-  assert.equal(routeStates[0]?.state, "ignored");
-});
-
-test("agent message without @ is silently ignored", () => {
-  const { router, systemMessages, agentRuns, routeStates } = createRouter();
-  router.process(createAgentMessage("agent1", "done"));
-
-  assert.equal(agentRuns.length, 0);
-  assert.equal(systemMessages.length, 0);
-  assert.equal(routeStates[0]?.state, "ignored");
-});
-
-test("agent @agent2 triggers agent2", () => {
+test("multi-agent assignment starts one run per assigned agent with the full channel message", () => {
   const { router, agentRuns, routeStates } = createRouter();
-  router.process(createAgentMessage("agent1", "@agent2 inspect code"));
+  const content = "@agent1: design requirements; @agent2: implement code based on @agent1 output";
+  router.process(createUserMessage(content));
 
-  assert.equal(agentRuns.length, 1);
-  assert.equal(agentRuns[0].agentId, "agent2");
-  assert.equal(agentRuns[0].prompt, "inspect code");
+  assert.equal(agentRuns.length, 2);
+  assert.deepEqual(agentRuns.map((run) => run.agentId), ["agent1", "agent2"]);
+  assert.ok(agentRuns.every((run) => run.prompt === content));
+  assert.ok(agentRuns.every((run) => !run.prompt.includes("Orbit private routing context")));
   assert.equal(routeStates[0]?.state, "routed");
 });
 
-test("agent can delegate to one agent and include itself as callback mention", () => {
+test("plain mention is ignored and does not start agent run", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter();
+  router.process(createUserMessage("I and @agent2 can collaborate"));
+
+  assert.equal(agentRuns.length, 0);
+  assert.equal(systemMessages.length, 1);
+  assert.ok(systemMessages[0].content.includes("@agent1:"));
+  assert.equal(routeStates[0]?.state, "ignored");
+});
+
+test("agent plain mention is silently ignored", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter();
+  router.process(createAgentMessage("agent1", "I can work with @agent2"));
+
+  assert.equal(agentRuns.length, 0);
+  assert.equal(systemMessages.length, 0);
+  assert.equal(routeStates[0]?.state, "ignored");
+});
+
+test("agent unknown colon mention is silently ignored", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter();
+  router.process(createAgentMessage("agent1", "Use @agent: as a generic placeholder in docs"));
+
+  assert.equal(agentRuns.length, 0);
+  assert.equal(systemMessages.length, 0);
+  assert.equal(routeStates[0]?.state, "ignored");
+});
+
+test("agent can assign another agent and include itself as plain callback mention", () => {
   const { router, agentRuns, systemMessages, routeStates } = createRouter();
-  router.process(createAgentMessage("agent1", "@agent2 count files. When done mention @agent1"));
+  const content = "@agent2: count files. When done, mention @agent1";
+  router.process(createAgentMessage("agent1", content));
 
   assert.equal(agentRuns.length, 1);
   assert.equal(agentRuns[0].agentId, "agent2");
-  assert.equal(agentRuns[0].prompt, "count files. When done mention @agent1");
+  assert.equal(agentRuns[0].prompt, content);
   assert.equal(systemMessages.length, 0);
   assert.equal(routeStates[0]?.state, "routed");
 });
 
-test("agent @ itself is blocked", () => {
+test("agent self-assignment is silently ignored", () => {
   const { router, systemMessages, agentRuns, routeStates } = createRouter();
-  router.process(createAgentMessage("agent1", "@agent1 continue"));
+  router.process(createAgentMessage("agent1", "@agent1: continue"));
 
   assert.equal(agentRuns.length, 0);
-  assert.equal(systemMessages.length, 1);
-  assert.ok(systemMessages[0].content.includes("themselves"));
-  assert.equal(routeStates[0]?.state, "blocked");
+  assert.equal(systemMessages.length, 0);
+  assert.equal(routeStates[0]?.state, "ignored");
 });
 
-test("@all is blocked with system message", () => {
+test("agent self-assignment does not block peer assignment", () => {
   const { router, systemMessages, agentRuns, routeStates } = createRouter();
-  router.process(createUserMessage("@all summarize project"));
+  const content = "@agent1: I already handled this. @agent2: continue with tests";
+  router.process(createAgentMessage("agent1", content));
+
+  assert.equal(agentRuns.length, 1);
+  assert.equal(agentRuns[0].agentId, "agent2");
+  assert.equal(agentRuns[0].prompt, content);
+  assert.equal(systemMessages.length, 0);
+  assert.equal(routeStates[0]?.state, "routed");
+});
+
+test("@all assignment is blocked with system message", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter();
+  router.process(createUserMessage("@all: summarize project"));
 
   assert.equal(agentRuns.length, 0);
   assert.equal(systemMessages.length, 1);
@@ -122,19 +147,9 @@ test("@all is blocked with system message", () => {
   assert.equal(routeStates[0]?.state, "blocked");
 });
 
-test("multiple mentions are blocked for user messages", () => {
-  const { router, systemMessages, agentRuns, routeStates } = createRouter();
-  router.process(createUserMessage("@agent1 @agent2 inspect separately"));
-
-  assert.equal(agentRuns.length, 0);
-  assert.equal(systemMessages.length, 1);
-  assert.ok(systemMessages[0].content.includes("one agent"));
-  assert.equal(routeStates[0]?.state, "blocked");
-});
-
 test("already routed message is skipped", () => {
   const { router, agentRuns, routeStates } = createRouter();
-  router.process(createUserMessage("@agent1 do something", { routeState: "routed" }));
+  router.process(createUserMessage("@agent1: do something", { routeState: "routed" }));
 
   assert.equal(agentRuns.length, 0);
   assert.equal(routeStates.length, 0);
@@ -142,16 +157,16 @@ test("already routed message is skipped", () => {
 
 test("same message id is never processed twice", () => {
   const { router, agentRuns } = createRouter();
-  const msg = createUserMessage("@agent1 do something");
+  const msg = createUserMessage("@agent1: do something");
   router.process(msg);
   router.process({ ...msg, routeState: undefined });
 
   assert.equal(agentRuns.length, 1);
 });
 
-test("depth limit blocks further routing", () => {
+test("depth limit blocks all assignments", () => {
   const { router, systemMessages, agentRuns, routeStates } = createRouter({ maxRouteDepth: 2 });
-  router.process(createAgentMessage("agent1", "@agent2 check this", { routeDepth: 2 }));
+  router.process(createAgentMessage("agent1", "@agent2: check this", { routeDepth: 2 }));
 
   assert.equal(agentRuns.length, 0);
   assert.equal(systemMessages.length, 1);
@@ -161,25 +176,18 @@ test("depth limit blocks further routing", () => {
 
 test("depth within limit allows routing", () => {
   const { router, agentRuns } = createRouter({ maxRouteDepth: 3 });
-  router.process(createAgentMessage("agent1", "@agent2 check this", { routeDepth: 2 }));
+  router.process(createAgentMessage("agent1", "@agent2: check this", { routeDepth: 2 }));
 
   assert.equal(agentRuns.length, 1);
   assert.equal(agentRuns[0].agentId, "agent2");
 });
 
-test("@agent1 alone does not start agent run", () => {
+test("empty assignment does not start agent run", () => {
   const { router, systemMessages, agentRuns, routeStates } = createRouter();
-  router.process(createUserMessage("@agent1"));
+  router.process(createUserMessage("@agent1:"));
 
   assert.equal(agentRuns.length, 0);
   assert.equal(systemMessages.length, 1);
   assert.ok(systemMessages[0].content.includes("task content"));
   assert.equal(routeStates[0]?.state, "blocked");
-});
-
-test("@agent2 with only whitespace does not start agent run", () => {
-  const { router, agentRuns } = createRouter();
-  router.process(createUserMessage("@agent2   "));
-
-  assert.equal(agentRuns.length, 0);
 });
