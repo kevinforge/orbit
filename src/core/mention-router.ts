@@ -1,85 +1,81 @@
 import type { AgentId } from "../shared/types.ts";
 
 export type MentionRouteResult =
-  | { kind: "single"; agentId: AgentId; prompt: string }
-  | { kind: "empty_prompt"; agentId: AgentId; message: string }
+  | { kind: "assignments"; agentIds: AgentId[]; prompt: string }
+  | { kind: "empty_assignment"; agentId: AgentId; message: string }
   | { kind: "none"; message: string }
   | { kind: "all_unsupported"; message: string }
-  | { kind: "multiple"; message: string }
   | { kind: "unknown"; message: string }
   | { kind: "self"; message: string };
 
-const mentionPattern = /(^|\s)@([A-Za-z0-9_-]+)/g;
+type AssignmentMarker = {
+  agentName: string;
+  start: number;
+  end: number;
+};
+
+const assignmentPattern = /@([A-Za-z0-9_-]+)\s*(?::|\uFF1A)/g;
 
 export function routeMention(
   content: string,
   availableAgents: readonly AgentId[],
   senderAgentId?: AgentId,
 ): MentionRouteResult {
-  const mentions = Array.from(content.matchAll(mentionPattern), (match) => match[2]);
+  const assignments = Array.from(content.matchAll(assignmentPattern), (match): AssignmentMarker => {
+    const start = match.index ?? 0;
+    return {
+      agentName: match[1],
+      start,
+      end: start + match[0].length,
+    };
+  });
 
-  if (mentions.length === 0) {
+  if (assignments.length === 0) {
     return {
       kind: "none",
-      message: `Use ${formatAgentList(availableAgents)} to choose an agent.`,
+      message: `Use ${formatAssignmentList(availableAgents)} to assign work to an agent.`,
     };
   }
 
-  if (mentions.some((mention) => mention.toLowerCase() === "all")) {
+  if (assignments.some((assignment) => assignment.agentName.toLowerCase() === "all")) {
     return {
       kind: "all_unsupported",
-      message: "This version does not support @all. Choose @agent1 or @agent2.",
+      message: "This version does not support @all. Choose @agent1: or @agent2:.",
     };
   }
 
-  const unknownMention = mentions.find((mention) => !isAgentId(mention, availableAgents));
-  if (unknownMention) {
+  const knownAssignments = assignments
+    .filter((assignment) => isAgentId(assignment.agentName, availableAgents))
+    .filter((assignment) => assignment.agentName !== senderAgentId)
+    .map((assignment) => ({
+      ...assignment,
+      agentId: assignment.agentName as AgentId,
+    }));
+
+  if (knownAssignments.length === 0) {
     return {
-      kind: "unknown",
-      message: `Unknown agent: @${unknownMention}. Available agents: ${formatAgentList(availableAgents, ", ")}.`,
+      kind: "none",
+      message: `Use ${formatAssignmentList(availableAgents)} to assign work to an agent.`,
     };
   }
 
-  const knownMentions = mentions.filter((mention): mention is AgentId => isAgentId(mention, availableAgents));
-  const targetMentions = senderAgentId ? knownMentions.filter((mention) => mention !== senderAgentId) : knownMentions;
-
-  if (targetMentions.length === 0 && senderAgentId !== undefined) {
-    return {
-      kind: "self",
-      message: "Agents cannot route work to themselves.",
-    };
-  }
-
-  const uniqueTargets = Array.from(new Set(targetMentions));
-  if (uniqueTargets.length > 1) {
-    return {
-      kind: "multiple",
-      message: "This version supports routing to one agent at a time.",
-    };
-  }
-
-  const [mentionedAgent] = uniqueTargets;
-  if (senderAgentId !== undefined && mentionedAgent === senderAgentId) {
-    return {
-      kind: "self",
-      message: "Agents cannot route work to themselves.",
-    };
-  }
-
-  const prompt = content.replace(new RegExp(`(^|\\s)@${escapeRegExp(mentionedAgent)}\\b`), " ").trim();
-
-  if (!prompt) {
-    return {
-      kind: "empty_prompt",
-      agentId: mentionedAgent,
-      message: "Add task content after the @agent mention.",
-    };
+  for (let index = 0; index < knownAssignments.length; index += 1) {
+    const assignment = knownAssignments[index];
+    const nextAssignment = knownAssignments[index + 1];
+    const taskText = content.slice(assignment.end, nextAssignment?.start ?? content.length).trim();
+    if (!taskText) {
+      return {
+        kind: "empty_assignment",
+        agentId: assignment.agentId,
+        message: `Add task content after @${assignment.agentId}:.`,
+      };
+    }
   }
 
   return {
-    kind: "single",
-    agentId: mentionedAgent,
-    prompt,
+    kind: "assignments",
+    agentIds: Array.from(new Set(knownAssignments.map((assignment) => assignment.agentId))),
+    prompt: content.trim(),
   };
 }
 
@@ -87,10 +83,6 @@ function isAgentId(value: string, availableAgents: readonly AgentId[]): value is
   return availableAgents.includes(value as AgentId);
 }
 
-function formatAgentList(agentIds: readonly AgentId[], separator = " or "): string {
-  return agentIds.map((agentId) => `@${agentId}`).join(separator);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function formatAssignmentList(agentIds: readonly AgentId[], separator = " or "): string {
+  return agentIds.map((agentId) => `@${agentId}:`).join(separator);
 }

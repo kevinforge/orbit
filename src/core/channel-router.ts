@@ -36,15 +36,14 @@ export class ChannelRouter {
         break;
 
       case "all_unsupported":
-      case "multiple":
       case "unknown":
       case "self":
-      case "empty_prompt":
+      case "empty_assignment":
         this.options.createSystemMessage(result.message, message.id);
         this.options.markMessageRouted(message.id, "blocked");
         break;
 
-      case "single": {
+      case "assignments": {
         const nextDepth = (message.routeDepth ?? 0) + 1;
         if (nextDepth > this.options.maxRouteDepth) {
           this.options.createSystemMessage(
@@ -54,8 +53,11 @@ export class ChannelRouter {
           this.options.markMessageRouted(message.id, "blocked");
           break;
         }
+
         this.options.markMessageRouted(message.id, "routed");
-        this.options.startAgentRun(result.agentId, result.prompt, message);
+        for (const agentId of result.agentIds) {
+          this.options.startAgentRun(agentId, result.prompt, message);
+        }
         break;
       }
     }

@@ -126,8 +126,8 @@ export function App() {
       return;
     }
 
-    const nextContent = `${content.slice(0, mentionDraft.start)}@${agentId} ${content.slice(mentionDraft.end)}`;
-    const nextCursorIndex = mentionDraft.start + agentId.length + 2;
+    const nextContent = `${content.slice(0, mentionDraft.start)}@${agentId}: ${content.slice(mentionDraft.end)}`;
+    const nextCursorIndex = mentionDraft.start + agentId.length + 3;
     setSelectedAgent(agentId);
     setContent(nextContent);
     setCursorIndex(nextCursorIndex);
@@ -232,7 +232,7 @@ export function App() {
               }}
               onKeyDown={handleComposerKeyDown}
               onKeyUp={updateCursorFromInput}
-              placeholder={`@${selectedAgent} Hello!`}
+              placeholder={`@${selectedAgent}: Hello!`}
               aria-label="Message to agent"
               spellCheck={false}
             />

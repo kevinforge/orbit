@@ -4,6 +4,7 @@ import type { IPty } from "node-pty";
 
 import type { AgentId, AgentStatus } from "../shared/types.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
+import { sanitizeAgentVisibleReply } from "./agent-prompt.ts";
 import { extractClaudeAssistantReply, shouldCompleteFromTerminalOutput } from "./claude-output-detector.ts";
 import { EventBus } from "./event-bus.ts";
 import { QuietWindowTurnDetector } from "./turn-detector.ts";
@@ -147,7 +148,7 @@ export class AgentSession {
     this.activeRun = null;
     this.clearCompletionTimer();
     this.setStatus("idle");
-    activeRun.resolve(lastAssistantMessage.trim() || "Agent 本轮没有产生可读输出。");
+    activeRun.resolve(sanitizeAgentVisibleReply(lastAssistantMessage.trim()) || "Agent did not produce readable output.");
     return true;
   }
 
@@ -195,7 +196,7 @@ export class AgentSession {
     this.activeRun = null;
     const cleanedOutput = extractClaudeAssistantReply(rawRunOutput);
     this.setStatus("idle");
-    activeRun.resolve(cleanedOutput || "Agent 本轮没有产生可读输出。");
+    activeRun.resolve(sanitizeAgentVisibleReply(cleanedOutput) || "Agent did not produce readable output.");
   }
 
   private setStatus(status: AgentStatus): void {
