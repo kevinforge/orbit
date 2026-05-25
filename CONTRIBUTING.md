@@ -4,6 +4,8 @@ Orbit is currently private, but the repository should stay close to an open-sour
 
 ## Development Flow
 
+Agents must also follow [AGENTS.md](./AGENTS.md). That file is the operational checklist for automated issue, branch, PR, and CI workflows.
+
 1. Start from `main`.
 2. Create a feature branch:
 
@@ -41,8 +43,10 @@ npm run build
 Keep repository documentation small:
 
 - `README.md` for product overview, setup, and daily commands.
+- `README.zh-CN.md` for the Simplified Chinese README.
 - `docs/ARCHITECTURE.md` for current architecture.
 - `CONTRIBUTING.md` for workflow and standards.
+- `AGENTS.md` for the required agent workflow.
 
 Temporary planning or research documents should stay outside the committed repository, or in a local ignored folder.
 

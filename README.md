@@ -1,6 +1,6 @@
 # Orbit
 
-[简体中文](./README.zh-CN.md)
+[Chinese](./README.zh-CN.md)
 
 Orbit is a local-first chat control surface for coordinating multiple Claude Code agents in one shared channel.
 
@@ -75,3 +75,4 @@ docs/        Architecture documentation
 
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Contributing](./CONTRIBUTING.md)
+- [Agent Workflow](./AGENTS.md)

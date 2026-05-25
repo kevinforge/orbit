@@ -75,3 +75,4 @@ docs/        架构文档
 
 - [架构说明](./docs/ARCHITECTURE.md)
 - [贡献规范](./CONTRIBUTING.md)
+- [Agent 工作流程](./AGENTS.md)
