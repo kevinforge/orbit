@@ -1,26 +1,27 @@
-import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentId, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
-
-const AGENT_IDS: AgentId[] = ["agent1", "agent2"];
+import { FormEvent, KeyboardEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { AgentActivityEvent, AgentId, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
 
 const initialState: AppState = {
   agents: [
-    { id: "agent1", label: "Agent 1", status: "starting", selected: true },
-    { id: "agent2", label: "Agent 2", status: "starting", selected: false },
+    { id: "pm", label: "Product Manager", status: "starting", selected: true },
+    { id: "architect", label: "Architect", status: "starting", selected: false },
+    { id: "developer", label: "Developer", status: "starting", selected: false },
+    { id: "tester", label: "Tester", status: "starting", selected: false },
   ],
   messages: [],
-  terminal: { agent1: "", agent2: "" },
+  terminal: {},
 };
 
 export function App() {
   const [state, setState] = useState<AppState>(initialState);
   const [content, setContent] = useState("");
-  const [selectedAgent, setSelectedAgent] = useState<AgentId>("agent1");
+  const [selectedAgent, setSelectedAgent] = useState<AgentId>(initialState.agents[0].id);
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [cursorIndex, setCursorIndex] = useState(0);
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -63,23 +64,48 @@ export function App() {
     };
   }, []);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [state.messages.length]);
-
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
+  const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
+  const scrollKey = useMemo(
+    () =>
+      state.messages
+        .map((message) =>
+          [
+            message.id,
+            message.status ?? "",
+            message.content.length,
+            message.activity?.length ?? 0,
+          ].join(":"),
+        )
+        .join("|"),
+    [state.messages],
+  );
   const mentionDraft = useMemo(() => findMentionDraft(content, cursorIndex), [content, cursorIndex]);
   const mentionCandidates = useMemo(() => {
     if (!inputFocused || !mentionDraft) {
       return [];
     }
 
-    return AGENT_IDS.filter((agentId) => agentId.toLowerCase().startsWith(mentionDraft.query.toLowerCase()));
-  }, [inputFocused, mentionDraft]);
+    return agentIds.filter((agentId) => agentId.toLowerCase().startsWith(mentionDraft.query.toLowerCase()));
+  }, [agentIds, inputFocused, mentionDraft]);
+
+  useEffect(() => {
+    if (!agentsById.has(selectedAgent) && agentIds[0]) {
+      setSelectedAgent(agentIds[0]);
+    }
+  }, [agentIds, agentsById, selectedAgent]);
 
   useEffect(() => {
     setSelectedMentionIndex(0);
   }, [mentionDraft?.query]);
+
+  useLayoutEffect(() => {
+    scrollMessagesToBottom(messagesRef.current);
+    const frame = window.requestAnimationFrame(() => {
+      scrollMessagesToBottom(messagesRef.current);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [scrollKey]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -175,10 +201,10 @@ export function App() {
         </div>
 
         <nav className="agentList" aria-label="Choose agent">
-          {AGENT_IDS.map((agentId) => (
+          {agentIds.map((agentId) => (
             <AgentButton
               key={agentId}
-              agent={agentsById.get(agentId) ?? initialState.agents.find((agent) => agent.id === agentId)!}
+              agent={agentsById.get(agentId) ?? initialState.agents[0]}
               selected={selectedAgent === agentId}
               onClick={() => chooseAgent(agentId)}
             />
@@ -193,7 +219,7 @@ export function App() {
             <h1>Orbit P0</h1>
           </div>
           <div className="quickActions" aria-label="Quick agent selection">
-            {AGENT_IDS.map((agentId) => (
+            {agentIds.map((agentId) => (
               <button
                 key={agentId}
                 className={selectedAgent === agentId ? "active" : ""}
@@ -206,7 +232,7 @@ export function App() {
           </div>
         </header>
 
-        <div className="messages" role="log" aria-live="polite" aria-label="Message list">
+        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="Message list">
           {state.messages.length === 0 ? (
             <div className="emptyState">Choose an agent, then type a task.</div>
           ) : (
@@ -307,10 +333,83 @@ function MessageRow({ message }: { message: ChatMessage }) {
         <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
       </div>
       <div className="messageBody">
+        {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} /> : null}
         {message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
       </div>
     </article>
   );
+}
+
+function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; status?: ChatMessage["status"] }) {
+  const shouldAutoCollapse = status === "done" || status === "error";
+  const [manualOverride, setManualOverride] = useState(false);
+  const [expanded, setExpanded] = useState(!shouldAutoCollapse);
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const toolCount = activity.filter((item) => item.type === "tool.started").length;
+  const errorCount = activity.filter((item) => item.type === "error").length;
+  const latest = activity[activity.length - 1];
+  const visibleActivity = expanded ? activity : activity.slice(-3);
+
+  useEffect(() => {
+    if (!manualOverride) {
+      setExpanded(!shouldAutoCollapse);
+    }
+  }, [manualOverride, shouldAutoCollapse]);
+
+  useEffect(() => {
+    if (expanded) {
+      timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight });
+    }
+  }, [activity.length, expanded]);
+
+  function toggleExpanded() {
+    setManualOverride(true);
+    setExpanded((value) => !value);
+  }
+
+  return (
+    <div className={`activityPanel ${expanded ? "expanded" : "collapsed"}`} aria-label="Agent activity">
+      <div className="activityHeader">
+        <div className="activitySummary">
+          <strong>Activity</strong>
+          <span>{activity.length} events</span>
+          {toolCount > 0 ? <span>{toolCount} tools</span> : null}
+          {errorCount > 0 ? <span className="activityErrorCount">{errorCount} errors</span> : null}
+        </div>
+        {activity.length > 3 ? (
+          <button type="button" onClick={toggleExpanded}>
+            {expanded ? "Collapse" : "Show full"}
+          </button>
+        ) : null}
+      </div>
+      {latest ? <div className="activityLatest">{activityText(latest)}</div> : null}
+      <div className="activityTimeline" ref={timelineRef}>
+        {visibleActivity.map((item, index) => (
+          <div className={`activityItem ${item.type.replace(".", "-")}`} key={`${item.timestamp}_${index}`}>
+            <span className="activityDot" aria-hidden="true" />
+            <span className="activityText">{activityText(item)}</span>
+            <time>{formatTime(item.timestamp)}</time>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function activityText(item: AgentActivityEvent): string {
+  if (item.type === "tool.started") {
+    return item.input ? `Started ${item.name}: ${item.input}` : `Started ${item.name}`;
+  }
+  if (item.type === "tool.completed") {
+    if (item.name === "tool") {
+      return item.summary ? `Completed: ${item.summary}` : "Completed";
+    }
+    return item.summary ? `Completed ${item.name}: ${item.summary}` : `Completed ${item.name}`;
+  }
+  if (item.type === "error") {
+    return item.message;
+  }
+  return item.text;
 }
 
 function MarkdownContent({ content }: { content: string }) {
@@ -440,6 +539,18 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     return state;
   }
 
+  if (event.type === "run.activity") {
+    return {
+      ...state,
+      messages: state.messages.map((message) => {
+        if (message.runId !== event.runId) {
+          return message;
+        }
+        return { ...message, activity: [...(message.activity ?? []), event.activity] };
+      }),
+    };
+  }
+
   return state;
 }
 
@@ -460,8 +571,7 @@ function normalizeState(nextState: AppState): AppState {
     agents: nextState.agents?.length ? nextState.agents : initialState.agents,
     messages: nextState.messages ?? [],
     terminal: {
-      agent1: "",
-      agent2: "",
+      ...(nextState.terminal ?? {}),
     },
   };
 }
@@ -498,6 +608,14 @@ function formatTime(value: string): string {
     return "";
   }
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function scrollMessagesToBottom(element: HTMLDivElement | null): void {
+  if (!element) {
+    return;
+  }
+
+  element.scrollTop = element.scrollHeight;
 }
 
 function createLocalSystemMessage(content: string): ChatMessage {

@@ -1,15 +1,17 @@
 import http from "node:http";
 
+import { createDefaultAgentProfiles } from "../core/agent-profiles.ts";
 import { AgentRegistry } from "../core/agent-registry.ts";
 import { ChannelRouter } from "../core/channel-router.ts";
+import { buildChannelContext } from "../core/channel-context-builder.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { MessageStore } from "../core/message-store.ts";
+import { RunManager } from "../core/run-manager.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import type { AgentId } from "../shared/types.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 
-const AGENT_IDS = ["agent1", "agent2"] as const;
 const MAX_ROUTE_DEPTH = 5;
 const port = Number(process.env.ORBIT_PORT ?? 4317);
 
@@ -17,7 +19,9 @@ const eventBus = new EventBus();
 const sseHub = new SseHub();
 const messages = new MessageStore();
 const transcripts = new TerminalTranscriptStore();
-const agents = new AgentRegistry(process.cwd(), eventBus);
+const profiles = createDefaultAgentProfiles(process.cwd());
+const agents = new AgentRegistry(profiles, eventBus);
+const agentIds = agents.ids();
 
 eventBus.subscribe((event) => {
   if (event.type === "terminal.chunk") {
@@ -28,8 +32,22 @@ eventBus.subscribe((event) => {
 
 agents.startAll();
 
-const channelRouter = new ChannelRouter({
-  availableAgents: AGENT_IDS,
+let channelRouter: ChannelRouter;
+
+const runManager = new RunManager({
+  agents,
+  messages,
+  eventBus,
+  buildPrompt(agentId: AgentId, prompt: string) {
+    return buildChannelContext({ agentId, profiles, channelMessage: prompt });
+  },
+  onRunCompleted(message) {
+    channelRouter.process(message);
+  },
+});
+
+channelRouter = new ChannelRouter({
+  availableAgents: agentIds,
   maxRouteDepth: MAX_ROUTE_DEPTH,
   createSystemMessage(content: string, parentMessageId?: string) {
     const msg = messages.add({ kind: "system", content, status: "done", parentMessageId });
@@ -37,46 +55,7 @@ const channelRouter = new ChannelRouter({
     return msg;
   },
   startAgentRun(agentId: AgentId, prompt: string, sourceMessage) {
-    const runId = createRunId(agentId);
-    const routeDepth = (sourceMessage.routeDepth ?? 0) + 1;
-
-    const agentMessage = messages.add({
-      kind: "agent",
-      agentId,
-      runId,
-      content: `${getAgentLabel(agentId)} 正在处理...`,
-      status: "running",
-      parentMessageId: sourceMessage.id,
-      routeDepth,
-    });
-    eventBus.publish({ type: "message.created", message: agentMessage });
-
-    void agents
-      .get(agentId)
-      .send(runId, prompt)
-      .then((result) => {
-        const updated = messages.update(agentMessage.id, {
-          content: result,
-          status: "done",
-        });
-        eventBus.publish({ type: "message.updated", message: updated });
-        eventBus.publish({
-          type: "run.completed",
-          agentId,
-          runId,
-          resultMessageId: updated.id,
-        });
-        channelRouter.process(updated);
-      })
-      .catch((error: unknown) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const updated = messages.update(agentMessage.id, {
-          content: `${getAgentLabel(agentId)} 执行失败：${errorMessage}`,
-          status: "error",
-        });
-        eventBus.publish({ type: "message.updated", message: updated });
-        eventBus.publish({ type: "run.failed", agentId, runId, error: errorMessage });
-      });
+    runManager.enqueue(agentId, prompt, sourceMessage);
   },
   markMessageRouted(messageId: string, routeState) {
     messages.markRouteState(messageId, routeState);
@@ -106,17 +85,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && url.pathname === "/api/hooks/claude-stop") {
-      await handleClaudeStopHook(req, res);
-      return;
-    }
-
-    const terminalMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/terminal$/);
-    if (req.method === "POST" && terminalMatch) {
-      await handlePostTerminal(req, res, terminalMatch[1]);
-      return;
-    }
-
     if (req.method === "GET" && serveStatic(url.pathname, res)) {
       return;
     }
@@ -137,7 +105,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   const content = typeof input.content === "string" ? input.content.trim() : "";
 
   if (!content) {
-    sendJson(res, 400, { ok: false, message: "消息不能为空。" });
+    sendJson(res, 400, { ok: false, message: "Message cannot be empty." });
     return;
   }
 
@@ -147,39 +115,6 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   channelRouter.process(userMessage);
 
   sendJson(res, 200, { ok: true, messageId: userMessage.id });
-}
-
-async function handleClaudeStopHook(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const input = (await readJson(req)) as {
-    agentId?: unknown;
-    lastAssistantMessage?: unknown;
-  };
-
-  const agentIdRaw = String(input.agentId ?? "");
-  if (!isAgentId(agentIdRaw)) {
-    sendJson(res, 400, { ok: false, message: "未知 Agent。" });
-    return;
-  }
-
-  const lastAssistantMessage = typeof input.lastAssistantMessage === "string" ? input.lastAssistantMessage : "";
-  const completed = agents.completeFromHook(agentIdRaw, lastAssistantMessage);
-  sendJson(res, 200, { ok: true, completed });
-}
-
-async function handlePostTerminal(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  agentIdRaw: string,
-): Promise<void> {
-  if (!isAgentId(agentIdRaw)) {
-    sendJson(res, 404, { ok: false, message: "未知 Agent。" });
-    return;
-  }
-
-  const input = (await readJson(req)) as { input?: unknown };
-  const text = typeof input.input === "string" ? input.input : "";
-  agents.get(agentIdRaw).writeRaw(text);
-  sendJson(res, 200, { ok: true });
 }
 
 function readJson(req: http.IncomingMessage): Promise<unknown> {
@@ -208,18 +143,6 @@ function readJson(req: http.IncomingMessage): Promise<unknown> {
 function sendJson(res: http.ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(value));
-}
-
-function createRunId(agentId: AgentId): string {
-  return `run_${agentId}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-function isAgentId(value: string): value is AgentId {
-  return value === "agent1" || value === "agent2";
-}
-
-function getAgentLabel(agentId: AgentId): string {
-  return agentId === "agent1" ? "Agent 1" : "Agent 2";
 }
 
 function shutdown(): void {

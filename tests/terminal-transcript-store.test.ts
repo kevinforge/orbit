@@ -14,12 +14,17 @@ test("appends cleaned terminal chunks by agent", () => {
   assert.equal(store.get("agent2"), "other");
 });
 
-test("list returns terminal snapshots for both agents", () => {
+test("list returns terminal snapshots for agents that produced output", () => {
   const store = new TerminalTranscriptStore();
-  store.append("agent1", "one");
+  store.append("developer", "one");
 
   assert.deepEqual(store.list(), {
-    agent1: "one",
-    agent2: "",
+    developer: "one",
   });
+});
+
+test("unknown agent transcript starts empty", () => {
+  const store = new TerminalTranscriptStore();
+
+  assert.equal(store.get("tester"), "");
 });
