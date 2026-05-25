@@ -1,161 +1,111 @@
 # Orbit Architecture
 
-English / 简体中文
+Orbit is a local-first agent collaboration app. The current implementation runs one local HTTP server, one React UI, and multiple Claude Code CLI runs on the user's machine.
 
-## Goal
-
-Orbit P0 validates one local loop:
-
-```text
-User message
-  -> selected or mentioned agent
-  -> Claude Code CLI session
-  -> clean final response
-  -> chat message
-```
-
-The product is local-first. The server and both agents run on the user's machine.
-
-## Runtime
+## Runtime Flow
 
 ```text
 React UI
   -> POST /api/messages
-  -> mention router
-  -> AgentSession(agent1 | agent2)
-  -> node-pty
-  -> Claude Code CLI
-  -> Claude Stop hook
   -> MessageStore
+  -> ChannelRouter
+  -> RunManager
+  -> AgentRegistry / AgentSession
+  -> Claude Code CLI --print --output-format stream-json
+  -> Claude stream events
+  -> MessageStore + TerminalTranscriptStore
   -> SSE
   -> React UI
 ```
 
-## Main Modules
+The runtime no longer uses PTY sessions or Claude Code hooks. A run is considered complete when the Claude CLI child process exits and returns a clean final answer.
+
+## Core Modules
 
 | Path | Responsibility |
 | --- | --- |
-| `src/server/index.ts` | HTTP routes, SSE, message endpoint, Claude hook endpoint |
-| `src/server/sse-hub.ts` | SSE client management |
+| `src/server/index.ts` | Local HTTP routes, SSE wiring, message intake |
+| `src/server/sse-hub.ts` | Server-Sent Events client management |
 | `src/server/static-server.ts` | Static UI serving |
-| `src/core/agent-registry.ts` | Owns the two fixed agents |
-| `src/core/agent-session.ts` | Starts Claude Code, sends prompts, detects completion |
-| `src/core/mention-router.ts` | Parses `@agent1` and `@agent2` |
-| `src/core/message-store.ts` | In-memory chat messages |
-| `src/core/ansi-text-extractor.ts` | Basic terminal text cleanup |
-| `src/core/claude-output-detector.ts` | Fallback Claude TUI output cleanup |
-| `src/ui/App.tsx` | Chat UI, agent selection, `@` autocomplete, Markdown rendering |
+| `src/core/agent-profiles.ts` | Built-in role definitions and permission profiles |
+| `src/core/agent-registry.ts` | Owns agent sessions and exposes agent state |
+| `src/core/agent-session.ts` | Starts one Claude CLI run and tracks status |
+| `src/core/claude-cli-runtime.ts` | Spawns Claude Code CLI and parses stream JSON output |
+| `src/core/run-manager.ts` | Per-agent run queue and lifecycle events |
+| `src/core/channel-router.ts` | Routes user and agent messages containing explicit assignments |
+| `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
+| `src/core/channel-context-builder.ts` | Builds private context passed into each agent run |
+| `src/core/message-store.ts` | In-memory channel messages |
+| `src/core/terminal-transcript-store.ts` | Runtime activity transcript storage |
+| `src/core/claude-output-detector.ts` | Clean final answer validation and stream event mapping |
+| `src/ui/App.tsx` | Chat UI, agent buttons, composer, markdown, activity panel |
 
-## Completion
+## Agents
 
-P0 uses Claude Code's `Stop` hook as the primary completion signal.
+The current build has four fixed agents:
 
-The hook script is:
-
-```text
-scripts/claude-stop-hook.mjs
-```
-
-It reads Claude Code hook JSON from stdin and posts the final assistant message to:
-
-```text
-POST /api/hooks/claude-stop
-```
-
-Fallback behavior still exists:
-
-- `ORBIT_TURN_QUIET_MS` controls the quiet window
-- Default: `180000` milliseconds
-- `ORBIT_DISABLE_CLAUDE_STOP_HOOK=1` forces terminal-output completion fallback
-
-## Agent Model
-
-P0 agents are hardcoded:
-
-```text
-agent1
-agent2
-```
-
-They are equal local Claude Code sessions. Work is assigned through `@agent1` or `@agent2` in the chat composer.
-
----
-
-# Orbit 架构
-
-## 目标
-
-Orbit P0 只验证一个本地闭环：
-
-```text
-用户消息
-  -> 选中或 @ 的 Agent
-  -> Claude Code CLI 会话
-  -> 干净的最终回复
-  -> 聊天消息
-```
-
-产品本地优先。服务端和两个 Agent 都运行在用户本机。
-
-## 运行链路
-
-```text
-React UI
-  -> POST /api/messages
-  -> mention router
-  -> AgentSession(agent1 | agent2)
-  -> node-pty
-  -> Claude Code CLI
-  -> Claude Stop hook
-  -> MessageStore
-  -> SSE
-  -> React UI
-```
-
-## 主要模块
-
-| 路径 | 职责 |
+| Agent | Role |
 | --- | --- |
-| `src/server/index.ts` | HTTP 路由、SSE、消息入口、Claude hook 入口 |
-| `src/server/sse-hub.ts` | SSE 客户端管理 |
-| `src/server/static-server.ts` | 静态前端资源服务 |
-| `src/core/agent-registry.ts` | 管理两个固定 Agent |
-| `src/core/agent-session.ts` | 启动 Claude Code、发送 prompt、判断完成 |
-| `src/core/mention-router.ts` | 解析 `@agent1` 和 `@agent2` |
-| `src/core/message-store.ts` | 内存聊天消息 |
-| `src/core/ansi-text-extractor.ts` | 基础终端文本清洗 |
-| `src/core/claude-output-detector.ts` | Claude TUI 兜底输出清洗 |
-| `src/ui/App.tsx` | 聊天 UI、Agent 选择、`@` 候选、Markdown 渲染 |
+| `@pm:` | Product manager |
+| `@architect:` | Architect |
+| `@developer:` | Developer |
+| `@tester:` | Tester |
 
-## 完成判断
+Agent profiles are defined in `src/core/agent-profiles.ts`. They are intentionally hardcoded for now to keep the first local product loop simple.
 
-P0 优先使用 Claude Code `Stop` hook 作为完成信号。
+## Routing Rules
 
-hook 脚本：
+- Only `@agent:` with a colon assigns work.
+- Plain `@agent` mentions are references and do not trigger routing.
+- Unknown placeholders such as `@agent:` are treated as normal text.
+- A message can assign work to multiple agents.
+- Each assigned agent receives the full channel message as context.
+- Agent replies can also contain assignments, but self-assignments are ignored.
+- Existing assignments in the same channel message are treated as already scheduled.
 
-```text
-scripts/claude-stop-hook.mjs
-```
+This is not a general workflow engine. It is a lightweight team-channel routing model.
 
-它从 stdin 读取 Claude Code hook JSON，并把最终 assistant message 发送到：
+## Claude CLI Runtime
 
-```text
-POST /api/hooks/claude-stop
-```
-
-兜底策略仍然保留：
-
-- `ORBIT_TURN_QUIET_MS` 控制静默窗口
-- 默认值：`180000` 毫秒
-- `ORBIT_DISABLE_CLAUDE_STOP_HOOK=1` 可强制使用终端输出兜底完成判断
-
-## Agent 模型
-
-P0 写死两个 Agent：
+Orbit runs Claude Code through non-interactive CLI mode:
 
 ```text
-agent1
-agent2
+claude --print --verbose --output-format stream-json --include-partial-messages --permission-mode bypassPermissions
 ```
 
-它们是两个对等的本地 Claude Code 会话。用户通过聊天输入框中的 `@agent1` 或 `@agent2` 分派工作。
+The user prompt is written to stdin. Stream JSON events are converted into:
+
+- final assistant text
+- tool/activity events
+- runtime output for diagnostics
+
+Because this mode exits after each run, Orbit does not need a Stop hook or a terminal input endpoint.
+
+## Activity Stream
+
+Activity events are derived from Claude stream JSON output and shown in the chat card:
+
+- run accepted / started / completed / failed
+- tool started / completed / failed
+- runtime produced output
+
+The UI keeps running activities expanded and scrolls to the latest event. Completed cards are collapsed by default and can be expanded manually.
+
+## State
+
+Current state is in memory:
+
+- messages
+- agent statuses
+- queued runs
+- activity transcripts
+
+This keeps P0 simple. Persistent storage should be added behind existing stores rather than mixed into UI or runtime code.
+
+## Future Extension Points
+
+- Replace hardcoded profiles with user-defined agents.
+- Add persistent SQLite storage behind `MessageStore` and transcript storage.
+- Add runtime adapters for Codex CLI, CodeBuddy CLI, or other agent backends.
+- Add richer queue controls: cancel, retry, pause, and priority.
+- Add branch/PR workflow integration as a separate layer, not inside the runtime adapter.

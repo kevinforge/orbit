@@ -322,6 +322,134 @@ button:disabled {
   line-height: 1.55;
 }
 
+.activityPanel {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  border: 1px solid #d8dee7;
+  border-radius: 7px;
+  padding: 9px;
+  color: #465162;
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+.activityHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.activitySummary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.activitySummary strong {
+  color: #242d39;
+}
+
+.activitySummary span {
+  border: 1px solid #dbe2eb;
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: #5d6877;
+  background: #ffffff;
+}
+
+.activitySummary .activityErrorCount {
+  border-color: #efc8c8;
+  color: #a33838;
+  background: #fff5f5;
+}
+
+.activityHeader button {
+  flex: 0 0 auto;
+  min-height: 26px;
+  border: 1px solid #ccd5e0;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: #2c3745;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.activityHeader button:hover {
+  border-color: #9aa8ba;
+  background: #f1f4f8;
+}
+
+.activityLatest {
+  overflow: hidden;
+  color: #303a48;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activityTimeline {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.activityPanel.collapsed .activityTimeline {
+  max-height: none;
+  overflow: visible;
+}
+
+.activityItem {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: #596577;
+}
+
+.activityDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.activityItem.tool-started .activityDot {
+  background: #4d7fd6;
+}
+
+.activityItem.tool-completed .activityDot {
+  background: #50a46f;
+}
+
+.activityItem.error .activityDot {
+  background: #c94b4b;
+}
+
+.activityText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activityItem time {
+  color: #8a95a5;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.activityItem.error .activityText {
+  color: #a33838;
+}
+
 .plainText {
   white-space: pre-wrap;
 }

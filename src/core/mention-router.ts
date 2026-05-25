@@ -40,7 +40,7 @@ export function routeMention(
   if (assignments.some((assignment) => assignment.agentName.toLowerCase() === "all")) {
     return {
       kind: "all_unsupported",
-      message: "This version does not support @all. Choose @agent1: or @agent2:.",
+      message: `This version does not support @all. Choose ${formatAssignmentList(availableAgents)}.`,
     };
   }
 

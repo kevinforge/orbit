@@ -1,49 +1,46 @@
-import type { AgentId, AgentState } from "../shared/types.ts";
+import type { AgentId, AgentProfile, AgentState } from "../shared/types.ts";
 import { AgentSession } from "./agent-session.ts";
 import { EventBus } from "./event-bus.ts";
 
 export class AgentRegistry {
-  private readonly sessions: Record<AgentId, AgentSession>;
+  private readonly sessions = new Map<AgentId, AgentSession>();
 
-  constructor(cwd: string, eventBus: EventBus) {
-    this.sessions = {
-      agent1: new AgentSession({ id: "agent1", label: "Agent 1", cwd, eventBus }),
-      agent2: new AgentSession({ id: "agent2", label: "Agent 2", cwd, eventBus }),
-    };
+  constructor(private readonly profiles: readonly AgentProfile[], eventBus: EventBus) {
+    for (const profile of profiles) {
+      this.sessions.set(profile.id, new AgentSession({ id: profile.id, label: profile.name, cwd: profile.cwd, eventBus }));
+    }
   }
 
   startAll(): void {
-    this.sessions.agent1.start();
-    this.sessions.agent2.start();
+    for (const session of this.sessions.values()) {
+      session.start();
+    }
   }
 
   get(agentId: AgentId): AgentSession {
-    return this.sessions[agentId];
+    const session = this.sessions.get(agentId);
+    if (!session) {
+      throw new Error(`Unknown agent: ${agentId}`);
+    }
+    return session;
   }
 
-  completeFromHook(agentId: AgentId, lastAssistantMessage: string): boolean {
-    return this.sessions[agentId].completeFromHook(lastAssistantMessage);
+  ids(): AgentId[] {
+    return this.profiles.map((profile) => profile.id);
   }
 
   states(): AgentState[] {
-    return [
-      {
-        id: "agent1",
-        label: "Agent 1",
-        status: this.sessions.agent1.getStatus(),
-        selected: true,
-      },
-      {
-        id: "agent2",
-        label: "Agent 2",
-        status: this.sessions.agent2.getStatus(),
-        selected: false,
-      },
-    ];
+    return this.profiles.map((profile, index) => ({
+      id: profile.id,
+      label: profile.name,
+      status: this.get(profile.id).getStatus(),
+      selected: index === 0,
+    }));
   }
 
   stopAll(): void {
-    this.sessions.agent1.stop();
-    this.sessions.agent2.stop();
+    for (const session of this.sessions.values()) {
+      session.stop();
+    }
   }
 }
