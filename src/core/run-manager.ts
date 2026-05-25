@@ -187,6 +187,17 @@ export class RunManager {
   }
 
   private handleRuntimeEvent(event: RuntimeEvent): void {
+    if (event.type === "run.sessionId" && event.runId) {
+      const run = this.runs.get(event.runId);
+      if (run && run.status === "running") {
+        const updated = this.options.messages.update(run.resultMessageId, {
+          sessionId: event.sessionId,
+        });
+        this.options.eventBus.publish({ type: "message.updated", message: updated });
+      }
+      return;
+    }
+
     if (event.type !== "terminal.chunk" || !event.runId) {
       return;
     }

@@ -340,7 +340,7 @@ function MessageRow({ message }: { message: ChatMessage }) {
       {message.sessionId || message.runIndex ? (
         <div className="sessionInfo">
           {message.sessionId ? (
-            <span title={message.sessionId}>session: {message.sessionId.slice(0, 8)}...</span>
+            <span>session: {message.sessionId}</span>
           ) : null}
           {message.runIndex ? <span>run #{message.runIndex}</span> : null}
         </div>
