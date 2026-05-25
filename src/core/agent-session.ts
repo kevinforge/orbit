@@ -93,7 +93,8 @@ export class AgentSession {
       lower.includes("session not found") ||
       lower.includes("session expired") ||
       lower.includes("could not resume") ||
-      lower.includes("invalid session")
+      lower.includes("invalid session") ||
+      lower.includes("no conversation found")
     );
   }
 
