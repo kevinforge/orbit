@@ -46,7 +46,7 @@ test("extracts final answer from stream-json result events", () => {
     JSON.stringify({ type: "result", result: "final answer" }),
   ].join("\n");
 
-  assert.equal(extractClaudeCliFinalAnswer(output), "final answer");
+  assert.equal(extractClaudeCliFinalAnswer(output).text, "final answer");
 });
 
 test("builds a spawnable command", () => {
@@ -57,23 +57,24 @@ test("builds a spawnable command", () => {
 });
 
 test("falls back to clean text output", () => {
-  assert.equal(extractClaudeCliFinalAnswer("final answer\n"), "final answer");
+  assert.equal(extractClaudeCliFinalAnswer("final answer\n").text, "final answer");
 });
 
 test("extractSessionId from init event", () => {
-  const output = JSON.stringify({ type: "system", session_id: "abc-123" });
+  const output = JSON.stringify({ type: "system", subtype: "init", session_id: "abc-123" });
   assert.equal(extractSessionId(output), "abc-123");
 });
 
 test("extractSessionId returns null for no session", () => {
   assert.equal(extractSessionId(""), null);
   assert.equal(extractSessionId("not json"), null);
+  assert.equal(extractSessionId(JSON.stringify({ type: "system", subtype: "hook_started", session_id: "hook-id" })), null);
 });
 
-test("extractSessionId returns first match", () => {
+test("extractSessionId returns first init event match", () => {
   const output = [
-    JSON.stringify({ type: "system", session_id: "first" }),
-    JSON.stringify({ type: "result", session_id: "second" }),
+    JSON.stringify({ type: "system", subtype: "hook_started", session_id: "hook-session" }),
+    JSON.stringify({ type: "system", subtype: "init", session_id: "real-session" }),
   ].join("\n");
-  assert.equal(extractSessionId(output), "first");
+  assert.equal(extractSessionId(output), "real-session");
 });

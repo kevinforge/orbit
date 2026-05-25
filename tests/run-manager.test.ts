@@ -4,18 +4,18 @@ import test from "node:test";
 import { EventBus } from "../src/core/event-bus.ts";
 import { MessageStore } from "../src/core/message-store.ts";
 import { classifyTerminalActivities, classifyTerminalActivity, RunManager } from "../src/core/run-manager.ts";
-import type { AgentId, ChatMessage } from "../src/shared/types.ts";
+import type { AgentId, ChatMessage, RunResult } from "../src/shared/types.ts";
 
 type Deferred = {
-  promise: Promise<string>;
-  resolve: (value: string) => void;
+  promise: Promise<RunResult>;
+  resolve: (value: RunResult) => void;
   reject: (error: Error) => void;
 };
 
 function deferred(): Deferred {
-  let resolve!: (value: string) => void;
+  let resolve!: (value: RunResult) => void;
   let reject!: (error: Error) => void;
-  const promise = new Promise<string>((res, rej) => {
+  const promise = new Promise<RunResult>((res, rej) => {
     resolve = res;
     reject = rej;
   });
@@ -66,13 +66,13 @@ test("queues a second run for the same agent until the first completes", async (
   assert.equal(calls.length, 1);
   assert.equal(messages.list()[1]?.content, "developer queued...");
 
-  first.resolve("first done");
+  first.resolve({ content: "first done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(calls.length, 2);
   assert.equal(calls[1]?.prompt, "context\nsecond");
 
-  second.resolve("second done");
+  second.resolve({ content: "second done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(messages.list()[0]?.status, "done");
@@ -112,7 +112,7 @@ test("terminal chunks append visible activity to the running message", async () 
   const runningMessage = messages.get(run.resultMessageId);
   assert.ok(runningMessage?.activity?.some((activity) => activity.type === "tool.started" && activity.name === "Bash"));
 
-  first.resolve("done");
+  first.resolve({ content: "done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
 });
 

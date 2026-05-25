@@ -56,6 +56,16 @@ export type ChatMessage = {
   routeState?: MessageRouteState;
   routeDepth?: number;
   activity?: AgentActivityEvent[];
+  startedAt?: string;
+  completedAt?: string;
+  sessionId?: string;
+  runIndex?: number;
+};
+
+export type RunResult = {
+  content: string;
+  sessionId?: string;
+  runIndex?: number;
 };
 
 export type NewChatMessage = Omit<ChatMessage, "id" | "createdAt"> & {

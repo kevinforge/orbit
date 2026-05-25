@@ -70,7 +70,11 @@ export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
         if (!trimmed) continue;
         try {
           const event = JSON.parse(trimmed);
-          if (typeof event.session_id === "string") {
+          if (
+            event.type === "system" &&
+            event.subtype === "init" &&
+            typeof event.session_id === "string"
+          ) {
             capturedSessionId = event.session_id;
             sessionIdResolve(capturedSessionId);
           }
@@ -99,13 +103,13 @@ export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
         return;
       }
 
-      const answer = extractClaudeCliFinalAnswer(stdout);
-      if (!answer) {
+      const parsed = extractClaudeCliFinalAnswer(stdout);
+      if (!parsed.text) {
         reject(new Error("Claude CLI completed without a final answer."));
         return;
       }
 
-      resolve(answer);
+      resolve(parsed.text);
     });
   });
 
@@ -122,8 +126,9 @@ export function buildClaudeCliCommand(cliArgs?: string[]): { file: string; args:
   return { file: "cmd.exe", args: ["/d", "/s", "/c", "claude.cmd", ...args] };
 }
 
-export function extractClaudeCliFinalAnswer(output: string): string {
+export function extractClaudeCliFinalAnswer(output: string): { text: string; sessionId?: string } {
   let result = "";
+  let sessionId: string | undefined;
   const textParts: string[] = [];
 
   for (const line of output.split(/\r?\n/)) {
@@ -136,11 +141,16 @@ export function extractClaudeCliFinalAnswer(output: string): string {
       const event = JSON.parse(trimmed) as {
         type?: string;
         result?: unknown;
+        session_id?: unknown;
         message?: { content?: unknown };
       };
 
       if (event.type === "result" && typeof event.result === "string") {
         result = event.result;
+      }
+
+      if (event.type === "result" && typeof event.session_id === "string") {
+        sessionId = event.session_id;
       }
 
       if (event.type === "assistant" && Array.isArray(event.message?.content)) {
@@ -155,7 +165,7 @@ export function extractClaudeCliFinalAnswer(output: string): string {
     }
   }
 
-  return (result || textParts.join("\n")).trim();
+  return { text: (result || textParts.join("\n")).trim(), sessionId };
 }
 
 export function extractSessionId(output: string): string | null {
@@ -164,7 +174,11 @@ export function extractSessionId(output: string): string | null {
     if (!trimmed) continue;
     try {
       const event = JSON.parse(trimmed);
-      if (typeof event.session_id === "string") {
+      if (
+        event.type === "system" &&
+        event.subtype === "init" &&
+        typeof event.session_id === "string"
+      ) {
         return event.session_id;
       }
     } catch {

@@ -3,6 +3,7 @@ import type {
   AgentId,
   ChatMessage,
   NewChatMessage,
+  RunResult,
   RuntimeEvent,
 } from "../shared/types.ts";
 import type { EventBus } from "./event-bus.ts";
@@ -10,7 +11,7 @@ import type { MessageStore } from "./message-store.ts";
 
 type AgentRunner = {
   get(agentId: AgentId): {
-    send(runId: string, prompt: string): Promise<string>;
+    send(runId: string, prompt: string): Promise<RunResult>;
   };
 };
 
@@ -98,7 +99,7 @@ export class RunManager {
     this.appendActivity(run, "Run started.");
 
     const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt);
-    let result: Promise<string>;
+    let result: Promise<RunResult>;
     try {
       result = this.options.agents.get(run.agentId).send(run.id, runtimePrompt);
     } catch (error: unknown) {
@@ -107,20 +108,24 @@ export class RunManager {
     }
 
     void result
-      .then((result) => this.complete(run, result))
+      .then((runResult) => this.complete(run, runResult))
       .catch((error: unknown) => this.fail(run, error instanceof Error ? error.message : String(error)));
   }
 
-  private complete(run: ManagedRun, result: string): void {
+  private complete(run: ManagedRun, runResult: RunResult): void {
     run.status = "completed";
     run.completedAt = new Date().toISOString();
     this.active.delete(run.agentId);
     this.appendActivity(run, "Run completed.");
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: result,
+      content: runResult.content,
       status: "done",
       activity: run.activity,
+      completedAt: run.completedAt,
+      startedAt: run.startedAt,
+      sessionId: runResult.sessionId,
+      runIndex: runResult.runIndex,
     });
     this.options.eventBus.publish({ type: "message.updated", message: updated });
     this.options.eventBus.publish({
@@ -143,6 +148,8 @@ export class RunManager {
       content: `${getAgentLabel(run.agentId)} failed: ${error}`,
       status: "error",
       activity: run.activity,
+      completedAt: run.completedAt,
+      startedAt: run.startedAt,
     });
     this.options.eventBus.publish({ type: "message.updated", message: updated });
     this.options.eventBus.publish({ type: "run.failed", agentId: run.agentId, runId: run.id, error });
@@ -155,10 +162,12 @@ export class RunManager {
       return;
     }
 
+    const startedAt = new Date().toISOString();
     const updated = this.options.messages.update(next.resultMessageId, {
       content: `${getAgentLabel(agentId)} is working...`,
       status: "running",
       activity: next.activity,
+      startedAt,
     });
     this.options.eventBus.publish({ type: "message.updated", message: updated });
     this.start(next);

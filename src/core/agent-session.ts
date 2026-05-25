@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
-import type { AgentId, AgentStatus } from "../shared/types.ts";
+import type { AgentId, AgentStatus, RunResult } from "../shared/types.ts";
 import { sanitizeAgentVisibleReply } from "./agent-prompt.ts";
 import { runClaudeCli } from "./claude-cli-runtime.ts";
 import { isCleanFinalAnswer } from "./claude-output-detector.ts";
@@ -26,6 +26,7 @@ type ActiveRun = {
 export class AgentSession {
   private status: AgentStatus = "stopped";
   private activeRun: ActiveRun | null = null;
+  private runCount = 0;
 
   constructor(private readonly options: AgentSessionOptions) {}
 
@@ -47,24 +48,26 @@ export class AgentSession {
     }
   }
 
-  send(runId: string, prompt: string): Promise<string> {
+  send(runId: string, prompt: string): Promise<RunResult> {
     if (this.activeRun) {
       return Promise.reject(new Error(`${this.id} is already running`));
     }
 
+    this.runCount += 1;
+    const runIndex = this.runCount;
     this.setStatus("running");
 
     const existingSession = this.options.sessionStore.load(
       this.options.channelId, this.options.conversationId, this.id,
     );
 
-    return this.executeRun(runId, prompt, existingSession?.sessionId ?? undefined)
+    return this.executeRun(runId, prompt, runIndex, existingSession?.sessionId ?? undefined)
       .catch((error: unknown) => {
         if (this.isResumeFailure(error, existingSession)) {
           this.options.sessionStore.clear(
             this.options.channelId, this.options.conversationId, this.id,
           );
-          return this.executeRun(runId, prompt, undefined);
+          return this.executeRun(runId, prompt, runIndex, undefined);
         }
 
         throw error;
@@ -98,7 +101,7 @@ export class AgentSession {
     );
   }
 
-  private executeRun(runId: string, prompt: string, resumeSessionId?: string): Promise<string> {
+  private executeRun(runId: string, prompt: string, runIndex: number, resumeSessionId?: string): Promise<RunResult> {
     this.setStatus("running");
 
     const handle = runClaudeCli({
@@ -117,6 +120,17 @@ export class AgentSession {
     });
     this.activeRun = { runId, child: handle.process };
 
+    handle.sessionId.then((sessionId) => {
+      if (sessionId && this.activeRun?.runId === runId) {
+        this.options.eventBus.publish({
+          type: "run.sessionId",
+          agentId: this.id,
+          runId,
+          sessionId,
+        });
+      }
+    });
+
     return handle.result
       .then(async (result) => {
         const sessionId = await handle.sessionId;
@@ -130,7 +144,7 @@ export class AgentSession {
         if (!isCleanFinalAnswer(cleaned)) {
           throw new Error("Agent did not return a clean final answer.");
         }
-        return cleaned;
+        return { content: cleaned, sessionId: sessionId ?? undefined, runIndex };
       })
       .catch((error: unknown) => {
         this.activeRun = null;
