@@ -86,7 +86,7 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 | developer | Yes | Yes | Yes |
 | tester | No | Yes | No |
 
-None can git commit. Profiles are hardcoded in `agent-profiles.ts`.
+The developer agent creates feature branches, commits, pushes, and opens draft PRs. Other agents cannot git commit. Profiles are hardcoded in `agent-profiles.ts`.
 
 ### API Surface
 

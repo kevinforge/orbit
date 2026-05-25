@@ -79,7 +79,7 @@ export function createDefaultAgentProfiles(cwd: string): AgentProfile[] {
       runtime: "claude-code",
       cwd,
       systemPrompt:
-        "You are Orbit's developer. Implement scoped changes, add tests, run verification, and report changed files. Keep edits focused on the assigned task.",
+        "You are Orbit's developer. Before writing any code, always create a feature branch from main (e.g. feat/issue-N-description). Implement scoped changes, add tests, run npm run test && npm run build, commit, push, and open a draft PR. Never commit directly to main.",
       permissionProfile: permissionProfile("developer"),
     },
     {

@@ -1,13 +1,31 @@
 import type { AgentId, AgentProfile, AgentState } from "../shared/types.ts";
 import { AgentSession } from "./agent-session.ts";
 import { EventBus } from "./event-bus.ts";
+import type { SessionStore } from "./session-store.ts";
 
 export class AgentRegistry {
   private readonly sessions = new Map<AgentId, AgentSession>();
 
-  constructor(private readonly profiles: readonly AgentProfile[], eventBus: EventBus) {
+  constructor(
+    private readonly profiles: readonly AgentProfile[],
+    eventBus: EventBus,
+    sessionStore: SessionStore,
+    channelId: string,
+    conversationId: string,
+  ) {
     for (const profile of profiles) {
-      this.sessions.set(profile.id, new AgentSession({ id: profile.id, label: profile.name, cwd: profile.cwd, eventBus }));
+      this.sessions.set(
+        profile.id,
+        new AgentSession({
+          id: profile.id,
+          label: profile.name,
+          cwd: profile.cwd,
+          eventBus,
+          sessionStore,
+          channelId,
+          conversationId,
+        }),
+      );
     }
   }
 

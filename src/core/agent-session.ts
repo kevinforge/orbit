@@ -5,6 +5,7 @@ import { sanitizeAgentVisibleReply } from "./agent-prompt.ts";
 import { runClaudeCli } from "./claude-cli-runtime.ts";
 import { isCleanFinalAnswer } from "./claude-output-detector.ts";
 import { EventBus } from "./event-bus.ts";
+import type { SessionRecord, SessionStore } from "./session-store.ts";
 
 export type AgentSessionOptions = {
   id: AgentId;
@@ -12,6 +13,9 @@ export type AgentSessionOptions = {
   cwd: string;
   eventBus: EventBus;
   quietWindowMs?: number;
+  sessionStore: SessionStore;
+  channelId: string;
+  conversationId: string;
 };
 
 type ActiveRun = {
@@ -49,18 +53,76 @@ export class AgentSession {
     }
 
     this.setStatus("running");
+
+    const existingSession = this.options.sessionStore.load(
+      this.options.channelId, this.options.conversationId, this.id,
+    );
+
+    return this.executeRun(runId, prompt, existingSession?.sessionId ?? undefined)
+      .catch((error: unknown) => {
+        if (this.isResumeFailure(error, existingSession)) {
+          this.options.sessionStore.clear(
+            this.options.channelId, this.options.conversationId, this.id,
+          );
+          return this.executeRun(runId, prompt, undefined);
+        }
+
+        throw error;
+      });
+  }
+
+  stop(): void {
+    if (this.activeRun) {
+      this.activeRun.child.kill();
+      this.activeRun = null;
+    }
+
+    this.setStatus("stopped");
+  }
+
+  private isResumeFailure(
+    error: unknown,
+    session: SessionRecord | null,
+  ): session is SessionRecord {
+    if (!session) return false;
+
+    const message = error instanceof Error ? error.message : String(error);
+    const lower = message.toLowerCase();
+
+    return (
+      lower.includes("session not found") ||
+      lower.includes("session expired") ||
+      lower.includes("could not resume") ||
+      lower.includes("invalid session")
+    );
+  }
+
+  private executeRun(runId: string, prompt: string, resumeSessionId?: string): Promise<string> {
+    this.setStatus("running");
+
     const handle = runClaudeCli({
       agentId: this.id,
       cwd: this.options.cwd,
       prompt,
+      resumeSessionId,
       onOutput: (text) => {
-        this.options.eventBus.publish({ type: "terminal.chunk", agentId: this.id, runId, text });
+        this.options.eventBus.publish({
+          type: "terminal.chunk",
+          agentId: this.id,
+          runId,
+          text,
+        });
       },
     });
     this.activeRun = { runId, child: handle.process };
 
     return handle.result
-      .then((result) => {
+      .then(async (result) => {
+        const sessionId = await handle.sessionId;
+        if (sessionId) {
+          this.persistSession(sessionId);
+        }
+
         this.activeRun = null;
         this.setStatus("idle");
         const cleaned = sanitizeAgentVisibleReply(result.trim());
@@ -76,13 +138,17 @@ export class AgentSession {
       });
   }
 
-  stop(): void {
-    if (this.activeRun) {
-      this.activeRun.child.kill();
-      this.activeRun = null;
-    }
-
-    this.setStatus("stopped");
+  private persistSession(sessionId: string): void {
+    const prev = this.options.sessionStore.load(
+      this.options.channelId, this.options.conversationId, this.id,
+    );
+    this.options.sessionStore.save(this.options.channelId, this.options.conversationId, this.id, {
+      agentId: this.id,
+      channelId: this.options.channelId,
+      sessionId,
+      lastRunAt: new Date().toISOString(),
+      runCount: (prev?.runCount ?? 0) + 1,
+    });
   }
 
   private setStatus(status: AgentStatus): void {
