@@ -19,7 +19,7 @@ Because this is currently a private repository on a no-cost GitHub setup, branch
 For every non-trivial change:
 
 ```text
-request or issue -> feature branch -> implementation -> npm run test -> npm run build -> commit -> push -> draft PR -> CI -> human merge
+request or issue -> feature branch -> failing tests -> implementation -> npm run test -> npm run build -> commit -> push -> draft PR -> CI -> human merge
 ```
 
 ## Build & Run Commands
