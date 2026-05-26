@@ -35,7 +35,9 @@ The runtime no longer uses PTY sessions or Claude Code hooks. A run is considere
 | `src/core/channel-router.ts` | Routes user and agent messages containing explicit assignments |
 | `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
 | `src/core/channel-context-builder.ts` | Builds private context passed into each agent run |
+| `src/core/channel-history.ts` | Builds scoped channel history for each agent run |
 | `src/core/message-store.ts` | In-memory channel messages |
+| `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
 | `src/core/terminal-transcript-store.ts` | Runtime activity transcript storage |
 | `src/core/claude-output-detector.ts` | Clean final answer validation and stream event mapping |
 | `src/ui/App.tsx` | Chat UI, agent buttons, composer, markdown, activity panel |
@@ -65,7 +67,26 @@ Agent profiles are defined in `src/core/agent-profiles.ts`. They are intentional
 
 This is not a general workflow engine. It is a lightweight team-channel routing model.
 
+## Channel History
+
+Each agent run receives a scoped history of channel messages since that agent's last completed run. This lets agents see what other agents (and the user) said while they were idle, complementing the `--resume` flag which preserves each agent's own CLI session.
+
+`buildHistoryForAgent` in `src/core/channel-history.ts` builds the history:
+
+- Scans messages from newest to oldest, starting after the agent's last `status: "done"` message
+- Skips system messages, messages still running, and routed source messages
+- Caps total history at 2000 characters, individual entries at 500 characters
+- Returns entries in chronological order
+
+The history is injected between `[Orbit Context]` and `[Full channel message]` in the prompt built by `channel-context-builder.ts`.
+
+## Session Persistence
+
+Each agent's Claude CLI session ID is persisted via `src/core/session-store.ts`. On subsequent runs, the `--resume` flag is passed so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without `--resume`.
+
 ## Claude CLI Runtime
+
+Orbit runs Claude Code through non-interactive CLI mode:
 
 Orbit runs Claude Code through non-interactive CLI mode:
 
