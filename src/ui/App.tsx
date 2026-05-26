@@ -24,6 +24,9 @@ export function App() {
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [showNewMessageHint, setShowNewMessageHint] = useState(false);
+  const isNearBottomRef = useRef(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,10 +102,23 @@ export function App() {
     setSelectedMentionIndex(0);
   }, [mentionDraft?.query]);
 
+  function handleMessagesScroll() {
+    const el = messagesRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    isNearBottomRef.current = near;
+    setIsNearBottom(near);
+    if (near) setShowNewMessageHint(false);
+  }
+
   useLayoutEffect(() => {
+    if (!isNearBottomRef.current) {
+      setShowNewMessageHint(true);
+      return;
+    }
     scrollMessagesToBottom(messagesRef.current);
     const frame = window.requestAnimationFrame(() => {
-      scrollMessagesToBottom(messagesRef.current);
+      if (isNearBottomRef.current) scrollMessagesToBottom(messagesRef.current);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [scrollKey]);
@@ -127,6 +143,9 @@ export function App() {
       }
 
       setContent("");
+      isNearBottomRef.current = true;
+      setIsNearBottom(true);
+      setShowNewMessageHint(false);
       window.setTimeout(() => inputRef.current?.focus(), 0);
     } catch {
       setState((current) => ({
@@ -232,13 +251,25 @@ export function App() {
           </div>
         </header>
 
-        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="Message list">
+        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="Message list" onScroll={handleMessagesScroll}>
           {state.messages.length === 0 ? (
             <div className="emptyState">Choose an agent, then type a task.</div>
           ) : (
             state.messages.map((message) => <MessageRow key={message.id} message={message} />)
           )}
           <div ref={messagesEndRef} />
+          {showNewMessageHint && (
+            <button
+              className="scrollToBottomHint"
+              onClick={() => {
+                scrollMessagesToBottom(messagesRef.current);
+                setShowNewMessageHint(false);
+                setIsNearBottom(true);
+              }}
+            >
+              ↓ 滚动到底部
+            </button>
+          )}
         </div>
 
         <form className="composer" onSubmit={sendMessage}>
