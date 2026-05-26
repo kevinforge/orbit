@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 
 import type { AgentId } from "../shared/types.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
@@ -46,7 +48,10 @@ export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: stri
 }
 
 export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
-  const command = buildCodexCliCommand({ cwd: options.cwd, resumeSessionId: options.resumeSessionId });
+  const command = buildCodexCliCommand(
+    { cwd: options.cwd, resumeSessionId: options.resumeSessionId },
+    options.env ?? process.env,
+  );
   const env = createCodexEnv(options.agentId, options.env ?? process.env);
   const child = spawn(command.file, command.args, {
     cwd: options.cwd,
@@ -114,13 +119,12 @@ export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
   return { process: child, result, sessionId: sessionIdPromise };
 }
 
-export function buildCodexCliCommand(options: { cwd: string; resumeSessionId?: string }): { file: string; args: string[] } {
+export function buildCodexCliCommand(
+  options: { cwd: string; resumeSessionId?: string },
+  env: NodeJS.ProcessEnv = process.env,
+): { file: string; args: string[] } {
   const args = buildCodexCliArgs(options);
-  if (os.platform() !== "win32") {
-    return { file: "codex", args };
-  }
-
-  return { file: "cmd.exe", args: ["/d", "/s", "/c", "codex.cmd", ...args] };
+  return { file: resolveCodexCommand(env), args };
 }
 
 export function extractCodexCliFinalAnswer(output: string): { text: string; sessionId?: string } {
@@ -175,6 +179,48 @@ export function createCodexEnv(agentId: AgentId, env: NodeJS.ProcessEnv): NodeJS
     ORBIT_AGENT_ID: agentId,
     CODEX_AGENT_ID: agentId,
   };
+}
+
+export function resolveCodexCommand(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.ORBIT_CODEX_PATH || env.CODEX_CLI_PATH;
+  if (configured) {
+    return configured;
+  }
+
+  if (os.platform() !== "win32") {
+    return "codex";
+  }
+
+  return resolveWindowsCodexCommand(env) ?? "codex";
+}
+
+function resolveWindowsCodexCommand(env: NodeJS.ProcessEnv): string | null {
+  const candidates = [
+    ...codexExecutablesIn(path.join(env.LOCALAPPDATA ?? "", "OpenAI", "Codex", "bin")),
+    ...codexExecutablesIn(path.join(env.USERPROFILE ?? os.homedir(), ".codex", "packages", "standalone", "releases")),
+    ...codexCommandsOnPath(env.PATH ?? env.Path ?? ""),
+  ];
+  return candidates[0] ?? null;
+}
+
+function codexExecutablesIn(baseDir: string): string[] {
+  if (!baseDir || !fs.existsSync(baseDir)) {
+    return [];
+  }
+
+  return fs.readdirSync(baseDir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase() === "codex.exe")
+    .map((entry) => path.join(entry.parentPath, entry.name))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+}
+
+function codexCommandsOnPath(pathValue: string): string[] {
+  return pathValue
+    .split(path.delimiter)
+    .filter(Boolean)
+    .filter((dir) => !dir.toLowerCase().includes(`${path.sep.toLowerCase()}windowsapps`))
+    .flatMap((dir) => [path.join(dir, "codex.cmd"), path.join(dir, "codex.exe")])
+    .filter((candidate) => fs.existsSync(candidate));
 }
 
 function sessionIdFromEvent(event: unknown): string | null {

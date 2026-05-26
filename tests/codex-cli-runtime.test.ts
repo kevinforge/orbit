@@ -7,6 +7,7 @@ import {
   createCodexEnv,
   extractCodexCliFinalAnswer,
   extractCodexSessionId,
+  resolveCodexCommand,
 } from "../src/core/codex-cli-runtime.ts";
 
 test("builds non-interactive Codex exec args without resume", () => {
@@ -34,10 +35,15 @@ test("builds Codex resume args with session id", () => {
 });
 
 test("builds a spawnable Codex command", () => {
-  const command = buildCodexCliCommand({ cwd: "D:/workspace" });
+  const command = buildCodexCliCommand({ cwd: "D:/workspace" }, { ORBIT_CODEX_PATH: "C:/codex/bin/codex.exe" });
 
-  assert.ok(command.file.length > 0);
+  assert.equal(command.file, "C:/codex/bin/codex.exe");
   assert.ok(command.args.includes("exec"));
+});
+
+test("uses configured Codex CLI path when provided", () => {
+  assert.equal(resolveCodexCommand({ ORBIT_CODEX_PATH: "C:/tools/codex.exe" }), "C:/tools/codex.exe");
+  assert.equal(resolveCodexCommand({ CODEX_CLI_PATH: "D:/tools/codex.exe" }), "D:/tools/codex.exe");
 });
 
 test("Codex env preserves the user's Codex home", () => {
