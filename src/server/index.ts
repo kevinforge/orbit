@@ -4,6 +4,7 @@ import { createDefaultAgentProfiles } from "../core/agent-profiles.ts";
 import { AgentRegistry } from "../core/agent-registry.ts";
 import { ChannelRouter } from "../core/channel-router.ts";
 import { buildChannelContext } from "../core/channel-context-builder.ts";
+import { buildHistoryForAgent } from "../core/channel-history.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { MessageStore } from "../core/message-store.ts";
 import { RunManager } from "../core/run-manager.ts";
@@ -43,7 +44,8 @@ const runManager = new RunManager({
   messages,
   eventBus,
   buildPrompt(agentId: AgentId, prompt: string) {
-    return buildChannelContext({ agentId, profiles, channelMessage: prompt });
+    const history = buildHistoryForAgent(agentId, messages.list());
+    return buildChannelContext({ agentId, profiles, channelMessage: prompt, history });
   },
   onRunCompleted(message) {
     channelRouter.process(message);

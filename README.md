@@ -16,6 +16,8 @@ The current version is intentionally small. It validates the core workflow befor
 - Claude Code CLI runtime using non-interactive stream JSON output
 - Markdown rendering for agent replies
 - Collapsible activity panel showing tool and command progress
+- Session persistence so agents retain conversation context across runs
+- Channel history injection so agents see what others said since their last run
 - Local HTTP server with Server-Sent Events
 
 ## Not Included Yet

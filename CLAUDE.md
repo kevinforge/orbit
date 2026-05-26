@@ -19,7 +19,7 @@ Because this is currently a private repository on a no-cost GitHub setup, branch
 For every non-trivial change:
 
 ```text
-request or issue -> feature branch -> implementation -> npm run test -> npm run build -> commit -> push -> draft PR -> CI -> human merge
+request or issue -> feature branch -> failing tests -> implementation -> npm run test -> npm run build -> commit -> push -> draft PR -> CI -> human merge
 ```
 
 ## Build & Run Commands
@@ -73,6 +73,8 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/run-manager.ts`** — Per-agent FIFO run queue, lifecycle events, activity classification
 - **`src/core/claude-cli-runtime.ts`** — Spawns `claude --print --output-format stream-json`, parses stdout
 - **`src/core/channel-context-builder.ts`** — Builds private system prompt injected into each Claude run
+- **`src/core/channel-history.ts`** — Builds scoped channel history (messages since agent's last completed run)
+- **`src/core/session-store.ts`** — Per-agent session persistence for `--resume`
 - **`src/core/agent-profiles.ts`** — Four hardcoded agent profiles (pm, architect, developer, tester)
 - **`src/core/agent-session.ts`** — Manages one agent's lifecycle (idle/running/error/stopped)
 - **`src/core/agent-registry.ts`** — Owns AgentSession instances, exposes agent state
