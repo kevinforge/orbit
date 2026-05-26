@@ -7,10 +7,11 @@
   "scripts": {
     "dev": "tsx src/server/index.ts",
     "build": "tsc --noEmit && vite build",
-    "test": "node --test --import tsx tests/mention-router.test.ts tests/message-store.test.ts tests/channel-router.test.ts tests/ansi-text-extractor.test.ts tests/terminal-transcript-store.test.ts tests/claude-output-detector.test.ts tests/claude-cli-runtime.test.ts tests/agent-profiles.test.ts tests/channel-context-builder.test.ts tests/channel-history.test.ts tests/markdown-renderer.test.ts tests/run-manager.test.ts tests/session-store.test.ts tests/agent-session.test.ts",
+    "test": "node --test --import tsx tests/mention-router.test.ts tests/message-store.test.ts tests/channel-router.test.ts tests/ansi-text-extractor.test.ts tests/terminal-transcript-store.test.ts tests/claude-output-detector.test.ts tests/claude-cli-runtime.test.ts tests/agent-profiles.test.ts tests/channel-context-builder.test.ts tests/channel-history.test.ts tests/run-manager.test.ts tests/session-store.test.ts tests/agent-session.test.ts",
     "test:glob": "node --test --import tsx tests/*.test.ts"
   },
   "dependencies": {
+    "marked": "^18.0.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
