@@ -25,11 +25,9 @@ test("builds Codex resume args with session id", () => {
   assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace", resumeSessionId: "sess-abc" }), [
     "exec",
     "resume",
-    "sess-abc",
     "--json",
-    "--sandbox",
-    "danger-full-access",
     "--dangerously-bypass-approvals-and-sandbox",
+    "sess-abc",
     "-",
   ]);
 });
@@ -50,6 +48,24 @@ test("extracts final answer from Codex JSONL message events", () => {
         type: "message",
         role: "assistant",
         content: [{ type: "output_text", text: "final answer" }],
+      },
+    }),
+  ].join("\n");
+
+  assert.deepEqual(extractCodexCliFinalAnswer(output), {
+    text: "final answer",
+    sessionId: "thread-123",
+  });
+});
+
+test("extracts final answer from Codex agent_message events", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "final answer",
       },
     }),
   ].join("\n");

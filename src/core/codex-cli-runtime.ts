@@ -26,11 +26,9 @@ export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: stri
     return [
       "exec",
       "resume",
-      options.resumeSessionId,
       "--json",
-      "--sandbox",
-      "danger-full-access",
       "--dangerously-bypass-approvals-and-sandbox",
+      options.resumeSessionId,
       "-",
     ];
   }
@@ -236,7 +234,7 @@ function textFromMessage(value: unknown): string {
     text?: unknown;
   };
 
-  if (message.role !== "assistant" && message.type !== "message") {
+  if (message.role !== "assistant" && message.type !== "message" && message.type !== "agent_message") {
     return "";
   }
 
