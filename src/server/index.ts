@@ -3,13 +3,13 @@ import http from "node:http";
 import { createDefaultAgentProfiles } from "../core/agent-profiles.ts";
 import { AgentRegistry } from "../core/agent-registry.ts";
 import { ChannelRouter } from "../core/channel-router.ts";
-import { buildChannelContext } from "../core/channel-context-builder.ts";
+import { buildChannelContext, type ChannelHistoryEntry } from "../core/channel-context-builder.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { MessageStore } from "../core/message-store.ts";
 import { RunManager } from "../core/run-manager.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
-import type { AgentId } from "../shared/types.ts";
+import type { AgentId, ChatMessage } from "../shared/types.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 
@@ -43,7 +43,8 @@ const runManager = new RunManager({
   messages,
   eventBus,
   buildPrompt(agentId: AgentId, prompt: string) {
-    return buildChannelContext({ agentId, profiles, channelMessage: prompt });
+    const history = buildHistoryForAgent(messages.list());
+    return buildChannelContext({ agentId, profiles, channelMessage: prompt, history });
   },
   onRunCompleted(message) {
     channelRouter.process(message);
@@ -147,6 +148,30 @@ function readJson(req: http.IncomingMessage): Promise<unknown> {
 function sendJson(res: http.ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(value));
+}
+
+const MAX_HISTORY_CHARS = 4000;
+const MAX_ENTRY_CHARS = 500;
+
+function buildHistoryForAgent(allMessages: ChatMessage[]): ChannelHistoryEntry[] {
+  const entries: ChannelHistoryEntry[] = [];
+  let totalChars = 0;
+
+  for (let i = allMessages.length - 1; i >= 0; i--) {
+    const msg = allMessages[i];
+    if (msg.kind === "system") continue;
+    if (msg.status === "running") continue;
+    if (msg.routeState === "routed") continue;
+
+    const sender = msg.kind === "user" ? "user" : (msg.agentId ?? "agent");
+    const text = msg.content.slice(0, MAX_ENTRY_CHARS);
+    if (totalChars + text.length > MAX_HISTORY_CHARS) break;
+
+    entries.unshift({ sender, content: text });
+    totalChars += text.length;
+  }
+
+  return entries;
 }
 
 function shutdown(): void {

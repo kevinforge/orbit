@@ -1,10 +1,23 @@
 import type { AgentId, AgentProfile } from "../shared/types.ts";
 
+export type ChannelHistoryEntry = {
+  sender: string;
+  content: string;
+};
+
 export type ChannelContextInput = {
   agentId: AgentId;
   profiles: readonly AgentProfile[];
   channelMessage: string;
+  history?: ChannelHistoryEntry[];
 };
+
+function renderHistory(entries: ChannelHistoryEntry[]): string[] {
+  return [
+    "[Channel history]",
+    ...entries.map((entry) => `[${entry.sender}]: ${entry.content}`),
+  ];
+}
 
 export function buildChannelContext(input: ChannelContextInput): string {
   const profile = input.profiles.find((agent) => agent.id === input.agentId);
@@ -45,6 +58,7 @@ export function buildChannelContext(input: ChannelContextInput): string {
     "- Do not include terminal UI noise, hook output, API errors, or thinking/status text.",
     "- If the task is complete, provide a concise final answer and stop.",
     "",
+    ...(input.history?.length ? [...renderHistory(input.history), ""] : []),
     "[Full channel message]",
     input.channelMessage,
   ]
