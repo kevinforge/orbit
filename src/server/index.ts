@@ -3,13 +3,14 @@ import http from "node:http";
 import { createDefaultAgentProfiles } from "../core/agent-profiles.ts";
 import { AgentRegistry } from "../core/agent-registry.ts";
 import { ChannelRouter } from "../core/channel-router.ts";
-import { buildChannelContext, type ChannelHistoryEntry } from "../core/channel-context-builder.ts";
+import { buildChannelContext } from "../core/channel-context-builder.ts";
+import { buildHistoryForAgent } from "../core/channel-history.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { MessageStore } from "../core/message-store.ts";
 import { RunManager } from "../core/run-manager.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
-import type { AgentId, ChatMessage } from "../shared/types.ts";
+import type { AgentId } from "../shared/types.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 
@@ -148,39 +149,6 @@ function readJson(req: http.IncomingMessage): Promise<unknown> {
 function sendJson(res: http.ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(value));
-}
-
-const MAX_HISTORY_CHARS = 2000;
-const MAX_ENTRY_CHARS = 500;
-
-function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[]): ChannelHistoryEntry[] {
-  let cutoffIndex = -1;
-  for (let i = allMessages.length - 1; i >= 0; i--) {
-    const msg = allMessages[i];
-    if (msg.kind === "agent" && msg.agentId === agentId && msg.status === "done") {
-      cutoffIndex = i;
-      break;
-    }
-  }
-
-  const entries: ChannelHistoryEntry[] = [];
-  let totalChars = 0;
-
-  for (let i = allMessages.length - 1; i >= cutoffIndex + 1; i--) {
-    const msg = allMessages[i];
-    if (msg.kind === "system") continue;
-    if (msg.status === "running") continue;
-    if (msg.routeState === "routed") continue;
-
-    const sender = msg.kind === "user" ? "user" : (msg.agentId ?? "agent");
-    const text = msg.content.slice(0, MAX_ENTRY_CHARS);
-    if (totalChars + text.length > MAX_HISTORY_CHARS) break;
-
-    entries.unshift({ sender, content: text });
-    totalChars += text.length;
-  }
-
-  return entries;
 }
 
 function shutdown(): void {
