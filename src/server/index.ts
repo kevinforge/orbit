@@ -43,7 +43,7 @@ const runManager = new RunManager({
   messages,
   eventBus,
   buildPrompt(agentId: AgentId, prompt: string) {
-    const history = buildHistoryForAgent(messages.list());
+    const history = buildHistoryForAgent(agentId, messages.list());
     return buildChannelContext({ agentId, profiles, channelMessage: prompt, history });
   },
   onRunCompleted(message) {
@@ -150,14 +150,23 @@ function sendJson(res: http.ServerResponse, status: number, value: unknown): voi
   res.end(JSON.stringify(value));
 }
 
-const MAX_HISTORY_CHARS = 4000;
+const MAX_HISTORY_CHARS = 2000;
 const MAX_ENTRY_CHARS = 500;
 
-function buildHistoryForAgent(allMessages: ChatMessage[]): ChannelHistoryEntry[] {
+function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[]): ChannelHistoryEntry[] {
+  let cutoffIndex = -1;
+  for (let i = allMessages.length - 1; i >= 0; i--) {
+    const msg = allMessages[i];
+    if (msg.kind === "agent" && msg.agentId === agentId && msg.status === "done") {
+      cutoffIndex = i;
+      break;
+    }
+  }
+
   const entries: ChannelHistoryEntry[] = [];
   let totalChars = 0;
 
-  for (let i = allMessages.length - 1; i >= 0; i--) {
+  for (let i = allMessages.length - 1; i >= cutoffIndex + 1; i--) {
     const msg = allMessages[i];
     if (msg.kind === "system") continue;
     if (msg.status === "running") continue;
