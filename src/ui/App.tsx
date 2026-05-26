@@ -1,4 +1,5 @@
-import { FormEvent, KeyboardEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { marked } from "marked";
 import type { AgentActivityEvent, AgentId, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
 
 const initialState: AppState = {
@@ -502,110 +503,12 @@ function activityText(item: AgentActivityEvent): string {
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  const blocks: ReactNode[] = [];
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index] ?? "";
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      index += 1;
-      continue;
-    }
-
-    const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed);
-    if (heading) {
-      const level = Math.min(heading[1].length, 4);
-      const Tag = `h${level}` as "h1" | "h2" | "h3" | "h4";
-      blocks.push(<Tag key={blocks.length}>{renderInline(heading[2])}</Tag>);
-      index += 1;
-      continue;
-    }
-
-    if (/^[-*]\s+/.test(trimmed)) {
-      const items: ReactNode[] = [];
-      while (index < lines.length && /^[-*]\s+/.test((lines[index] ?? "").trim())) {
-        items.push(<li key={items.length}>{renderInline((lines[index] ?? "").trim().replace(/^[-*]\s+/, ""))}</li>);
-        index += 1;
-      }
-      blocks.push(<ul key={blocks.length}>{items}</ul>);
-      continue;
-    }
-
-    if (looksLikeTableRow(trimmed)) {
-      const rows: string[][] = [];
-      while (index < lines.length && looksLikeTableRow((lines[index] ?? "").trim())) {
-        const row = (lines[index] ?? "").trim();
-        if (!/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(row)) {
-          rows.push(splitTableRow(row));
-        }
-        index += 1;
-      }
-      blocks.push(<MarkdownTable key={blocks.length} rows={rows} />);
-      continue;
-    }
-
-    const paragraphLines: string[] = [];
-    while (index < lines.length) {
-      const current = (lines[index] ?? "").trim();
-      if (!current || /^(#{1,6})\s+/.test(current) || /^[-*]\s+/.test(current) || looksLikeTableRow(current)) {
-        break;
-      }
-      paragraphLines.push(current);
-      index += 1;
-    }
-    blocks.push(<p key={blocks.length}>{renderInline(paragraphLines.join(" "))}</p>);
-  }
-
-  return <div className="markdown">{blocks}</div>;
-}
-
-function MarkdownTable({ rows }: { rows: string[][] }) {
-  if (rows.length === 0) {
-    return null;
-  }
-
-  const [header, ...body] = rows;
-  return (
-    <div className="markdownTableWrap">
-      <table>
-        <thead>
-          <tr>{header.map((cell, index) => <th key={index}>{renderInline(cell)}</th>)}</tr>
-        </thead>
-        <tbody>
-          {body.map((row, rowIndex) => (
-            <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{renderInline(cell)}</td>)}</tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  const html = marked.parse(content, { async: false }) as string;
+  return <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function PlainText({ content }: { content: string }) {
   return <div className="plainText">{content}</div>;
-}
-
-function renderInline(text: string): ReactNode[] {
-  return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => {
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return <code key={index}>{part.slice(1, -1)}</code>;
-    }
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>;
-    }
-    return <span key={index}>{part}</span>;
-  });
-}
-
-function looksLikeTableRow(line: string): boolean {
-  return line.includes("|") && line.split("|").filter((cell) => cell.trim()).length >= 2;
-}
-
-function splitTableRow(line: string): string[] {
-  return line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
 }
 
 function applyEvent(state: AppState, event: RuntimeEvent): AppState {

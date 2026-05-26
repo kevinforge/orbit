@@ -11,6 +11,7 @@
     "test:glob": "node --test --import tsx tests/*.test.ts"
   },
   "dependencies": {
+    "marked": "^18.0.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
