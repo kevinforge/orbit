@@ -1,7 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
 
 import type { AgentId } from "../shared/types.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
@@ -49,7 +47,7 @@ export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: stri
 
 export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
   const command = buildCodexCliCommand({ cwd: options.cwd, resumeSessionId: options.resumeSessionId });
-  const env = createCodexEnv(options.agentId, options.cwd, options.env ?? process.env);
+  const env = createCodexEnv(options.agentId, options.env ?? process.env);
   const child = spawn(command.file, command.args, {
     cwd: options.cwd,
     env,
@@ -171,56 +169,12 @@ export const codexRuntime: AgentRuntime = {
   run: runCodexCli,
 };
 
-export function createCodexEnv(agentId: AgentId, cwd: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const sourceHome = resolveCodexSourceHome(env);
-  const agentHome = codexHomeForAgent(cwd, agentId);
-  prepareCodexHome(sourceHome, agentHome);
-
+export function createCodexEnv(agentId: AgentId, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...env,
-    CODEX_HOME: agentHome,
     ORBIT_AGENT_ID: agentId,
     CODEX_AGENT_ID: agentId,
   };
-}
-
-export function codexHomeForAgent(cwd: string, agentId: AgentId): string {
-  return path.join(cwd, ".orbit", "runtimes", "codex", sanitizePathSegment(agentId));
-}
-
-export function prepareCodexHome(sourceHome: string, targetHome: string): void {
-  if (path.resolve(sourceHome) === path.resolve(targetHome)) {
-    return;
-  }
-
-  fs.mkdirSync(targetHome, { recursive: true });
-  for (const fileName of ["auth.json", "config.toml", "AGENTS.md", "installation_id", "version.json"]) {
-    copyIfNewer(path.join(sourceHome, fileName), path.join(targetHome, fileName));
-  }
-}
-
-function resolveCodexSourceHome(env: NodeJS.ProcessEnv): string {
-  return env.CODEX_HOME || path.join(os.homedir(), ".codex");
-}
-
-function copyIfNewer(source: string, target: string): void {
-  if (!fs.existsSync(source)) {
-    return;
-  }
-
-  if (fs.existsSync(target)) {
-    const sourceStat = fs.statSync(source);
-    const targetStat = fs.statSync(target);
-    if (targetStat.mtimeMs >= sourceStat.mtimeMs) {
-      return;
-    }
-  }
-
-  fs.copyFileSync(source, target);
-}
-
-function sanitizePathSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "-");
 }
 
 function sessionIdFromEvent(event: unknown): string | null {
