@@ -1,6 +1,6 @@
 # Orbit Architecture
 
-Orbit is a local-first agent collaboration app. The current implementation runs one local HTTP server, one React UI, and multiple Claude Code CLI runs on the user's machine.
+Orbit is a local-first agent collaboration app. The current implementation runs one local HTTP server, one React UI, and multiple CLI-backed agent runs on the user's machine.
 
 ## Runtime Flow
 
@@ -11,8 +11,9 @@ React UI
   -> ChannelRouter
   -> RunManager
   -> AgentRegistry / AgentSession
-  -> Claude Code CLI --print --output-format stream-json
-  -> Claude stream events
+  -> Runtime adapter
+  -> Claude Code or CodeBuddy CLI --print --output-format stream-json
+  -> CLI stream events
   -> MessageStore + TerminalTranscriptStore
   -> SSE
   -> React UI
@@ -29,8 +30,10 @@ The runtime no longer uses PTY sessions or Claude Code hooks. A run is considere
 | `src/server/static-server.ts` | Static UI serving |
 | `src/core/agent-profiles.ts` | Built-in role definitions and permission profiles |
 | `src/core/agent-registry.ts` | Owns agent sessions and exposes agent state |
-| `src/core/agent-session.ts` | Starts one Claude CLI run and tracks status |
+| `src/core/agent-session.ts` | Starts one runtime adapter run and tracks status |
+| `src/core/agent-runtime.ts` | Shared runtime adapter contract |
 | `src/core/claude-cli-runtime.ts` | Spawns Claude Code CLI and parses stream JSON output |
+| `src/core/codebuddy-cli-runtime.ts` | Spawns CodeBuddy CLI and parses stream JSON output |
 | `src/core/run-manager.ts` | Per-agent run queue and lifecycle events |
 | `src/core/channel-router.ts` | Routes user and agent messages containing explicit assignments |
 | `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
@@ -53,7 +56,11 @@ The current build has four fixed agents:
 | `@developer:` | Developer |
 | `@tester:` | Tester |
 
-Agent profiles are defined in `src/core/agent-profiles.ts`. They are intentionally hardcoded for now to keep the first local product loop simple.
+Agent profiles are defined in `src/core/agent-profiles.ts`. They are intentionally hardcoded for now to keep the first local product loop simple. Each profile has a `runtime` value. Defaults use `claude-code`, and `ORBIT_AGENT_RUNTIMES` can override selected agents at startup:
+
+```text
+ORBIT_AGENT_RUNTIMES=developer=codebuddy,tester=codebuddy
+```
 
 ## Routing Rules
 
@@ -84,14 +91,20 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 
 Each agent's Claude CLI session ID is persisted via `src/core/session-store.ts`. On subsequent runs, the `--resume` flag is passed so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without `--resume`.
 
-## Claude CLI Runtime
+## CLI Runtimes
 
-Orbit runs Claude Code through non-interactive CLI mode:
+Orbit runs Claude Code and CodeBuddy through non-interactive CLI mode via runtime adapters. Claude Code uses:
 
 Orbit runs Claude Code through non-interactive CLI mode:
 
 ```text
 claude --print --verbose --output-format stream-json --include-partial-messages --permission-mode bypassPermissions
+```
+
+CodeBuddy uses:
+
+```text
+codebuddy --print --output-format stream-json --include-partial-messages --permission-mode bypassPermissions
 ```
 
 The user prompt is written to stdin. Stream JSON events are converted into:

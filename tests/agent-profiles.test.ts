@@ -25,3 +25,28 @@ test("developer can write files while pm cannot", () => {
   assert.equal(developer?.permissionProfile.canWriteFiles, true);
 });
 
+test("applies runtime overrides to selected agents", () => {
+  const profiles = createDefaultAgentProfiles("D:/project", {
+    developer: "codebuddy",
+    tester: "claude-code",
+  });
+
+  assert.equal(profiles.find((profile) => profile.id === "developer")?.runtime, "codebuddy");
+  assert.equal(profiles.find((profile) => profile.id === "tester")?.runtime, "claude-code");
+  assert.equal(profiles.find((profile) => profile.id === "pm")?.runtime, "claude-code");
+});
+
+test("parses agent runtime overrides from comma separated config", async () => {
+  const { parseAgentRuntimeOverrides } = await import("../src/core/agent-profiles.ts");
+
+  assert.deepEqual(parseAgentRuntimeOverrides("developer=codebuddy,tester=claude-code"), {
+    developer: "codebuddy",
+    tester: "claude-code",
+  });
+});
+
+test("rejects runtime overrides without an adapter", async () => {
+  const { parseAgentRuntimeOverrides } = await import("../src/core/agent-profiles.ts");
+
+  assert.throws(() => parseAgentRuntimeOverrides("developer=codex"), /Unsupported runtime/);
+});

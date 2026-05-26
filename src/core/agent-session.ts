@@ -1,8 +1,6 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
-
-import type { AgentId, AgentStatus, RunResult } from "../shared/types.ts";
+import type { AgentId, AgentStatus, PermissionProfile, RunResult } from "../shared/types.ts";
+import type { AgentRuntime } from "./agent-runtime.ts";
 import { sanitizeAgentVisibleReply } from "./agent-prompt.ts";
-import { runClaudeCli } from "./claude-cli-runtime.ts";
 import { isCleanFinalAnswer } from "./claude-output-detector.ts";
 import { EventBus } from "./event-bus.ts";
 import type { SessionRecord, SessionStore } from "./session-store.ts";
@@ -11,6 +9,8 @@ export type AgentSessionOptions = {
   id: AgentId;
   label: string;
   cwd: string;
+  permissionProfile: PermissionProfile;
+  runtime: AgentRuntime;
   eventBus: EventBus;
   quietWindowMs?: number;
   sessionStore: SessionStore;
@@ -20,7 +20,7 @@ export type AgentSessionOptions = {
 
 type ActiveRun = {
   runId: string;
-  child: ChildProcessWithoutNullStreams;
+  child: { kill: () => unknown };
 };
 
 export class AgentSession {
@@ -104,10 +104,11 @@ export class AgentSession {
   private executeRun(runId: string, prompt: string, runIndex: number, resumeSessionId?: string): Promise<RunResult> {
     this.setStatus("running");
 
-    const handle = runClaudeCli({
+    const handle = this.options.runtime.run({
       agentId: this.id,
       cwd: this.options.cwd,
       prompt,
+      permissionProfile: this.options.permissionProfile,
       resumeSessionId,
       onOutput: (text) => {
         this.options.eventBus.publish({

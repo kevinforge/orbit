@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { AgentSession } from "../src/core/agent-session.ts";
+import type { AgentRuntime, AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
 
@@ -17,11 +18,45 @@ function makeSession(store: SessionStore): AgentSession {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime: {
+      kind: "claude-code",
+      run() {
+        throw new Error("test runtime should not be called");
+      },
+    },
     eventBus: new EventBus(),
     sessionStore: store,
     channelId: "default",
     conversationId: "default",
   });
+}
+
+function controllableRuntime(result: string, sessionId: string | null = null) {
+  const calls: AgentRuntimeRunOptions[] = [];
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      calls.push(options);
+      return {
+        process: {
+          kill() {
+            return true;
+          },
+        },
+        result: Promise.resolve(result),
+        sessionId: Promise.resolve(sessionId),
+      };
+    },
+  };
+  return { runtime, calls };
 }
 
 test("send without prior session — no resume flag, session persisted", async () => {
@@ -116,6 +151,15 @@ test("different conversations use independent sessions", () => {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime: controllableRuntime("unused").runtime,
     eventBus: new EventBus(),
     sessionStore: store,
     channelId: "default",
@@ -126,6 +170,15 @@ test("different conversations use independent sessions", () => {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime: controllableRuntime("unused").runtime,
     eventBus: new EventBus(),
     sessionStore: store,
     channelId: "default",
@@ -153,4 +206,47 @@ test("different conversations use independent sessions", () => {
 
   assert.equal(store.load("default", "conv-a", "developer")!.sessionId, "sess-a");
   assert.equal(store.load("default", "conv-b", "developer")!.sessionId, "sess-b");
+});
+
+test("send executes through configured runtime and passes resume session", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  store.save("default", "default", "developer", {
+    agentId: "developer",
+    channelId: "default",
+    sessionId: "existing-sess",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+  const { runtime, calls } = controllableRuntime("clean final", "next-sess");
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    channelId: "default",
+    conversationId: "default",
+  });
+
+  session.start();
+  const result = await session.send("run-1", "hello");
+
+  assert.equal(result.content, "clean final");
+  assert.equal(result.sessionId, "next-sess");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.agentId, "developer");
+  assert.equal(calls[0]!.cwd, "D:/workspace");
+  assert.equal(calls[0]!.prompt, "hello");
+  assert.equal(calls[0]!.resumeSessionId, "existing-sess");
+  assert.equal(store.load("default", "default", "developer")!.sessionId, "next-sess");
 });

@@ -46,6 +46,14 @@ npm install
 npm run dev
 ```
 
+默认所有内置 Agent 都使用 Claude Code。可以在启动前设置 `ORBIT_AGENT_RUNTIMES`，把指定 Agent 切换到 CodeBuddy CLI：
+
+```powershell
+$env:ORBIT_AGENT_RUNTIMES="developer=codebuddy,tester=codebuddy"; npm run dev
+```
+
+当前支持的 runtime 值是 `claude-code` 和 `codebuddy`。
+
 打开 `http://localhost:4317`。
 
 Windows PowerShell 下可以用下面的命令重启本地服务，并先释放默认端口：
