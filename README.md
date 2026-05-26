@@ -17,6 +17,7 @@ The current version is intentionally small. It validates the core workflow befor
 - Markdown rendering for agent replies
 - Collapsible activity panel showing tool and command progress
 - Session persistence so agents retain conversation context across runs
+- Per-agent runtime homes under `.orbit/` so CLI backends do not share incompatible local sessions
 - Channel history injection so agents see what others said since their last run
 - Local HTTP server with Server-Sent Events
 

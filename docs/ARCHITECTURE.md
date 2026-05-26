@@ -101,6 +101,8 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 
 Each agent's CLI session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. On subsequent runs, the runtime adapter passes the corresponding resume option so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without resuming.
 
+Codex also receives an agent-specific `CODEX_HOME` under `.orbit/runtimes/codex/<agent>`. Orbit bootstraps that directory with the user's existing Codex auth/config files, but leaves Codex's own sessions, logs, and cache isolated per agent. This prevents two Codex-backed agents such as `@pm:` and `@architect:` from sharing or resuming the same local Codex conversation.
+
 ## CLI Runtimes
 
 Orbit runs each backend through a runtime adapter. Codex uses:

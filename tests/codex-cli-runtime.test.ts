@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
   buildCodexCliArgs,
   buildCodexCliCommand,
+  codexHomeForAgent,
+  createCodexEnv,
   extractCodexCliFinalAnswer,
   extractCodexSessionId,
+  prepareCodexHome,
 } from "../src/core/codex-cli-runtime.ts";
+
+function tmpDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-codex-runtime-test-"));
+}
 
 test("builds non-interactive Codex exec args without resume", () => {
   assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace" }), [
@@ -37,6 +47,53 @@ test("builds a spawnable Codex command", () => {
 
   assert.ok(command.file.length > 0);
   assert.ok(command.args.includes("exec"));
+});
+
+test("creates isolated Codex homes per agent", () => {
+  assert.equal(
+    codexHomeForAgent("D:/workspace", "pm"),
+    path.join("D:/workspace", ".orbit", "runtimes", "codex", "pm"),
+  );
+  assert.equal(
+    codexHomeForAgent("D:/workspace", "architect"),
+    path.join("D:/workspace", ".orbit", "runtimes", "codex", "architect"),
+  );
+});
+
+test("Codex env uses agent-specific CODEX_HOME and bootstraps auth files", () => {
+  const cwd = tmpDir();
+  const sourceHome = tmpDir();
+  fs.writeFileSync(path.join(sourceHome, "auth.json"), "{\"token\":\"test\"}");
+  fs.writeFileSync(path.join(sourceHome, "config.toml"), "model = \"test\"");
+  fs.mkdirSync(path.join(sourceHome, "sessions"));
+  fs.writeFileSync(path.join(sourceHome, "sessions", "shared.json"), "{}");
+
+  const env = createCodexEnv("pm", cwd, { CODEX_HOME: sourceHome });
+  const targetHome = path.join(cwd, ".orbit", "runtimes", "codex", "pm");
+
+  assert.equal(env.CODEX_HOME, targetHome);
+  assert.equal(env.ORBIT_AGENT_ID, "pm");
+  assert.equal(env.CODEX_AGENT_ID, "pm");
+  assert.equal(fs.readFileSync(path.join(targetHome, "auth.json"), "utf8"), "{\"token\":\"test\"}");
+  assert.equal(fs.readFileSync(path.join(targetHome, "config.toml"), "utf8"), "model = \"test\"");
+  assert.equal(fs.existsSync(path.join(targetHome, "sessions", "shared.json")), false);
+});
+
+test("prepareCodexHome preserves newer target auth files", () => {
+  const sourceHome = tmpDir();
+  const targetHome = tmpDir();
+  const sourceAuth = path.join(sourceHome, "auth.json");
+  const targetAuth = path.join(targetHome, "auth.json");
+  fs.writeFileSync(sourceAuth, "source");
+  fs.writeFileSync(targetAuth, "target");
+
+  const now = Date.now();
+  fs.utimesSync(sourceAuth, new Date(now - 10_000), new Date(now - 10_000));
+  fs.utimesSync(targetAuth, new Date(now), new Date(now));
+
+  prepareCodexHome(sourceHome, targetHome);
+
+  assert.equal(fs.readFileSync(targetAuth, "utf8"), "target");
 });
 
 test("extracts final answer from Codex JSONL message events", () => {
