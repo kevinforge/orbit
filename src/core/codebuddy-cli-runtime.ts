@@ -92,6 +92,11 @@ export function runCodeBuddyCli(options: CodeBuddyCliRunOptions): CodeBuddyCliRu
       }
 
       const parsed = extractCodeBuddyCliFinalAnswer(stdout);
+      if (parsed.error) {
+        reject(new Error(parsed.error));
+        return;
+      }
+
       if (!parsed.text) {
         reject(new Error("CodeBuddy CLI completed without a final answer."));
         return;
@@ -114,9 +119,10 @@ export function buildCodeBuddyCliCommand(cliArgs?: string[]): { file: string; ar
   return { file: "cmd.exe", args: ["/d", "/s", "/c", "codebuddy.cmd", ...args] };
 }
 
-export function extractCodeBuddyCliFinalAnswer(output: string): { text: string; sessionId?: string } {
+export function extractCodeBuddyCliFinalAnswer(output: string): { text: string; sessionId?: string; error?: string } {
   let result = "";
   let sessionId: string | undefined;
+  let error: string | undefined;
   const textParts: string[] = [];
 
   for (const line of output.split(/\r?\n/)) {
@@ -129,9 +135,18 @@ export function extractCodeBuddyCliFinalAnswer(output: string): { text: string; 
       const event = JSON.parse(trimmed) as {
         type?: string;
         result?: unknown;
+        error?: unknown;
+        message?: unknown;
         session_id?: unknown;
-        message?: { content?: unknown };
       };
+
+      if (event.type === "error") {
+        if (typeof event.error === "string") {
+          error = event.error;
+        } else if (typeof event.message === "string") {
+          error = event.message;
+        }
+      }
 
       if (event.type === "result" && typeof event.result === "string") {
         result = event.result;
@@ -141,8 +156,9 @@ export function extractCodeBuddyCliFinalAnswer(output: string): { text: string; 
         sessionId = event.session_id;
       }
 
-      if (event.type === "assistant" && Array.isArray(event.message?.content)) {
-        for (const part of event.message.content as Array<{ type?: unknown; text?: unknown }>) {
+      const message = typeof event.message === "object" && event.message ? event.message as { content?: unknown } : null;
+      if (event.type === "assistant" && Array.isArray(message?.content)) {
+        for (const part of message.content as Array<{ type?: unknown; text?: unknown }>) {
           if (part.type === "text" && typeof part.text === "string") {
             textParts.push(part.text);
           }
@@ -153,7 +169,11 @@ export function extractCodeBuddyCliFinalAnswer(output: string): { text: string; 
     }
   }
 
-  return { text: (result || textParts.join("\n")).trim(), sessionId };
+  return {
+    text: (result || textParts.join("\n")).trim(),
+    ...(sessionId ? { sessionId } : {}),
+    ...(error ? { error } : {}),
+  };
 }
 
 export function extractCodeBuddySessionId(output: string): string | null {

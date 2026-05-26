@@ -51,6 +51,15 @@ test("extracts final answer from CodeBuddy stream-json result events", () => {
   });
 });
 
+test("extracts CodeBuddy error events", () => {
+  const output = JSON.stringify({ type: "error", error: "No conversation found with session ID: bad-session" });
+
+  assert.deepEqual(extractCodeBuddyCliFinalAnswer(output), {
+    text: "",
+    error: "No conversation found with session ID: bad-session",
+  });
+});
+
 test("extracts CodeBuddy session id from init events", () => {
   const output = JSON.stringify({ type: "system", subtype: "init", session_id: "sess-init" });
   assert.equal(extractCodeBuddySessionId(output), "sess-init");
