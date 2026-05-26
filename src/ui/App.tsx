@@ -524,6 +524,29 @@ function MarkdownContent({ content }: { content: string }) {
       continue;
     }
 
+    if (trimmed.startsWith("```")) {
+      const lang = trimmed.slice(3).trim();
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !lines[index]?.startsWith("```")) {
+        codeLines.push(lines[index] ?? "");
+        index += 1;
+      }
+      index += 1;
+      blocks.push(
+        <pre key={blocks.length} className={lang ? `language-${lang}` : ""}>
+          <code>{codeLines.join("\n")}</code>
+        </pre>,
+      );
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      blocks.push(<hr key={blocks.length} />);
+      index += 1;
+      continue;
+    }
+
     if (/^[-*]\s+/.test(trimmed)) {
       const items: ReactNode[] = [];
       while (index < lines.length && /^[-*]\s+/.test((lines[index] ?? "").trim())) {
@@ -550,7 +573,7 @@ function MarkdownContent({ content }: { content: string }) {
     const paragraphLines: string[] = [];
     while (index < lines.length) {
       const current = (lines[index] ?? "").trim();
-      if (!current || /^(#{1,6})\s+/.test(current) || /^[-*]\s+/.test(current) || looksLikeTableRow(current)) {
+      if (!current || /^(#{1,6})\s+/.test(current) || /^[-*]\s+/.test(current) || looksLikeTableRow(current) || current.startsWith("```") || /^(-{3,}|\*{3,}|_{3,})$/.test(current)) {
         break;
       }
       paragraphLines.push(current);
