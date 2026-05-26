@@ -12,7 +12,7 @@ function tmpDir(): string {
 
 test("load returns null for missing file", () => {
   const store = new SessionStore(tmpDir());
-  assert.equal(store.load("default", "default", "pm"), null);
+  assert.equal(store.load("claude-code", "default", "default", "pm"), null);
 });
 
 test("save then load round-trips", () => {
@@ -21,13 +21,14 @@ test("save then load round-trips", () => {
   const record = {
     agentId: "pm",
     channelId: "default",
+    runtime: "claude-code" as const,
     sessionId: "sess-123",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   };
 
-  store.save("default", "default", "pm", record);
-  const loaded = store.load("default", "default", "pm");
+  store.save("claude-code", "default", "default", "pm", record);
+  const loaded = store.load("claude-code", "default", "default", "pm");
 
   assert.deepEqual(loaded, record);
 });
@@ -36,54 +37,58 @@ test("save creates directories", () => {
   const dir = path.join(tmpDir(), "nested", "deep");
   const store = new SessionStore(dir);
 
-  store.save("default", "default", "developer", {
+  store.save("claude-code", "default", "default", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "s1",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  assert.ok(fs.existsSync(path.join(dir, "default", "default", "developer.json")));
+  assert.ok(fs.existsSync(path.join(dir, "claude-code", "default", "default", "developer.json")));
 });
 
 test("clear removes the file", () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
 
-  store.save("default", "default", "architect", {
+  store.save("claude-code", "default", "default", "architect", {
     agentId: "architect",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "s2",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  store.clear("default", "default", "architect");
-  assert.equal(store.load("default", "default", "architect"), null);
+  store.clear("claude-code", "default", "default", "architect");
+  assert.equal(store.load("claude-code", "default", "default", "architect"), null);
 });
 
 test("save overwrites previous", () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
 
-  store.save("default", "default", "tester", {
+  store.save("claude-code", "default", "default", "tester", {
     agentId: "tester",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "old",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  store.save("default", "default", "tester", {
+  store.save("claude-code", "default", "default", "tester", {
     agentId: "tester",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "new",
     lastRunAt: new Date().toISOString(),
     runCount: 2,
   });
 
-  const loaded = store.load("default", "default", "tester");
+  const loaded = store.load("claude-code", "default", "default", "tester");
   assert.equal(loaded!.sessionId, "new");
   assert.equal(loaded!.runCount, 2);
 });
@@ -92,15 +97,16 @@ test("custom baseDir is used", () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
 
-  store.save("ch1", "conv1", "pm", {
+  store.save("claude-code", "ch1", "conv1", "pm", {
     agentId: "pm",
     channelId: "ch1",
+    runtime: "claude-code",
     sessionId: "s3",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  const expectedPath = path.join(dir, "ch1", "conv1", "pm.json");
+  const expectedPath = path.join(dir, "claude-code", "ch1", "conv1", "pm.json");
   assert.ok(fs.existsSync(expectedPath));
 });
 
@@ -108,22 +114,50 @@ test("different conversations for the same agent are independent", () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
 
-  store.save("default", "conv-a", "developer", {
+  store.save("claude-code", "default", "conv-a", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "sess-conv-a",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  store.save("default", "conv-b", "developer", {
+  store.save("claude-code", "default", "conv-b", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "sess-conv-b",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  assert.equal(store.load("default", "conv-a", "developer")!.sessionId, "sess-conv-a");
-  assert.equal(store.load("default", "conv-b", "developer")!.sessionId, "sess-conv-b");
+  assert.equal(store.load("claude-code", "default", "conv-a", "developer")!.sessionId, "sess-conv-a");
+  assert.equal(store.load("claude-code", "default", "conv-b", "developer")!.sessionId, "sess-conv-b");
+});
+
+test("different runtimes for the same agent are independent", () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+
+  store.save("claude-code", "default", "default", "developer", {
+    agentId: "developer",
+    channelId: "default",
+    runtime: "claude-code",
+    sessionId: "claude-session",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+
+  store.save("codebuddy", "default", "default", "developer", {
+    agentId: "developer",
+    channelId: "default",
+    runtime: "codebuddy",
+    sessionId: "codebuddy-session",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+
+  assert.equal(store.load("claude-code", "default", "default", "developer")!.sessionId, "claude-session");
+  assert.equal(store.load("codebuddy", "default", "default", "developer")!.sessionId, "codebuddy-session");
 });

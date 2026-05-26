@@ -28,6 +28,7 @@ export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
 export type AgentState = {
   id: AgentId;
   label: string;
+  runtime: AgentRuntimeKind;
   status: AgentStatus;
   selected?: boolean;
 };

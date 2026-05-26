@@ -47,3 +47,34 @@ test("creates sessions with the runtime selected by each profile", async () => {
   assert.equal(result.content, "codebuddy final");
   assert.deepEqual(calls, ["tester"]);
 });
+
+test("states include each agent runtime", () => {
+  const profiles = createDefaultAgentProfiles(process.cwd()).map((profile) =>
+    profile.id === "developer" ? { ...profile, runtime: "codebuddy" as const } : profile,
+  );
+  const runtime: AgentRuntime = {
+    kind: "claude-code",
+    run() {
+      throw new Error("runtime should not run");
+    },
+  };
+  const codeBuddyRuntime: AgentRuntime = {
+    ...runtime,
+    kind: "codebuddy",
+  };
+  const registry = new AgentRegistry(
+    profiles,
+    new EventBus(),
+    new SessionStore(),
+    "default",
+    "default",
+    new Map([
+      ["claude-code", runtime],
+      ["codebuddy", codeBuddyRuntime],
+    ]),
+  );
+
+  const developer = registry.states().find((state) => state.id === "developer");
+
+  assert.equal(developer?.runtime, "codebuddy");
+});

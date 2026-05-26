@@ -89,7 +89,7 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 
 ## Session Persistence
 
-Each agent's Claude CLI session ID is persisted via `src/core/session-store.ts`. On subsequent runs, the `--resume` flag is passed so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without `--resume`.
+Each agent's CLI session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Claude Code and CodeBuddy does not reuse an incompatible session ID. On subsequent runs, the `--resume` flag is passed so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without `--resume`.
 
 ## CLI Runtimes
 

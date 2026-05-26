@@ -67,6 +67,7 @@ export class AgentRegistry {
     return this.profiles.map((profile, index) => ({
       id: profile.id,
       label: profile.name,
+      runtime: profile.runtime,
       status: this.get(profile.id).getStatus(),
       selected: index === 0,
     }));

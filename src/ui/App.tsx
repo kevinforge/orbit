@@ -4,10 +4,10 @@ import type { AgentActivityEvent, AgentId, AgentState, AppState, ChatMessage, Ru
 
 const initialState: AppState = {
   agents: [
-    { id: "pm", label: "Product Manager", status: "starting", selected: true },
-    { id: "architect", label: "Architect", status: "starting", selected: false },
-    { id: "developer", label: "Developer", status: "starting", selected: false },
-    { id: "tester", label: "Tester", status: "starting", selected: false },
+    { id: "pm", label: "Product Manager", runtime: "claude-code", status: "starting", selected: true },
+    { id: "architect", label: "Architect", runtime: "claude-code", status: "starting", selected: false },
+    { id: "developer", label: "Developer", runtime: "claude-code", status: "starting", selected: false },
+    { id: "tester", label: "Tester", runtime: "claude-code", status: "starting", selected: false },
   ],
   messages: [],
   terminal: {},
@@ -256,7 +256,13 @@ export function App() {
           {state.messages.length === 0 ? (
             <div className="emptyState">Choose an agent, then type a task.</div>
           ) : (
-            state.messages.map((message) => <MessageRow key={message.id} message={message} />)
+            state.messages.map((message) => (
+              <MessageRow
+                key={message.id}
+                message={message}
+                agent={message.agentId ? agentsById.get(message.agentId) : undefined}
+              />
+            ))
           )}
           <div ref={messagesEndRef} />
           {showNewMessageHint && (
@@ -346,7 +352,10 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
     <button className={`agentButton ${props.selected ? "selected" : ""}`} onClick={props.onClick} type="button">
       <span className={`statusDot ${props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
-        <strong>{props.agent.label}</strong>
+        <strong>
+          {props.agent.label}
+          <RuntimeBadge runtime={props.agent.runtime} />
+        </strong>
         <small>{props.agent.id}</small>
       </span>
       <span className="agentStatus">{props.agent.status}</span>
@@ -354,7 +363,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
   );
 }
 
-function MessageRow({ message }: { message: ChatMessage }) {
+function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentState }) {
   const author = message.kind === "user" ? "You" : message.kind === "agent" ? message.agentId ?? "agent" : "system";
   const isRunning = message.status === "running";
 
@@ -362,6 +371,7 @@ function MessageRow({ message }: { message: ChatMessage }) {
     <article className={`message ${message.kind}`}>
       <div className="messageMeta">
         <strong>{author}</strong>
+        {message.kind === "agent" && agent ? <RuntimeBadge runtime={agent.runtime} /> : null}
         {message.status ? <span>{message.status}</span> : null}
         <DurationDisplay
           startedAt={message.startedAt ?? (isRunning ? message.createdAt : undefined)}
@@ -560,12 +570,28 @@ function upsertMessage(state: AppState, nextMessage: ChatMessage): AppState {
 
 function normalizeState(nextState: AppState): AppState {
   return {
-    agents: nextState.agents?.length ? nextState.agents : initialState.agents,
+    agents: nextState.agents?.length
+      ? nextState.agents.map((agent) => ({ ...agent, runtime: agent.runtime ?? "claude-code" }))
+      : initialState.agents,
     messages: nextState.messages ?? [],
     terminal: {
       ...(nextState.terminal ?? {}),
     },
   };
+}
+
+function RuntimeBadge({ runtime }: { runtime: AgentState["runtime"] }) {
+  return <span className={`runtimeBadge ${runtime}`}>{runtimeLabel(runtime)}</span>;
+}
+
+function runtimeLabel(runtime: AgentState["runtime"]): string {
+  if (runtime === "codebuddy") {
+    return "CodeBuddy";
+  }
+  if (runtime === "codex") {
+    return "Codex";
+  }
+  return "Claude Code";
 }
 
 function findMentionDraft(value: string, cursorIndex: number): { start: number; end: number; query: string } | null {
