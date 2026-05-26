@@ -26,6 +26,7 @@ export function App() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [showNewMessageHint, setShowNewMessageHint] = useState(false);
+  const isNearBottomRef = useRef(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,23 +105,23 @@ export function App() {
   function handleMessagesScroll() {
     const el = messagesRef.current;
     if (!el) return;
-    const threshold = 150;
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    isNearBottomRef.current = near;
     setIsNearBottom(near);
     if (near) setShowNewMessageHint(false);
   }
 
   useLayoutEffect(() => {
-    if (!isNearBottom) {
+    if (!isNearBottomRef.current) {
       setShowNewMessageHint(true);
       return;
     }
     scrollMessagesToBottom(messagesRef.current);
     const frame = window.requestAnimationFrame(() => {
-      if (isNearBottom) scrollMessagesToBottom(messagesRef.current);
+      if (isNearBottomRef.current) scrollMessagesToBottom(messagesRef.current);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [scrollKey, isNearBottom]);
+  }, [scrollKey]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -142,6 +143,7 @@ export function App() {
       }
 
       setContent("");
+      isNearBottomRef.current = true;
       setIsNearBottom(true);
       setShowNewMessageHint(false);
       window.setTimeout(() => inputRef.current?.focus(), 0);
