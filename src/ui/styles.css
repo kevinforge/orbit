@@ -315,6 +315,50 @@ button:disabled {
   background: #eef2f6;
 }
 
+.messageMeta .durationArrow {
+  padding: 0;
+  background: none;
+  color: #8a95a5;
+}
+
+.messageMeta .durationElapsed {
+  padding: 0;
+  background: none;
+  color: #5f6c7c;
+  font-variant-numeric: tabular-nums;
+}
+
+.messageMeta .durationRunning {
+  padding: 0;
+  background: none;
+  color: #c08530;
+  font-variant-numeric: tabular-nums;
+  animation: pulse-opacity 2s ease-in-out infinite;
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}
+
+.sessionInfo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: #8a95a5;
+  font-size: 11px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.sessionInfo span {
+  border: 1px solid #e6eaef;
+  border-radius: 4px;
+  padding: 1px 6px;
+  background: #f6f8fa;
+}
+
 .messageBody {
   overflow-wrap: anywhere;
   color: #18202a;

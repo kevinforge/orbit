@@ -7,20 +7,24 @@ import { buildChannelContext } from "../core/channel-context-builder.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { MessageStore } from "../core/message-store.ts";
 import { RunManager } from "../core/run-manager.ts";
+import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import type { AgentId } from "../shared/types.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 
 const MAX_ROUTE_DEPTH = 5;
+const CHANNEL_ID = "default";
+const CONVERSATION_ID = "default";
 const port = Number(process.env.ORBIT_PORT ?? 4317);
 
 const eventBus = new EventBus();
 const sseHub = new SseHub();
 const messages = new MessageStore();
 const transcripts = new TerminalTranscriptStore();
+const sessionStore = new SessionStore();
 const profiles = createDefaultAgentProfiles(process.cwd());
-const agents = new AgentRegistry(profiles, eventBus);
+const agents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, CONVERSATION_ID);
 const agentIds = agents.ids();
 
 eventBus.subscribe((event) => {

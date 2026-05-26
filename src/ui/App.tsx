@@ -324,20 +324,78 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
 
 function MessageRow({ message }: { message: ChatMessage }) {
   const author = message.kind === "user" ? "You" : message.kind === "agent" ? message.agentId ?? "agent" : "system";
+  const isRunning = message.status === "running";
 
   return (
     <article className={`message ${message.kind}`}>
       <div className="messageMeta">
         <strong>{author}</strong>
         {message.status ? <span>{message.status}</span> : null}
-        <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
+        <DurationDisplay
+          startedAt={message.startedAt ?? (isRunning ? message.createdAt : undefined)}
+          completedAt={message.completedAt}
+          isRunning={isRunning}
+        />
       </div>
+      {message.sessionId || message.runIndex ? (
+        <div className="sessionInfo">
+          {message.sessionId ? (
+            <span>session: {message.sessionId}</span>
+          ) : null}
+          {message.runIndex ? <span>run #{message.runIndex}</span> : null}
+        </div>
+      ) : null}
       <div className="messageBody">
         {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} /> : null}
         {message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
       </div>
     </article>
   );
+}
+
+function DurationDisplay({ startedAt, completedAt, isRunning }: { startedAt?: string; completedAt?: string; isRunning: boolean }) {
+  const [elapsed, setElapsed] = useState<number>(0);
+
+  useEffect(() => {
+    if (!isRunning || !startedAt) {
+      return;
+    }
+
+    const startMs = new Date(startedAt).getTime();
+    setElapsed(Date.now() - startMs);
+    const timer = setInterval(() => setElapsed(Date.now() - startMs), 1000);
+    return () => clearInterval(timer);
+  }, [isRunning, startedAt]);
+
+  if (!startedAt) {
+    return null;
+  }
+
+  const startLabel = formatTime(startedAt);
+
+  if (isRunning) {
+    return (
+      <>
+        <time dateTime={startedAt}>{startLabel}</time>
+        <span className="durationRunning">进行中 {formatDuration(elapsed)}</span>
+      </>
+    );
+  }
+
+  if (completedAt) {
+    const endLabel = formatTime(completedAt);
+    const durationMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+    return (
+      <>
+        <time dateTime={startedAt}>{startLabel}</time>
+        <span className="durationArrow">&rarr;</span>
+        <time dateTime={completedAt}>{endLabel}</time>
+        <span className="durationElapsed">({formatDuration(durationMs)})</span>
+      </>
+    );
+  }
+
+  return <time dateTime={startedAt}>{startLabel}</time>;
 }
 
 function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; status?: ChatMessage["status"] }) {
@@ -608,6 +666,23 @@ function formatTime(value: string): string {
     return "";
   }
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m ${remainingSeconds}s`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
 }
 
 function scrollMessagesToBottom(element: HTMLDivElement | null): void {

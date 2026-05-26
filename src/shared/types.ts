@@ -56,6 +56,16 @@ export type ChatMessage = {
   routeState?: MessageRouteState;
   routeDepth?: number;
   activity?: AgentActivityEvent[];
+  startedAt?: string;
+  completedAt?: string;
+  sessionId?: string;
+  runIndex?: number;
+};
+
+export type RunResult = {
+  content: string;
+  sessionId?: string;
+  runIndex?: number;
 };
 
 export type NewChatMessage = Omit<ChatMessage, "id" | "createdAt"> & {
@@ -70,7 +80,8 @@ export type RuntimeEvent =
   | { type: "run.activity"; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "terminal.chunk"; agentId: AgentId; runId?: string; text: string }
   | { type: "run.completed"; agentId: AgentId; runId: string; resultMessageId: string }
-  | { type: "run.failed"; agentId: AgentId; runId: string; error: string };
+  | { type: "run.failed"; agentId: AgentId; runId: string; error: string }
+  | { type: "run.sessionId"; agentId: AgentId; runId: string; sessionId: string };
 
 export type TerminalState = Record<string, string>;
 

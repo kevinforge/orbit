@@ -11,5 +11,6 @@ output/
 spikes/
 
 coverage/
+.orbit/
 .DS_Store
 Thumbs.db
