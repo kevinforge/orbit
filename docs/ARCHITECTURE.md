@@ -12,14 +12,14 @@ React UI
   -> RunManager
   -> AgentRegistry / AgentSession
   -> Runtime adapter
-  -> Claude Code or CodeBuddy CLI --print --output-format stream-json
+  -> Codex, Claude Code, or CodeBuddy CLI
   -> CLI stream events
   -> MessageStore + TerminalTranscriptStore
   -> SSE
   -> React UI
 ```
 
-The runtime no longer uses PTY sessions or Claude Code hooks. A run is considered complete when the Claude CLI child process exits and returns a clean final answer.
+The runtime no longer uses PTY sessions or CLI hooks. A run is considered complete when the selected CLI child process exits and returns a clean final answer.
 
 ## Core Modules
 
@@ -33,6 +33,7 @@ The runtime no longer uses PTY sessions or Claude Code hooks. A run is considere
 | `src/core/agent-session.ts` | Starts one runtime adapter run and tracks status |
 | `src/core/agent-runtime.ts` | Shared runtime adapter contract |
 | `src/core/claude-cli-runtime.ts` | Spawns Claude Code CLI and parses stream JSON output |
+| `src/core/codex-cli-runtime.ts` | Spawns Codex CLI and parses JSONL output |
 | `src/core/codebuddy-cli-runtime.ts` | Spawns CodeBuddy CLI and parses stream JSON output |
 | `src/core/run-manager.ts` | Per-agent run queue and lifecycle events |
 | `src/core/channel-router.ts` | Routes user and agent messages containing explicit assignments |
@@ -56,10 +57,19 @@ The current build has four fixed agents:
 | `@developer:` | Developer |
 | `@tester:` | Tester |
 
-Agent profiles are defined in `src/core/agent-profiles.ts`. They are intentionally hardcoded for now to keep the first local product loop simple. Each profile has a `runtime` value. Defaults use `claude-code`, and `ORBIT_AGENT_RUNTIMES` can override selected agents at startup:
+Agent profiles are defined in `src/core/agent-profiles.ts`. They are intentionally hardcoded for now to keep the first local product loop simple. Each profile has a `runtime` value. Defaults are:
+
+| Agent | Default runtime |
+| --- | --- |
+| `@pm:` | `codex` |
+| `@architect:` | `codex` |
+| `@developer:` | `claude-code` |
+| `@tester:` | `codebuddy` |
+
+`ORBIT_AGENT_RUNTIMES` can override selected agents at startup:
 
 ```text
-ORBIT_AGENT_RUNTIMES=developer=codebuddy,tester=codebuddy
+ORBIT_AGENT_RUNTIMES=developer=codex,tester=claude-code
 ```
 
 ## Routing Rules
@@ -89,13 +99,17 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 
 ## Session Persistence
 
-Each agent's CLI session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Claude Code and CodeBuddy does not reuse an incompatible session ID. On subsequent runs, the `--resume` flag is passed so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without `--resume`.
+Each agent's CLI session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. On subsequent runs, the runtime adapter passes the corresponding resume option so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without resuming.
 
 ## CLI Runtimes
 
-Orbit runs Claude Code and CodeBuddy through non-interactive CLI mode via runtime adapters. Claude Code uses:
+Orbit runs each backend through a runtime adapter. Codex uses:
 
-Orbit runs Claude Code through non-interactive CLI mode:
+```text
+codex exec --json --cd <cwd> --sandbox danger-full-access --dangerously-bypass-approvals-and-sandbox -
+```
+
+Claude Code uses:
 
 ```text
 claude --print --verbose --output-format stream-json --include-partial-messages --permission-mode bypassPermissions
@@ -140,6 +154,6 @@ This keeps P0 simple. Persistent storage should be added behind existing stores 
 
 - Replace hardcoded profiles with user-defined agents.
 - Add persistent SQLite storage behind `MessageStore` and transcript storage.
-- Add runtime adapters for Codex CLI, CodeBuddy CLI, or other agent backends.
+- Add runtime adapters for other agent backends.
 - Add richer queue controls: cancel, retry, pause, and priority.
 - Add branch/PR workflow integration as a separate layer, not inside the runtime adapter.

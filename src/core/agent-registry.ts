@@ -2,12 +2,14 @@ import type { AgentId, AgentProfile, AgentState } from "../shared/types.ts";
 import { AgentSession } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { claudeCodeRuntime } from "./claude-cli-runtime.ts";
+import { codexRuntime } from "./codex-cli-runtime.ts";
 import { codeBuddyRuntime } from "./codebuddy-cli-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import type { SessionStore } from "./session-store.ts";
 
 const DEFAULT_RUNTIMES = new Map<AgentRuntime["kind"], AgentRuntime>([
   [claudeCodeRuntime.kind, claudeCodeRuntime],
+  [codexRuntime.kind, codexRuntime],
   [codeBuddyRuntime.kind, codeBuddyRuntime],
 ]);
 

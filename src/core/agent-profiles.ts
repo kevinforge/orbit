@@ -2,7 +2,7 @@ import type { AgentId, AgentProfile, AgentRole, AgentRuntimeKind, PermissionProf
 
 export type AgentRuntimeOverrides = Partial<Record<AgentId, AgentRuntimeKind>>;
 
-const CONFIGURABLE_RUNTIME_KINDS = new Set<AgentRuntimeKind>(["claude-code", "codebuddy"]);
+const CONFIGURABLE_RUNTIME_KINDS = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 
 function permissionProfile(role: AgentRole): PermissionProfile {
   switch (role) {
@@ -80,7 +80,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       id: "pm",
       name: "Product Manager",
       role: "pm",
-      runtime: runtimeOverrides.pm ?? "claude-code",
+      runtime: runtimeOverrides.pm ?? "codex",
       cwd,
       systemPrompt:
         "You are Orbit's product manager. Clarify requirements, define scope, acceptance criteria, and review whether implementation matches user needs. Do not edit code unless explicitly assigned.",
@@ -90,7 +90,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       id: "architect",
       name: "Architect",
       role: "architect",
-      runtime: runtimeOverrides.architect ?? "claude-code",
+      runtime: runtimeOverrides.architect ?? "codex",
       cwd,
       systemPrompt:
         "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes.",
@@ -110,7 +110,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       id: "tester",
       name: "Tester",
       role: "tester",
-      runtime: runtimeOverrides.tester ?? "claude-code",
+      runtime: runtimeOverrides.tester ?? "codebuddy",
       cwd,
       systemPrompt:
         "You are Orbit's tester. Validate behavior, run tests, inspect regressions, and report risks. Do not modify production code unless explicitly assigned.",

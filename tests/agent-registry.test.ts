@@ -29,6 +29,12 @@ test("creates sessions with the runtime selected by each profile", async () => {
       throw new Error("Claude runtime should not run for tester");
     },
   };
+  const codexRuntime: AgentRuntime = {
+    kind: "codex",
+    run() {
+      throw new Error("Codex runtime should not run for tester");
+    },
+  };
   const registry = new AgentRegistry(
     profiles,
     new EventBus(),
@@ -37,6 +43,7 @@ test("creates sessions with the runtime selected by each profile", async () => {
     "default",
     new Map([
       ["claude-code", claudeRuntime],
+      ["codex", codexRuntime],
       ["codebuddy", codeBuddyRuntime],
     ]),
   );
@@ -62,6 +69,10 @@ test("states include each agent runtime", () => {
     ...runtime,
     kind: "codebuddy",
   };
+  const codexRuntime: AgentRuntime = {
+    ...runtime,
+    kind: "codex",
+  };
   const registry = new AgentRegistry(
     profiles,
     new EventBus(),
@@ -70,6 +81,7 @@ test("states include each agent runtime", () => {
     "default",
     new Map([
       ["claude-code", runtime],
+      ["codex", codexRuntime],
       ["codebuddy", codeBuddyRuntime],
     ]),
   );

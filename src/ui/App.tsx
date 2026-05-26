@@ -4,10 +4,10 @@ import type { AgentActivityEvent, AgentId, AgentState, AppState, ChatMessage, Ru
 
 const initialState: AppState = {
   agents: [
-    { id: "pm", label: "Product Manager", runtime: "claude-code", status: "starting", selected: true },
-    { id: "architect", label: "Architect", runtime: "claude-code", status: "starting", selected: false },
+    { id: "pm", label: "Product Manager", runtime: "codex", status: "starting", selected: true },
+    { id: "architect", label: "Architect", runtime: "codex", status: "starting", selected: false },
     { id: "developer", label: "Developer", runtime: "claude-code", status: "starting", selected: false },
-    { id: "tester", label: "Tester", runtime: "claude-code", status: "starting", selected: false },
+    { id: "tester", label: "Tester", runtime: "codebuddy", status: "starting", selected: false },
   ],
   messages: [],
   terminal: {},
