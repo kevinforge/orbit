@@ -532,7 +532,7 @@ function MarkdownContent({ content }: { content: string }) {
         codeLines.push(lines[index] ?? "");
         index += 1;
       }
-      index += 1;
+      if (index < lines.length) index += 1;
       blocks.push(
         <pre key={blocks.length} className={lang ? `language-${lang}` : ""}>
           <code>{codeLines.join("\n")}</code>

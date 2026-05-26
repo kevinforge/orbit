@@ -59,3 +59,11 @@ test("parses hr between content", () => {
   assert.equal(blocks[1].type, "hr");
   assert.equal(blocks[2].type, "paragraph");
 });
+
+test("handles unclosed fenced code block gracefully", () => {
+  const blocks = parseMarkdown("```js\nconst x = 1;\nconst y = 2;");
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].type, "code_block");
+  assert.equal(blocks[0].lang, "js");
+  assert.equal(blocks[0].code, "const x = 1;\nconst y = 2;");
+});

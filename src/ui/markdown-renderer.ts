@@ -39,7 +39,7 @@ export function parseMarkdown(content: string): MarkdownBlock[] {
         codeLines.push(lines[index] ?? "");
         index += 1;
       }
-      index += 1;
+      if (index < lines.length) index += 1;
       blocks.push({ type: "code_block", lang: lang || undefined, code: codeLines.join("\n") });
       continue;
     }
