@@ -24,7 +24,8 @@ export function App() {
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const isNearBottomRef = useRef(true);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [showNewMessageHint, setShowNewMessageHint] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,17 +105,22 @@ export function App() {
     const el = messagesRef.current;
     if (!el) return;
     const threshold = 150;
-    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    setIsNearBottom(near);
+    if (near) setShowNewMessageHint(false);
   }
 
   useLayoutEffect(() => {
-    if (!isNearBottomRef.current) return;
+    if (!isNearBottom) {
+      setShowNewMessageHint(true);
+      return;
+    }
     scrollMessagesToBottom(messagesRef.current);
     const frame = window.requestAnimationFrame(() => {
-      if (isNearBottomRef.current) scrollMessagesToBottom(messagesRef.current);
+      if (isNearBottom) scrollMessagesToBottom(messagesRef.current);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [scrollKey]);
+  }, [scrollKey, isNearBottom]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -136,7 +142,8 @@ export function App() {
       }
 
       setContent("");
-      isNearBottomRef.current = true;
+      setIsNearBottom(true);
+      setShowNewMessageHint(false);
       window.setTimeout(() => inputRef.current?.focus(), 0);
     } catch {
       setState((current) => ({
@@ -249,6 +256,18 @@ export function App() {
             state.messages.map((message) => <MessageRow key={message.id} message={message} />)
           )}
           <div ref={messagesEndRef} />
+          {showNewMessageHint && (
+            <button
+              className="scrollToBottomHint"
+              onClick={() => {
+                scrollMessagesToBottom(messagesRef.current);
+                setShowNewMessageHint(false);
+                setIsNearBottom(true);
+              }}
+            >
+              New messages ↓
+            </button>
+          )}
         </div>
 
         <form className="composer" onSubmit={sendMessage}>

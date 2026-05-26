@@ -256,6 +256,27 @@ button:disabled {
   background: #fbfcfd;
 }
 
+.scrollToBottomHint {
+  position: sticky;
+  bottom: 8px;
+  display: block;
+  margin: 0 auto 8px;
+  padding: 6px 16px;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+  transition: opacity 0.2s;
+}
+
+.scrollToBottomHint:hover {
+  opacity: 0.9;
+}
+
 .emptyState {
   width: fit-content;
   max-width: 100%;
