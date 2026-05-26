@@ -267,7 +267,7 @@ export function App() {
                 setIsNearBottom(true);
               }}
             >
-              New messages ↓
+              ↓ 滚动到底部
             </button>
           )}
         </div>
