@@ -1,4 +1,8 @@
-import type { AgentProfile, AgentRole, PermissionProfile } from "../shared/types.ts";
+import type { AgentId, AgentProfile, AgentRole, AgentRuntimeKind, PermissionProfile } from "../shared/types.ts";
+
+export type AgentRuntimeOverrides = Partial<Record<AgentId, AgentRuntimeKind>>;
+
+const CONFIGURABLE_RUNTIME_KINDS = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 
 function permissionProfile(role: AgentRole): PermissionProfile {
   switch (role) {
@@ -50,13 +54,33 @@ function permissionProfile(role: AgentRole): PermissionProfile {
   }
 }
 
-export function createDefaultAgentProfiles(cwd: string): AgentProfile[] {
+export function parseAgentRuntimeOverrides(value: string | undefined): AgentRuntimeOverrides {
+  const overrides: AgentRuntimeOverrides = {};
+  if (!value) {
+    return overrides;
+  }
+
+  for (const entry of value.split(",")) {
+    const [agentId, runtime] = entry.split("=").map((part) => part.trim());
+    if (!agentId || !runtime) {
+      continue;
+    }
+    if (!CONFIGURABLE_RUNTIME_KINDS.has(runtime as AgentRuntimeKind)) {
+      throw new Error(`Unsupported runtime for ${agentId}: ${runtime}`);
+    }
+    overrides[agentId] = runtime as AgentRuntimeKind;
+  }
+
+  return overrides;
+}
+
+export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentRuntimeOverrides = {}): AgentProfile[] {
   return [
     {
       id: "pm",
       name: "Product Manager",
       role: "pm",
-      runtime: "claude-code",
+      runtime: runtimeOverrides.pm ?? "codex",
       cwd,
       systemPrompt:
         "You are Orbit's product manager. Clarify requirements, define scope, acceptance criteria, and review whether implementation matches user needs. Do not edit code unless explicitly assigned.",
@@ -66,7 +90,7 @@ export function createDefaultAgentProfiles(cwd: string): AgentProfile[] {
       id: "architect",
       name: "Architect",
       role: "architect",
-      runtime: "claude-code",
+      runtime: runtimeOverrides.architect ?? "codex",
       cwd,
       systemPrompt:
         "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes.",
@@ -76,7 +100,7 @@ export function createDefaultAgentProfiles(cwd: string): AgentProfile[] {
       id: "developer",
       name: "Developer",
       role: "developer",
-      runtime: "claude-code",
+      runtime: runtimeOverrides.developer ?? "claude-code",
       cwd,
       systemPrompt:
         "You are Orbit's developer. Follow strict TDD: write failing tests first, then implement the minimal code to pass them. Before writing any code, always create a feature branch from main (e.g. feat/issue-N-description). Run npm run test && npm run build after each meaningful change. Commit, push, and open a draft PR. Never commit directly to main.",
@@ -86,7 +110,7 @@ export function createDefaultAgentProfiles(cwd: string): AgentProfile[] {
       id: "tester",
       name: "Tester",
       role: "tester",
-      runtime: "claude-code",
+      runtime: runtimeOverrides.tester ?? "codebuddy",
       cwd,
       systemPrompt:
         "You are Orbit's tester. Validate behavior, run tests, inspect regressions, and report risks. Do not modify production code unless explicitly assigned.",
@@ -94,4 +118,3 @@ export function createDefaultAgentProfiles(cwd: string): AgentProfile[] {
     },
   ];
 }
-

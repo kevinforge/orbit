@@ -2,7 +2,7 @@
 
 [Chinese](./README.zh-CN.md)
 
-Orbit is a local-first chat control surface for coordinating multiple Claude Code agents in one shared channel.
+Orbit is a local-first chat control surface for coordinating multiple CLI-backed agents in one shared channel.
 
 The current version is intentionally small. It validates the core workflow before adding online sync, custom agents, or multi-device collaboration.
 
@@ -13,10 +13,11 @@ The current version is intentionally small. It validates the core workflow befor
 - Explicit assignment syntax with a colon, for example `@developer: inspect the current project`
 - Multiple agent assignments in one channel message
 - Per-agent run queue, so long-running work does not block the whole channel
-- Claude Code CLI runtime using non-interactive stream JSON output
+- Codex, Claude Code, and CodeBuddy CLI runtimes using non-interactive output
 - Markdown rendering for agent replies
 - Collapsible activity panel showing tool and command progress
 - Session persistence so agents retain conversation context across runs
+- Per-agent runtime homes under `.orbit/` so CLI backends do not share incompatible local sessions
 - Channel history injection so agents see what others said since their last run
 - Local HTTP server with Server-Sent Events
 
@@ -32,7 +33,7 @@ The current version is intentionally small. It validates the core workflow befor
 
 - Node.js
 - npm
-- Claude Code CLI available on `PATH`
+- Codex CLI, Claude Code CLI, and CodeBuddy CLI available on `PATH`
 
 ## Install
 
@@ -47,6 +48,16 @@ npm run dev
 ```
 
 Open `http://localhost:4317`.
+
+By default, `@pm:` and `@architect:` use Codex, `@developer:` uses Claude Code,
+and `@tester:` uses CodeBuddy. To override selected agents, set
+`ORBIT_AGENT_RUNTIMES` before starting Orbit:
+
+```powershell
+$env:ORBIT_AGENT_RUNTIMES="developer=codex,tester=claude-code"; npm run dev
+```
+
+Supported runtime values are `codex`, `claude-code`, and `codebuddy`.
 
 To restart the local service on Windows PowerShell and clear the default port first:
 

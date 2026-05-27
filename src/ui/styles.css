@@ -165,7 +165,15 @@ button:disabled {
 }
 
 .agentText strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 14px;
+}
+
+.agentText strong .runtimeBadge {
+  flex: 0 0 auto;
 }
 
 .agentText small,
@@ -334,6 +342,35 @@ button:disabled {
   border-radius: 999px;
   padding: 2px 7px;
   background: #eef2f6;
+}
+
+.runtimeBadge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 92px;
+  overflow: hidden;
+  border: 1px solid #d7dee8;
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: #4f5b6b;
+  background: #f5f7fa;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtimeBadge.codebuddy {
+  border-color: #c9ded5;
+  color: #276247;
+  background: #edf8f2;
+}
+
+.runtimeBadge.codex {
+  border-color: #d7d8ef;
+  color: #4c4d8e;
+  background: #f2f3ff;
 }
 
 .messageMeta .durationArrow {

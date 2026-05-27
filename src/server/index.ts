@@ -1,6 +1,6 @@
 import http from "node:http";
 
-import { createDefaultAgentProfiles } from "../core/agent-profiles.ts";
+import { createDefaultAgentProfiles, parseAgentRuntimeOverrides } from "../core/agent-profiles.ts";
 import { AgentRegistry } from "../core/agent-registry.ts";
 import { ChannelRouter } from "../core/channel-router.ts";
 import { buildChannelContext } from "../core/channel-context-builder.ts";
@@ -24,7 +24,10 @@ const sseHub = new SseHub();
 const messages = new MessageStore();
 const transcripts = new TerminalTranscriptStore();
 const sessionStore = new SessionStore();
-const profiles = createDefaultAgentProfiles(process.cwd());
+const profiles = createDefaultAgentProfiles(
+  process.cwd(),
+  parseAgentRuntimeOverrides(process.env.ORBIT_AGENT_RUNTIMES),
+);
 const agents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, CONVERSATION_ID);
 const agentIds = agents.ids();
 

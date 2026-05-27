@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { AgentSession } from "../src/core/agent-session.ts";
+import type { AgentRuntime, AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
 
@@ -17,11 +18,45 @@ function makeSession(store: SessionStore): AgentSession {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime: {
+      kind: "claude-code",
+      run() {
+        throw new Error("test runtime should not be called");
+      },
+    },
     eventBus: new EventBus(),
     sessionStore: store,
     channelId: "default",
     conversationId: "default",
   });
+}
+
+function controllableRuntime(result: string, sessionId: string | null = null) {
+  const calls: AgentRuntimeRunOptions[] = [];
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      calls.push(options);
+      return {
+        process: {
+          kill() {
+            return true;
+          },
+        },
+        result: Promise.resolve(result),
+        sessionId: Promise.resolve(sessionId),
+      };
+    },
+  };
+  return { runtime, calls };
 }
 
 test("send without prior session — no resume flag, session persisted", async () => {
@@ -30,16 +65,17 @@ test("send without prior session — no resume flag, session persisted", async (
   const session = makeSession(store);
   session.start();
 
-  assert.equal(store.load("default", "default", "developer"), null);
+  assert.equal(store.load("claude-code", "default", "default", "developer"), null);
   assert.equal(session.getStatus(), "idle");
 });
 
 test("send with prior session — resume flag passed", () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
-  store.save("default", "default", "developer", {
+  store.save("claude-code", "default", "default", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "existing-sess",
     lastRunAt: new Date().toISOString(),
     runCount: 3,
@@ -48,7 +84,7 @@ test("send with prior session — resume flag passed", () => {
   const session = makeSession(store);
   session.start();
 
-  const loaded = store.load("default", "default", "developer");
+  const loaded = store.load("claude-code", "default", "default", "developer");
   assert.equal(loaded!.sessionId, "existing-sess");
   assert.equal(loaded!.runCount, 3);
 });
@@ -56,54 +92,58 @@ test("send with prior session — resume flag passed", () => {
 test("resume failure clears and retries — store cleared after session-not-found", () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
-  store.save("default", "default", "developer", {
+  store.save("claude-code", "default", "default", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "bad-session",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  store.clear("default", "default", "developer");
-  assert.equal(store.load("default", "default", "developer"), null);
+  store.clear("claude-code", "default", "default", "developer");
+  assert.equal(store.load("claude-code", "default", "default", "developer"), null);
 });
 
 test("non-resume failure does not clear store", () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
-  store.save("default", "default", "developer", {
+  store.save("claude-code", "default", "default", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "good-session",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  const loaded = store.load("default", "default", "developer");
+  const loaded = store.load("claude-code", "default", "default", "developer");
   assert.equal(loaded!.sessionId, "good-session");
 });
 
 test("persistSession increments runCount", () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
-  store.save("default", "default", "developer", {
+  store.save("claude-code", "default", "default", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "sess-1",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  const prev = store.load("default", "default", "developer");
-  store.save("default", "default", "developer", {
+  const prev = store.load("claude-code", "default", "default", "developer");
+  store.save("claude-code", "default", "default", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "claude-code",
     sessionId: "sess-2",
     lastRunAt: new Date().toISOString(),
     runCount: (prev?.runCount ?? 0) + 1,
   });
 
-  const updated = store.load("default", "default", "developer");
+  const updated = store.load("claude-code", "default", "default", "developer");
   assert.equal(updated!.runCount, 2);
   assert.equal(updated!.sessionId, "sess-2");
 });
@@ -116,6 +156,15 @@ test("different conversations use independent sessions", () => {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime: controllableRuntime("unused").runtime,
     eventBus: new EventBus(),
     sessionStore: store,
     channelId: "default",
@@ -126,6 +175,15 @@ test("different conversations use independent sessions", () => {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime: controllableRuntime("unused").runtime,
     eventBus: new EventBus(),
     sessionStore: store,
     channelId: "default",
@@ -135,22 +193,129 @@ test("different conversations use independent sessions", () => {
   sessionA.start();
   sessionB.start();
 
-  store.save("default", "conv-a", "developer", {
+  store.save("codebuddy", "default", "conv-a", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "codebuddy",
     sessionId: "sess-a",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  store.save("default", "conv-b", "developer", {
+  store.save("codebuddy", "default", "conv-b", "developer", {
     agentId: "developer",
     channelId: "default",
+    runtime: "codebuddy",
     sessionId: "sess-b",
     lastRunAt: new Date().toISOString(),
     runCount: 1,
   });
 
-  assert.equal(store.load("default", "conv-a", "developer")!.sessionId, "sess-a");
-  assert.equal(store.load("default", "conv-b", "developer")!.sessionId, "sess-b");
+  assert.equal(store.load("codebuddy", "default", "conv-a", "developer")!.sessionId, "sess-a");
+  assert.equal(store.load("codebuddy", "default", "conv-b", "developer")!.sessionId, "sess-b");
+});
+
+test("send executes through configured runtime and passes resume session", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  store.save("codebuddy", "default", "default", "developer", {
+    agentId: "developer",
+    channelId: "default",
+    runtime: "codebuddy",
+    sessionId: "existing-sess",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+  const { runtime, calls } = controllableRuntime("clean final", "next-sess");
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    channelId: "default",
+    conversationId: "default",
+  });
+
+  session.start();
+  const result = await session.send("run-1", "hello");
+
+  assert.equal(result.content, "clean final");
+  assert.equal(result.sessionId, "next-sess");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.agentId, "developer");
+  assert.equal(calls[0]!.cwd, "D:/workspace");
+  assert.equal(calls[0]!.prompt, "hello");
+  assert.equal(calls[0]!.resumeSessionId, "existing-sess");
+  assert.equal(store.load("codebuddy", "default", "default", "developer")!.sessionId, "next-sess");
+});
+
+test("resume failure clears stale session and retries without resume", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  store.save("codebuddy", "default", "default", "developer", {
+    agentId: "developer",
+    channelId: "default",
+    runtime: "codebuddy",
+    sessionId: "bad-session",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+
+  const calls: AgentRuntimeRunOptions[] = [];
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      calls.push(options);
+      return {
+        process: {
+          kill() {
+            return true;
+          },
+        },
+        result: calls.length === 1
+          ? Promise.reject(new Error("No conversation found with session ID: bad-session"))
+          : Promise.resolve("clean final"),
+        sessionId: Promise.resolve(calls.length === 1 ? null : "fresh-session"),
+      };
+    },
+  };
+
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    channelId: "default",
+    conversationId: "default",
+  });
+
+  session.start();
+  const result = await session.send("run-1", "hello");
+
+  assert.equal(result.content, "clean final");
+  assert.equal(result.sessionId, "fresh-session");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]!.resumeSessionId, "bad-session");
+  assert.equal(calls[1]!.resumeSessionId, undefined);
+  assert.equal(store.load("codebuddy", "default", "default", "developer")!.sessionId, "fresh-session");
 });

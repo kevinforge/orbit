@@ -23,7 +23,7 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
     const msg = allMessages[i];
     if (msg.kind === "system") continue;
     if (msg.status === "running") continue;
-    if (msg.routeState === "routed") continue;
+    if (msg.kind === "agent" && msg.routeState === "routed") continue;
 
     const sender = msg.kind === "user" ? "user" : (msg.agentId ?? "agent");
     const text = msg.content.slice(0, MAX_ENTRY_CHARS);

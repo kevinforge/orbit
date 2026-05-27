@@ -1,23 +1,24 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+
 import type { AgentId, AgentRuntimeKind, PermissionProfile } from "../shared/types.ts";
 
-export type AgentRunInput = {
-  runId: string;
+export type AgentRuntimeRunOptions = {
   agentId: AgentId;
   prompt: string;
   cwd: string;
   permissionProfile: PermissionProfile;
+  resumeSessionId?: string;
+  env?: NodeJS.ProcessEnv;
+  onOutput?: (text: string) => void;
 };
 
-export type AgentRuntimeEvent =
-  | { type: "activity"; text: string }
-  | { type: "tool.started"; name: string; input?: string }
-  | { type: "tool.completed"; name: string; summary?: string }
-  | { type: "final"; content: string }
-  | { type: "error"; message: string };
+export type AgentRuntimeRunHandle = {
+  process: Pick<ChildProcessWithoutNullStreams, "kill">;
+  result: Promise<string>;
+  sessionId: Promise<string | null>;
+};
 
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
-  run(input: AgentRunInput): AsyncIterable<AgentRuntimeEvent>;
-  cancel(runId: string): Promise<void>;
+  run(input: AgentRuntimeRunOptions): AgentRuntimeRunHandle;
 }
-

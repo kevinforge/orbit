@@ -1,0 +1,97 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  buildCodexCliArgs,
+  buildCodexCliCommand,
+  createCodexEnv,
+  extractCodexCliFinalAnswer,
+  extractCodexSessionId,
+  resolveCodexCommand,
+} from "../src/core/codex-cli-runtime.ts";
+
+test("builds non-interactive Codex exec args without resume", () => {
+  assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace" }), [
+    "exec",
+    "--json",
+    "--cd",
+    "D:/workspace",
+    "--sandbox",
+    "danger-full-access",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "-",
+  ]);
+});
+
+test("builds Codex resume args with session id", () => {
+  assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace", resumeSessionId: "sess-abc" }), [
+    "exec",
+    "resume",
+    "--json",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "sess-abc",
+    "-",
+  ]);
+});
+
+test("builds a spawnable Codex command", () => {
+  const command = buildCodexCliCommand({ cwd: "D:/workspace" }, { ORBIT_CODEX_PATH: "C:/codex/bin/codex.exe" });
+
+  assert.equal(command.file, "C:/codex/bin/codex.exe");
+  assert.ok(command.args.includes("exec"));
+});
+
+test("uses configured Codex CLI path when provided", () => {
+  assert.equal(resolveCodexCommand({ ORBIT_CODEX_PATH: "C:/tools/codex.exe" }), "C:/tools/codex.exe");
+  assert.equal(resolveCodexCommand({ CODEX_CLI_PATH: "D:/tools/codex.exe" }), "D:/tools/codex.exe");
+});
+
+test("Codex env preserves the user's Codex home", () => {
+  const env = createCodexEnv("pm", { CODEX_HOME: "C:/Users/Sean/.codex" });
+
+  assert.equal(env.CODEX_HOME, "C:/Users/Sean/.codex");
+  assert.equal(env.ORBIT_AGENT_ID, "pm");
+  assert.equal(env.CODEX_AGENT_ID, "pm");
+});
+
+test("extracts final answer from Codex JSONL message events", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "final answer" }],
+      },
+    }),
+  ].join("\n");
+
+  assert.deepEqual(extractCodexCliFinalAnswer(output), {
+    text: "final answer",
+    sessionId: "thread-123",
+  });
+});
+
+test("extracts final answer from Codex agent_message events", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "final answer",
+      },
+    }),
+  ].join("\n");
+
+  assert.deepEqual(extractCodexCliFinalAnswer(output), {
+    text: "final answer",
+    sessionId: "thread-123",
+  });
+});
+
+test("extracts Codex session id from thread or session fields", () => {
+  assert.equal(extractCodexSessionId(JSON.stringify({ type: "thread.started", thread_id: "thread-123" })), "thread-123");
+  assert.equal(extractCodexSessionId(JSON.stringify({ type: "session.started", session_id: "sess-123" })), "sess-123");
+});

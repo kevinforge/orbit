@@ -5,7 +5,7 @@ import type { AgentId } from "../shared/types.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
 
-export type ClaudeCliRunOptions = {
+export type CodeBuddyCliRunOptions = {
   agentId: AgentId;
   cwd: string;
   prompt: string;
@@ -15,16 +15,15 @@ export type ClaudeCliRunOptions = {
   onOutput?: (text: string) => void;
 };
 
-export type ClaudeCliRunHandle = {
+export type CodeBuddyCliRunHandle = {
   process: ChildProcessWithoutNullStreams;
   result: Promise<string>;
   sessionId: Promise<string | null>;
 };
 
-export function buildClaudeCliArgs(options?: { resumeSessionId?: string }): string[] {
+export function buildCodeBuddyCliArgs(options?: { resumeSessionId?: string }): string[] {
   const args = [
     "--print",
-    "--verbose",
     "--output-format",
     "stream-json",
     "--include-partial-messages",
@@ -37,9 +36,9 @@ export function buildClaudeCliArgs(options?: { resumeSessionId?: string }): stri
   return args;
 }
 
-export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
-  const args = buildClaudeCliArgs({ resumeSessionId: options.resumeSessionId });
-  const command = buildClaudeCliCommand(args);
+export function runCodeBuddyCli(options: CodeBuddyCliRunOptions): CodeBuddyCliRunHandle {
+  const args = buildCodeBuddyCliArgs({ resumeSessionId: options.resumeSessionId });
+  const command = buildCodeBuddyCliCommand(args);
   const child = spawn(command.file, command.args, {
     cwd: options.cwd,
     env: createEnv(options.agentId, options.env ?? process.env),
@@ -49,7 +48,6 @@ export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
 
   let stdout = "";
   let stderr = "";
-
   let capturedSessionId: string | null = null;
   let sessionIdResolve!: (value: string | null) => void;
   const sessionIdPromise = new Promise<string | null>((resolve) => {
@@ -67,22 +65,10 @@ export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
     }
 
     if (!capturedSessionId) {
-      for (const line of chunk.split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const event = JSON.parse(trimmed);
-          if (
-            event.type === "system" &&
-            event.subtype === "init" &&
-            typeof event.session_id === "string"
-          ) {
-            capturedSessionId = event.session_id;
-            sessionIdResolve(capturedSessionId);
-          }
-        } catch {
-          // not JSON, ignore
-        }
+      const sessionId = extractCodeBuddySessionId(chunk);
+      if (sessionId) {
+        capturedSessionId = sessionId;
+        sessionIdResolve(sessionId);
       }
     }
   });
@@ -101,13 +87,18 @@ export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
       if (!capturedSessionId) sessionIdResolve(null);
 
       if (code !== 0) {
-        reject(new Error(stderr.trim() || stdout.trim() || `Claude CLI exited with code ${code}`));
+        reject(new Error(stderr.trim() || stdout.trim() || `CodeBuddy CLI exited with code ${code}`));
         return;
       }
 
-      const parsed = extractClaudeCliFinalAnswer(stdout);
+      const parsed = extractCodeBuddyCliFinalAnswer(stdout);
+      if (parsed.error) {
+        reject(new Error(parsed.error));
+        return;
+      }
+
       if (!parsed.text) {
-        reject(new Error("Claude CLI completed without a final answer."));
+        reject(new Error("CodeBuddy CLI completed without a final answer."));
         return;
       }
 
@@ -119,23 +110,19 @@ export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
   return { process: child, result, sessionId: sessionIdPromise };
 }
 
-export function buildClaudeCliCommand(cliArgs?: string[]): { file: string; args: string[] } {
-  const args = cliArgs ?? buildClaudeCliArgs();
+export function buildCodeBuddyCliCommand(cliArgs?: string[]): { file: string; args: string[] } {
+  const args = cliArgs ?? buildCodeBuddyCliArgs();
   if (os.platform() !== "win32") {
-    return { file: "claude", args };
+    return { file: "codebuddy", args };
   }
 
-  return { file: "cmd.exe", args: ["/d", "/s", "/c", "claude.cmd", ...args] };
+  return { file: "cmd.exe", args: ["/d", "/s", "/c", "codebuddy.cmd", ...args] };
 }
 
-export const claudeCodeRuntime: AgentRuntime = {
-  kind: "claude-code",
-  run: runClaudeCli,
-};
-
-export function extractClaudeCliFinalAnswer(output: string): { text: string; sessionId?: string } {
+export function extractCodeBuddyCliFinalAnswer(output: string): { text: string; sessionId?: string; error?: string } {
   let result = "";
   let sessionId: string | undefined;
+  let error: string | undefined;
   const textParts: string[] = [];
 
   for (const line of output.split(/\r?\n/)) {
@@ -148,9 +135,18 @@ export function extractClaudeCliFinalAnswer(output: string): { text: string; ses
       const event = JSON.parse(trimmed) as {
         type?: string;
         result?: unknown;
+        error?: unknown;
+        message?: unknown;
         session_id?: unknown;
-        message?: { content?: unknown };
       };
+
+      if (event.type === "error") {
+        if (typeof event.error === "string") {
+          error = event.error;
+        } else if (typeof event.message === "string") {
+          error = event.message;
+        }
+      }
 
       if (event.type === "result" && typeof event.result === "string") {
         result = event.result;
@@ -160,8 +156,9 @@ export function extractClaudeCliFinalAnswer(output: string): { text: string; ses
         sessionId = event.session_id;
       }
 
-      if (event.type === "assistant" && Array.isArray(event.message?.content)) {
-        for (const part of event.message.content as Array<{ type?: unknown; text?: unknown }>) {
+      const message = typeof event.message === "object" && event.message ? event.message as { content?: unknown } : null;
+      if (event.type === "assistant" && Array.isArray(message?.content)) {
+        for (const part of message.content as Array<{ type?: unknown; text?: unknown }>) {
           if (part.type === "text" && typeof part.text === "string") {
             textParts.push(part.text);
           }
@@ -172,10 +169,14 @@ export function extractClaudeCliFinalAnswer(output: string): { text: string; ses
     }
   }
 
-  return { text: (result || textParts.join("\n")).trim(), sessionId };
+  return {
+    text: (result || textParts.join("\n")).trim(),
+    ...(sessionId ? { sessionId } : {}),
+    ...(error ? { error } : {}),
+  };
 }
 
-export function extractSessionId(output: string): string | null {
+export function extractCodeBuddySessionId(output: string): string | null {
   for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -195,9 +196,15 @@ export function extractSessionId(output: string): string | null {
   return null;
 }
 
+export const codeBuddyRuntime: AgentRuntime = {
+  kind: "codebuddy",
+  run: runCodeBuddyCli,
+};
+
 function createEnv(agentId: AgentId, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...env,
     ORBIT_AGENT_ID: agentId,
+    CODEBUDDY_AGENT_ID: agentId,
   };
 }
