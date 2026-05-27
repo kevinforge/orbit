@@ -22,6 +22,11 @@ test("different cwds produce different ids", () => {
   assert.notEqual(a, b);
 });
 
+test("deriveId is case-insensitive and normalizes trailing slashes", () => {
+  assert.equal(WorkspaceStore.deriveId("/home/user/projects/app"), WorkspaceStore.deriveId("/HOME/USER/PROJECTS/APP"));
+  assert.equal(WorkspaceStore.deriveId("/home/user/projects/app/"), WorkspaceStore.deriveId("/home/user/projects/app"));
+});
+
 test("resolve returns workspace info from existing metadata file", () => {
   const dir = tmpDir();
   const store = new WorkspaceStore(dir);

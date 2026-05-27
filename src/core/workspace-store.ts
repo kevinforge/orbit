@@ -19,7 +19,8 @@ export class WorkspaceStore {
   }
 
   static deriveId(cwd: string): string {
-    return crypto.createHash("sha256").update(cwd).digest("hex").slice(0, 12);
+    const normalized = path.resolve(cwd).toLowerCase();
+    return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 12);
   }
 
   resolve(cwd: string): WorkspaceInfo {
