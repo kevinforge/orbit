@@ -55,4 +55,16 @@ export class WorkspaceStore {
   sessionsDir(workspaceId: string): string {
     return path.join(this.baseDir, workspaceId, "sessions");
   }
+
+  dataDir(workspaceId: string): string {
+    return path.join(this.baseDir, workspaceId, "data");
+  }
+
+  channelsDir(workspaceId: string): string {
+    return path.join(this.baseDir, workspaceId, "channels", "default", "conversations", "default");
+  }
+
+  transcriptsDir(workspaceId: string): string {
+    return path.join(this.baseDir, workspaceId, "transcripts", "default");
+  }
 }

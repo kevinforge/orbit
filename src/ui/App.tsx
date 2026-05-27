@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { marked } from "marked";
+import { renderMarkdown } from "./markdown-renderer.ts";
 import type { AgentActivityEvent, AgentId, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
 
 const initialState: AppState = {
@@ -515,7 +515,7 @@ function activityText(item: AgentActivityEvent): string {
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  const html = marked.parse(content, { async: false }) as string;
+  const html = renderMarkdown(content);
   return <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 

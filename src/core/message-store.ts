@@ -1,8 +1,20 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { ChatMessage, MessageRouteState, NewChatMessage } from "../shared/types.ts";
+
+type PersistedData = { messages: ChatMessage[]; nextId: number };
 
 export class MessageStore {
   private messages: ChatMessage[] = [];
   private nextId = 1;
+  private readonly filePath?: string;
+
+  constructor(filePath?: string) {
+    this.filePath = filePath;
+    if (filePath) {
+      this.load();
+    }
+  }
 
   append(message: NewChatMessage): ChatMessage {
     const stored: ChatMessage = {
@@ -12,6 +24,7 @@ export class MessageStore {
     };
 
     this.messages.push(stored);
+    this.save();
     return stored;
   }
 
@@ -27,6 +40,7 @@ export class MessageStore {
 
     const updated = { ...this.messages[index], ...patch };
     this.messages[index] = updated;
+    this.save();
     return updated;
   }
 
@@ -46,6 +60,7 @@ export class MessageStore {
 
     const updated = { ...this.messages[index], routeState };
     this.messages[index] = updated;
+    this.save();
     return updated;
   }
 
@@ -53,5 +68,27 @@ export class MessageStore {
     const id = `msg_${String(this.nextId).padStart(6, "0")}`;
     this.nextId += 1;
     return id;
+  }
+
+  private load(): void {
+    try {
+      const data = fs.readFileSync(this.filePath!, "utf8");
+      const parsed = JSON.parse(data) as PersistedData;
+      this.messages = parsed.messages ?? [];
+      this.nextId = parsed.nextId ?? this.messages.length + 1;
+    } catch {
+      this.messages = [];
+      this.nextId = 1;
+    }
+  }
+
+  private save(): void {
+    if (!this.filePath) return;
+    const dir = path.dirname(this.filePath);
+    fs.mkdirSync(dir, { recursive: true });
+    const data: PersistedData = { messages: this.messages, nextId: this.nextId };
+    const tmp = this.filePath + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(data));
+    fs.renameSync(tmp, this.filePath);
   }
 }

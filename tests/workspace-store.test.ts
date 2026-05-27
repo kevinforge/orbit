@@ -106,3 +106,11 @@ test("sessionsDir returns path under workspace base", () => {
 
   assert.equal(store.sessionsDir(id), path.join(dir, id, "sessions"));
 });
+
+test("dataDir returns workspace data path", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("/tmp/project-data");
+  const dataDir = store.dataDir(ws.id);
+  assert.equal(dataDir, path.join(dir, ws.id, "data"));
+});

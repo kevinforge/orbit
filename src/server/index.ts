@@ -1,4 +1,5 @@
 import http from "node:http";
+import path from "node:path";
 
 import { createDefaultAgentProfiles, parseAgentRuntimeOverrides } from "../core/agent-profiles.ts";
 import { AgentRegistry } from "../core/agent-registry.ts";
@@ -22,10 +23,12 @@ const port = Number(process.env.ORBIT_PORT ?? 4317);
 
 const eventBus = new EventBus();
 const sseHub = new SseHub();
-const messages = new MessageStore();
-const transcripts = new TerminalTranscriptStore();
 const workspaceStore = new WorkspaceStore();
 const workspace = workspaceStore.resolve(process.cwd());
+const messagesPath = path.join(workspaceStore.channelsDir(workspace.id), "messages.json");
+const transcriptsDir = workspaceStore.transcriptsDir(workspace.id);
+const messages = new MessageStore(messagesPath);
+const transcripts = new TerminalTranscriptStore(transcriptsDir);
 const sessionStore = new SessionStore(workspaceStore.sessionsDir(workspace.id));
 const profiles = createDefaultAgentProfiles(
   process.cwd(),
