@@ -65,19 +65,21 @@ test("different agents have independent cutoff points", () => {
   assert.equal(archHistory[0].content, "req 2");
 });
 
-test("filters out system, running, and routed messages", () => {
+test("filters out system, running, and routed agent messages but keeps routed user messages", () => {
   const messages: ChatMessage[] = [
     msg({ kind: "user", content: "user msg" }),
     msg({ kind: "system", content: "sys msg", status: "done" }),
     msg({ kind: "agent", agentId: "pm", content: "pm running", status: "running" }),
-    msg({ kind: "user", content: "routed msg", routeState: "routed" }),
+    msg({ kind: "user", content: "routed user msg", routeState: "routed" }),
+    msg({ kind: "agent", agentId: "pm", content: "routed agent msg", routeState: "routed", status: "done" }),
     msg({ kind: "agent", agentId: "architect", content: "arch done", status: "done" }),
   ];
 
   const history = buildHistoryForAgent("developer", messages);
-  assert.equal(history.length, 2);
+  assert.equal(history.length, 3);
   assert.equal(history[0].content, "user msg");
-  assert.equal(history[1].content, "arch done");
+  assert.equal(history[1].content, "routed user msg");
+  assert.equal(history[2].content, "arch done");
 });
 
 test("truncates total history to MAX_HISTORY_CHARS", () => {
