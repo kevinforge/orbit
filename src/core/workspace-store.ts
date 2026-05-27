@@ -9,7 +9,9 @@ export type WorkspaceInfo = {
   path: string;
 };
 
-type WorkspaceMetadata = WorkspaceInfo;
+type WorkspaceMetadata = WorkspaceInfo & {
+  createdAt: string;
+};
 
 export class WorkspaceStore {
   private readonly baseDir: string;
@@ -19,7 +21,8 @@ export class WorkspaceStore {
   }
 
   static deriveId(cwd: string): string {
-    const normalized = path.resolve(cwd).toLowerCase();
+    const resolved = path.resolve(cwd);
+    const normalized = process.platform === "win32" ? resolved.toLowerCase() : resolved;
     return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 12);
   }
 
@@ -29,16 +32,17 @@ export class WorkspaceStore {
 
     try {
       const data = fs.readFileSync(metadataPath, "utf8");
-      return JSON.parse(data) as WorkspaceMetadata;
+      const metadata = JSON.parse(data) as WorkspaceMetadata;
+      return { id: metadata.id, name: metadata.name, path: metadata.path };
     } catch {
       const name = path.basename(cwd);
-      const workspace: WorkspaceInfo = { id, name, path: cwd };
+      const workspace: WorkspaceMetadata = { id, name, path: cwd, createdAt: new Date().toISOString() };
       const dir = path.dirname(metadataPath);
       fs.mkdirSync(dir, { recursive: true });
       const tmpFile = metadataPath + ".tmp";
       fs.writeFileSync(tmpFile, JSON.stringify(workspace, null, 2) + os.EOL);
       fs.renameSync(tmpFile, metadataPath);
-      return workspace;
+      return { id, name, path: cwd };
     }
   }
 

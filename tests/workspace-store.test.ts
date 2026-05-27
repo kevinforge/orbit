@@ -22,8 +22,12 @@ test("different cwds produce different ids", () => {
   assert.notEqual(a, b);
 });
 
-test("deriveId is case-insensitive and normalizes trailing slashes", () => {
-  assert.equal(WorkspaceStore.deriveId("/home/user/projects/app"), WorkspaceStore.deriveId("/HOME/USER/PROJECTS/APP"));
+test("deriveId is case-insensitive on win32, case-sensitive elsewhere; normalizes trailing slashes", () => {
+  if (process.platform === "win32") {
+    assert.equal(WorkspaceStore.deriveId("C:\\Projects\\App"), WorkspaceStore.deriveId("c:\\projects\\app"));
+  } else {
+    assert.notEqual(WorkspaceStore.deriveId("/home/user/projects/App"), WorkspaceStore.deriveId("/home/user/projects/app"));
+  }
   assert.equal(WorkspaceStore.deriveId("/home/user/projects/app/"), WorkspaceStore.deriveId("/home/user/projects/app"));
 });
 
@@ -51,6 +55,8 @@ test("resolve creates workspace directory and metadata on first call", () => {
   assert.equal(metadata.id, workspace.id);
   assert.equal(metadata.path, "/home/user/projects/new-project");
   assert.equal(metadata.name, "new-project");
+  assert.ok(metadata.createdAt, "metadata should include createdAt");
+  assert.ok(new Date(metadata.createdAt).getTime() > 0, "createdAt should be a valid ISO date");
 });
 
 test("resolve loads existing workspace on subsequent calls", () => {
@@ -82,13 +88,10 @@ test("name defaults to last path segment", () => {
   assert.equal(workspace.name, "My Cool Project");
 });
 
-test("default baseDir uses ~/.orbit/workspaces", () => {
-  const store = new WorkspaceStore();
-  const expected = path.join(os.homedir(), ".orbit", "workspaces");
+test("sessionsDir returns path under workspace base", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const id = WorkspaceStore.deriveId(process.cwd());
 
-  // We can't easily test the internal baseDir, but we can verify sessionsDir
-  // uses the expected pattern by checking resolve works.
-  const workspace = store.resolve(process.cwd());
-  assert.ok(workspace.id);
-  assert.equal(workspace.path, process.cwd());
+  assert.equal(store.sessionsDir(id), path.join(dir, id, "sessions"));
 });
