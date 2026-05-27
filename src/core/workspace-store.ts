@@ -11,6 +11,7 @@ export type WorkspaceInfo = {
 
 type WorkspaceMetadata = WorkspaceInfo & {
   createdAt: string;
+  lastOpenedAt: string;
 };
 
 export class WorkspaceStore {
@@ -33,10 +34,15 @@ export class WorkspaceStore {
     try {
       const data = fs.readFileSync(metadataPath, "utf8");
       const metadata = JSON.parse(data) as WorkspaceMetadata;
+      const updated = { ...metadata, lastOpenedAt: new Date().toISOString() };
+      const tmpFile = metadataPath + ".tmp";
+      fs.writeFileSync(tmpFile, JSON.stringify(updated, null, 2) + os.EOL);
+      fs.renameSync(tmpFile, metadataPath);
       return { id: metadata.id, name: metadata.name, path: metadata.path };
     } catch {
+      const now = new Date().toISOString();
       const name = path.basename(cwd);
-      const workspace: WorkspaceMetadata = { id, name, path: cwd, createdAt: new Date().toISOString() };
+      const workspace: WorkspaceMetadata = { id, name, path: cwd, createdAt: now, lastOpenedAt: now };
       const dir = path.dirname(metadataPath);
       fs.mkdirSync(dir, { recursive: true });
       const tmpFile = metadataPath + ".tmp";

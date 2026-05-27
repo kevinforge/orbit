@@ -42,6 +42,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/channel-history.ts` | Builds scoped channel history for each agent run |
 | `src/core/message-store.ts` | In-memory channel messages |
 | `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
+| `src/core/workspace-store.ts` | Workspace isolation and user directory persistence |
 | `src/core/terminal-transcript-store.ts` | Runtime activity transcript storage |
 | `src/core/claude-output-detector.ts` | Clean final answer validation and stream event mapping |
 | `src/ui/App.tsx` | Chat UI, agent buttons, composer, markdown, activity panel |
@@ -100,6 +101,20 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 ## Session Persistence
 
 Each agent's CLI session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. On subsequent runs, the runtime adapter passes the corresponding resume option so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without resuming.
+
+Session files are stored under the workspace directory (see below), not in the project-local `.orbit/` directory.
+
+## Workspace Isolation
+
+Each project directory gets its own isolated workspace via `src/core/workspace-store.ts`:
+
+- **Workspace ID**: deterministic 12-char hex derived from the project's absolute cwd using SHA-256. On Windows the path is lowercased before hashing to handle case-insensitive filesystems; on Linux/macOS the original case is preserved.
+- **Data directory**: `~/.orbit/workspaces/<workspace-id>/` containing:
+  - `workspace.json` — metadata (id, name, path, createdAt, lastOpenedAt)
+  - `sessions/` — per-agent session records used by `SessionStore`
+- **Lifecycle**: on startup, the server calls `WorkspaceStore.resolve(cwd)` which creates the workspace directory and metadata on first run, or updates `lastOpenedAt` on subsequent runs.
+
+The current implementation does not migrate data from the legacy `.orbit/` directory inside the project. Old session data there is ignored once this version is active.
 
 Codex uses the user's normal Codex CLI home. Orbit does not create per-agent `CODEX_HOME` directories; agent-level continuity is handled by the session store above, which passes each agent's own saved session ID back to the runtime on the next run.
 

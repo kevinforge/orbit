@@ -57,18 +57,29 @@ test("resolve creates workspace directory and metadata on first call", () => {
   assert.equal(metadata.name, "new-project");
   assert.ok(metadata.createdAt, "metadata should include createdAt");
   assert.ok(new Date(metadata.createdAt).getTime() > 0, "createdAt should be a valid ISO date");
+  assert.equal(metadata.lastOpenedAt, metadata.createdAt, "lastOpenedAt should equal createdAt on first creation");
 });
 
-test("resolve loads existing workspace on subsequent calls", () => {
+test("resolve loads existing workspace and updates lastOpenedAt", () => {
   const dir = tmpDir();
   const store = new WorkspaceStore(dir);
   const cwd = "/home/user/projects/existing";
 
   const first = store.resolve(cwd);
+  const metadataPath = path.join(dir, first.id, "workspace.json");
+  const firstMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+
+  // Small delay to ensure different timestamp
+  const start = Date.now();
+  while (Date.now() === start) { /* spin */ }
+
   const second = store.resolve(cwd);
+  const secondMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
 
   assert.equal(first.id, second.id);
   assert.equal(first.name, second.name);
+  assert.equal(secondMetadata.createdAt, firstMetadata.createdAt, "createdAt should not change");
+  assert.notEqual(secondMetadata.lastOpenedAt, firstMetadata.lastOpenedAt, "lastOpenedAt should update on re-open");
 });
 
 test("sessionsDir returns workspace sessions path", () => {
