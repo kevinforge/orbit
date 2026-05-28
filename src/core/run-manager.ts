@@ -139,20 +139,21 @@ export class RunManager {
   }
 
   private fail(run: ManagedRun, error: string): void {
+    const errorSummary = summarizeRunError(error);
     run.status = "failed";
     run.completedAt = new Date().toISOString();
     this.active.delete(run.agentId);
-    this.appendActivity(run, `Run failed: ${error}`);
+    this.appendActivity(run, `Run failed: ${errorSummary}`);
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} failed: ${error}`,
+      content: `${getAgentLabel(run.agentId)} failed: ${errorSummary}`,
       status: "error",
       activity: run.activity,
       completedAt: run.completedAt,
       startedAt: run.startedAt,
     });
     this.options.eventBus.publish({ type: "message.updated", message: updated });
-    this.options.eventBus.publish({ type: "run.failed", agentId: run.agentId, runId: run.id, error });
+    this.options.eventBus.publish({ type: "run.failed", agentId: run.agentId, runId: run.id, error: errorSummary });
     this.startNext(run.agentId);
   }
 
@@ -179,11 +180,11 @@ export class RunManager {
   }
 
   private appendActivityEvent(run: ManagedRun, activity: AgentActivityEvent): void {
-    run.activity.push(activity);
+    run.activity.push(truncateActivity(activity));
     this.options.messages.update(run.resultMessageId, {
       activity: run.activity,
     });
-    this.options.eventBus.publish({ type: "run.activity", agentId: run.agentId, runId: run.id, activity });
+    this.options.eventBus.publish({ type: "run.activity", agentId: run.agentId, runId: run.id, activity: run.activity[run.activity.length - 1]! });
   }
 
   private handleRuntimeEvent(event: RuntimeEvent): void {
@@ -283,21 +284,38 @@ export function classifyTerminalActivities(text: string): AgentActivityEvent[] {
 
 function extractStreamJsonActivities(text: string): AgentActivityEvent[] {
   const activities: AgentActivityEvent[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("{")) {
-      continue;
-    }
-
+  for (const event of parseJsonObjects(text)) {
     try {
-      const event = JSON.parse(trimmed) as {
+      const record = event as {
         type?: string;
-        message?: { content?: unknown };
+        message?: string | { content?: unknown };
+        item?: unknown;
+        result?: unknown;
+        text?: unknown;
+        error?: unknown;
+        data?: unknown;
         tool_use_result?: { stdout?: unknown; stderr?: unknown; is_error?: unknown };
       };
 
-      if (event.type === "assistant" && Array.isArray(event.message?.content)) {
-        for (const part of event.message.content as Array<{ type?: unknown; name?: unknown; input?: unknown }>) {
+      const codexActivity = activityFromCodexItem(record.item, record.type);
+      if (codexActivity) {
+        activities.push(codexActivity);
+      }
+
+      if (record.type === "error") {
+        const message = typeof record.message === "string" ? record.message : typeof record.error === "string" ? record.error : "";
+        if (message) {
+          activities.push({
+            type: "error",
+            message: truncateText(message, MAX_ACTIVITY_TEXT_CHARS),
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+
+      const message = typeof record.message === "object" && record.message ? record.message as { content?: unknown } : null;
+      if (record.type === "assistant" && Array.isArray(message?.content)) {
+        for (const part of message.content as Array<{ type?: unknown; name?: unknown; input?: unknown }>) {
           if (part.type === "tool_use" && typeof part.name === "string") {
             activities.push({
               type: "tool.started",
@@ -309,14 +327,26 @@ function extractStreamJsonActivities(text: string): AgentActivityEvent[] {
         }
       }
 
-      if (event.type === "user" && event.tool_use_result) {
-        const summary = summarizeToolResult(event.tool_use_result);
-        activities.push({
-          type: "tool.completed",
-          name: "tool",
-          summary,
-          timestamp: new Date().toISOString(),
-        });
+      if (record.type === "user" && record.tool_use_result) {
+        const isError = !!record.tool_use_result.is_error;
+        const lastToolName = findLastToolName(activities);
+        if (isError) {
+          const summary = summarizeFailedToolResult(record.tool_use_result);
+          activities.push({
+            type: "tool.failed",
+            name: lastToolName,
+            summary,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          const summary = summarizeToolResult(record.tool_use_result);
+          activities.push({
+            type: "tool.completed",
+            name: lastToolName,
+            summary,
+            timestamp: new Date().toISOString(),
+          });
+        }
       }
     } catch {
       continue;
@@ -324,6 +354,220 @@ function extractStreamJsonActivities(text: string): AgentActivityEvent[] {
   }
 
   return activities;
+}
+
+const MAX_RUN_ERROR_CHARS = 2_000;
+const MAX_ACTIVITY_TEXT_CHARS = 2_000;
+const MAX_TOOL_SUMMARY_CHARS = 120;
+
+function parseJsonObjects(text: string): unknown[] {
+  const objects: unknown[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (start === -1) {
+      if (char === "{") {
+        start = index;
+        depth = 1;
+        inString = false;
+        escaped = false;
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char !== "}") {
+      continue;
+    }
+
+    depth -= 1;
+    if (depth === 0) {
+      const candidate = text.slice(start, index + 1);
+      try {
+        objects.push(JSON.parse(candidate));
+      } catch {
+        // Ignore malformed chunks and keep scanning after this candidate.
+      }
+      start = -1;
+    }
+  }
+
+  return objects;
+}
+
+function activityFromCodexItem(item: unknown, eventType: unknown): AgentActivityEvent | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const record = item as {
+    type?: unknown;
+    command?: unknown;
+    aggregated_output?: unknown;
+    exit_code?: unknown;
+    status?: unknown;
+  };
+
+  if (record.type !== "command_execution") {
+    return null;
+  }
+
+  const name = commandToolName(record.command);
+  if (eventType === "item.started") {
+    return {
+      type: "tool.started",
+      name,
+      input: typeof record.command === "string" ? truncateText(record.command, MAX_TOOL_SUMMARY_CHARS) : undefined,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  if (eventType !== "item.completed") {
+    return null;
+  }
+
+  const summary = summarizeCodexCommandOutput(record.aggregated_output);
+  if (typeof record.exit_code === "number" && record.exit_code !== 0) {
+    return {
+      type: "tool.failed",
+      name,
+      summary: summary || `exit ${record.exit_code}`,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  if (record.status === "failed") {
+    return {
+      type: "tool.failed",
+      name,
+      summary: summary || "failed",
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  return {
+    type: "tool.completed",
+    name,
+    summary: summary || "completed",
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function commandToolName(command: unknown): string {
+  if (typeof command !== "string") {
+    return "Command";
+  }
+
+  if (/powershell|pwsh/i.test(command)) return "PowerShell";
+  if (/\b(cmd\.exe|cmd)\b/i.test(command)) return "Command";
+  if (/\b(bash|sh|zsh)\b/i.test(command)) return "Bash";
+  return "Command";
+}
+
+function summarizeCodexCommandOutput(output: unknown): string | undefined {
+  if (typeof output !== "string") {
+    return undefined;
+  }
+
+  const summary = output.replace(/\s+/g, " ").trim();
+  if (!summary) {
+    return undefined;
+  }
+
+  return truncateText(summary, MAX_TOOL_SUMMARY_CHARS);
+}
+
+function truncateActivity(activity: AgentActivityEvent): AgentActivityEvent {
+  if (activity.type === "status") {
+    return { ...activity, text: truncateText(activity.text, MAX_ACTIVITY_TEXT_CHARS) };
+  }
+  if (activity.type === "error") {
+    return { ...activity, message: truncateText(activity.message, MAX_ACTIVITY_TEXT_CHARS) };
+  }
+  if (activity.type === "tool.started") {
+    return { ...activity, input: activity.input ? truncateText(activity.input, MAX_TOOL_SUMMARY_CHARS) : undefined };
+  }
+  if (activity.type === "tool.completed" || activity.type === "tool.failed") {
+    return { ...activity, summary: activity.summary ? truncateText(activity.summary, MAX_TOOL_SUMMARY_CHARS) : undefined };
+  }
+  return activity;
+}
+
+function summarizeRunError(error: string): string {
+  const normalized = error.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "Runtime failed without an error message. Check the transcript for details.";
+  }
+
+  return truncateText(stripRawJsonNoise(normalized), MAX_RUN_ERROR_CHARS);
+}
+
+function stripRawJsonNoise(value: string): string {
+  if (!value.includes("{\"type\":")) {
+    return value;
+  }
+
+  const parsedMessages = parseJsonObjects(value)
+    .map((event) => {
+      const record = event as {
+        type?: unknown;
+        message?: { content?: unknown };
+        error?: unknown;
+        result?: unknown;
+        item?: { type?: unknown; exit_code?: unknown; status?: unknown; aggregated_output?: unknown };
+      };
+
+      if (typeof record.error === "string") return record.error;
+      if (typeof record.message === "string") return record.message;
+      if (typeof record.result === "string") return record.result;
+      if (record.item?.type === "command_execution" && record.item.status === "failed") {
+        const output = typeof record.item.aggregated_output === "string" ? record.item.aggregated_output : "";
+        return output || `Command failed${typeof record.item.exit_code === "number" ? ` with exit ${record.item.exit_code}` : ""}`;
+      }
+      return "";
+    })
+    .filter(Boolean);
+
+  if (parsedMessages.length > 0) {
+    return parsedMessages.join(" ");
+  }
+
+  return "Runtime failed. Check the transcript for details.";
+}
+
+function findLastToolName(activities: AgentActivityEvent[]): string {
+  for (let i = activities.length - 1; i >= 0; i--) {
+    const activity = activities[i];
+    if (activity?.type === "tool.started") {
+      return activity.name;
+    }
+  }
+  return "tool";
 }
 
 function summarizeToolInput(input: unknown): string | undefined {
@@ -339,10 +583,6 @@ function summarizeToolInput(input: unknown): string | undefined {
 }
 
 function summarizeToolResult(result: { stdout?: unknown; stderr?: unknown; is_error?: unknown }): string {
-  if (result.is_error) {
-    return "failed";
-  }
-
   const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
   const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
   const summary = stdout || stderr;
@@ -350,5 +590,24 @@ function summarizeToolResult(result: { stdout?: unknown; stderr?: unknown; is_er
     return "completed";
   }
 
-  return summary.length > 120 ? `${summary.slice(0, 117)}...` : summary;
+  return truncateText(summary, MAX_TOOL_SUMMARY_CHARS);
+}
+
+function summarizeFailedToolResult(result: { stdout?: unknown; stderr?: unknown }): string {
+  const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
+  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+  const summary = stderr || stdout;
+  if (!summary) {
+    return "failed";
+  }
+
+  return truncateText(summary, MAX_TOOL_SUMMARY_CHARS);
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
 }

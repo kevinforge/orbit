@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { AgentRegistry } from "../src/core/agent-registry.ts";
@@ -6,6 +9,11 @@ import type { AgentRuntime } from "../src/core/agent-runtime.ts";
 import { createDefaultAgentProfiles } from "../src/core/agent-profiles.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
+
+function createTempSessionStore(): SessionStore {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-agent-registry-"));
+  return new SessionStore(dir);
+}
 
 test("creates sessions with the runtime selected by each profile", async () => {
   const profiles = createDefaultAgentProfiles(process.cwd()).map((profile) =>
@@ -38,7 +46,7 @@ test("creates sessions with the runtime selected by each profile", async () => {
   const registry = new AgentRegistry(
     profiles,
     new EventBus(),
-    new SessionStore(),
+    createTempSessionStore(),
     "default",
     "default",
     new Map([
@@ -76,7 +84,7 @@ test("states include each agent runtime", () => {
   const registry = new AgentRegistry(
     profiles,
     new EventBus(),
-    new SessionStore(),
+    createTempSessionStore(),
     "default",
     "default",
     new Map([
