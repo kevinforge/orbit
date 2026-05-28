@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
-import type { AgentActivityEvent, AgentId, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
+import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "orbit", path: "" },
@@ -28,6 +28,7 @@ export function App() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [showNewMessageHint, setShowNewMessageHint] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const isNearBottomRef = useRef(true);
 
   useEffect(() => {
@@ -218,7 +219,10 @@ export function App() {
       <aside className="sidebar" aria-label="Agent status">
         <div className="brandBlock">
           <div className="brandMark">orbit</div>
-          <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
+            <button className="settingsBtn" type="button" onClick={() => setShowSettings(true)} title="Agent settings">&#9881;</button>
+          </div>
         </div>
 
         <nav className="agentList" aria-label="Choose agent">
@@ -316,6 +320,12 @@ export function App() {
           </button>
         </form>
       </section>
+      {showSettings ? (
+        <AgentSettingsPanel
+          onClose={() => setShowSettings(false)}
+          onSaved={() => { setShowSettings(false); window.location.reload(); }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -495,6 +505,119 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
             <time>{formatTime(item.timestamp)}</time>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
+const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
+
+function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [configs, setConfigs] = useState<AgentConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/agents")
+      .then((r) => r.json())
+      .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
+      .catch(() => { setError("Failed to load agent configs."); setLoading(false); });
+  }, []);
+
+  function updateConfig(index: number, patch: Partial<AgentConfig>) {
+    setConfigs((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  }
+
+  function addConfig() {
+    setConfigs((prev) => [
+      ...prev,
+      { id: `agent-${Date.now()}`, name: "", role: "general", runtime: "claude-code", systemPrompt: "", enabled: true },
+    ]);
+  }
+
+  function removeConfig(index: number) {
+    setConfigs((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/agents", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(configs),
+      });
+      if (!res.ok) {
+        const body = await res.json() as { message?: string };
+        setError(body.message ?? `Save failed (${res.status})`);
+        return;
+      }
+      onSaved();
+    } catch {
+      setError("Network error saving configs.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resetDefaults() {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/agents/reset", { method: "POST" });
+      if (!res.ok) {
+        setError("Reset failed.");
+        return;
+      }
+      const data = await res.json() as AgentConfig[];
+      setConfigs(data);
+      onSaved();
+    } catch {
+      setError("Network error resetting configs.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader">
+          <h2>Agent Settings</h2>
+          <button type="button" onClick={onClose}>&times;</button>
+        </div>
+        {loading ? <p>Loading...</p> : (
+          <div className="settingsBody">
+            {configs.map((config, i) => (
+              <div key={config.id} className="configRow">
+                <div className="configRowHeader">
+                  <label><input type="checkbox" checked={config.enabled} onChange={() => updateConfig(i, { enabled: !config.enabled })} /> Enabled</label>
+                  <button type="button" className="removeBtn" onClick={() => removeConfig(i)} title="Remove">Remove</button>
+                </div>
+                <div className="configFields">
+                  <input placeholder="ID" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
+                  <input placeholder="Name" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
+                  <select value={config.role} onChange={(e) => updateConfig(i, { role: e.target.value as AgentRole })}>
+                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <select value={config.runtime} onChange={(e) => updateConfig(i, { runtime: e.target.value as AgentRuntimeKind })}>
+                    {RUNTIMES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
+                </div>
+              </div>
+            ))}
+            <button type="button" className="addBtn" onClick={addConfig}>+ Add Agent</button>
+            {error ? <p className="settingsError">{error}</p> : null}
+          </div>
+        )}
+        <div className="modalFooter">
+          <button type="button" onClick={resetDefaults} disabled={saving}>Reset Defaults</button>
+          <button type="button" onClick={save} disabled={saving}>{saving ? "Saving..." : "Save"}</button>
+        </div>
       </div>
     </div>
   );
