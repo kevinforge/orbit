@@ -1,7 +1,9 @@
 import http from "node:http";
 import path from "node:path";
 
-import { createDefaultAgentProfiles, parseAgentRuntimeOverrides } from "../core/agent-profiles.ts";
+import { configsToProfiles } from "../core/agent-profiles.ts";
+import { AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
+import type { AgentConfig } from "../core/agent-config-store.ts";
 import { AgentRegistry } from "../core/agent-registry.ts";
 import { ChannelRouter } from "../core/channel-router.ts";
 import { buildChannelContext } from "../core/channel-context-builder.ts";
@@ -12,7 +14,7 @@ import { RunManager } from "../core/run-manager.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
-import type { AgentId } from "../shared/types.ts";
+import type { AgentId, AgentProfile } from "../shared/types.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 
@@ -33,12 +35,12 @@ const transcriptsDir = workspaceStore.transcriptsDir(workspace.id, CHANNEL_ID, C
 const messages = new MessageStore(messagesPath);
 const transcripts = new TerminalTranscriptStore(transcriptsDir);
 const sessionStore = new SessionStore(workspaceStore.sessionsDir(workspace.id));
-const profiles = createDefaultAgentProfiles(
-  process.cwd(),
-  parseAgentRuntimeOverrides(process.env.ORBIT_AGENT_RUNTIMES),
-);
-const agents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, CONVERSATION_ID);
-const agentIds = agents.ids();
+const configStore = new AgentConfigStore();
+let allConfigs = configStore.load(workspace.id);
+let enabledConfigs = allConfigs.filter((c) => c.enabled);
+let profiles = configsToProfiles(enabledConfigs, process.cwd());
+let agents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, CONVERSATION_ID);
+let agentIds = agents.ids();
 
 eventBus.subscribe((event) => {
   if (event.type === "terminal.chunk") {
@@ -104,6 +106,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/agents") {
+      sendJson(res, 200, allConfigs);
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/agents") {
+      await handlePutAgents(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/agents/reset") {
+      allConfigs = configStore.reset(workspace.id);
+      refreshEnabledAgents();
+      sendJson(res, 200, allConfigs);
+      return;
+    }
+
     if (req.method === "GET" && serveStatic(url.pathname, res)) {
       return;
     }
@@ -162,6 +181,43 @@ function readJson(req: http.IncomingMessage): Promise<unknown> {
 function sendJson(res: http.ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(value));
+}
+
+function refreshEnabledAgents(): void {
+  enabledConfigs = allConfigs.filter((c) => c.enabled);
+  profiles = configsToProfiles(enabledConfigs, process.cwd());
+  agents.stopAll();
+  agents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, CONVERSATION_ID);
+  agentIds = agents.ids();
+  agents.startAll();
+}
+
+function hasRunningAgent(): boolean {
+  return agents.states().some((s) => s.status === "running");
+}
+
+async function handlePutAgents(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (hasRunningAgent()) {
+    sendJson(res, 409, { ok: false, message: "Cannot save while an agent is running. Wait for it to finish." });
+    return;
+  }
+
+  const input = (await readJson(req)) as AgentConfig[];
+  if (!Array.isArray(input)) {
+    sendJson(res, 400, { ok: false, message: "Request body must be an array of agent configs." });
+    return;
+  }
+
+  const errors = validateAgentConfigs(input);
+  if (errors.length > 0) {
+    sendJson(res, 400, { ok: false, message: errors.join(" ") });
+    return;
+  }
+
+  allConfigs = input;
+  configStore.save(workspace.id, allConfigs);
+  refreshEnabledAgents();
+  sendJson(res, 200, allConfigs);
 }
 
 function shutdown(): void {

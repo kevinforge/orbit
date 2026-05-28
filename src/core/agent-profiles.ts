@@ -1,4 +1,4 @@
-import type { AgentId, AgentProfile, AgentRole, AgentRuntimeKind, PermissionProfile } from "../shared/types.ts";
+import type { AgentConfig, AgentId, AgentProfile, AgentRole, AgentRuntimeKind, PermissionProfile } from "../shared/types.ts";
 
 export type AgentRuntimeOverrides = Partial<Record<AgentId, AgentRuntimeKind>>;
 
@@ -117,4 +117,16 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       permissionProfile: permissionProfile("tester"),
     },
   ];
+}
+
+export function configsToProfiles(configs: readonly AgentConfig[], cwd: string): AgentProfile[] {
+  return configs.map((config) => ({
+    id: config.id,
+    name: config.name,
+    role: config.role,
+    runtime: config.runtime,
+    cwd,
+    systemPrompt: config.systemPrompt,
+    permissionProfile: permissionProfile(config.role),
+  }));
 }
