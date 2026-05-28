@@ -200,3 +200,35 @@ test("rejects empty config list", () => {
   const errors = validateAgentConfigs([]);
   assert.ok(errors.length > 0);
 });
+
+test("rejects permissionProfile with non-boolean canReadFiles", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "agent1", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      permissionProfile: {
+        canReadFiles: "yes" as unknown as boolean, canWriteFiles: false, canRunCommands: false,
+        canInstallDependencies: false, canGitCommit: false, allowedDirectories: ["."],
+      },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("canReadFiles")));
+});
+
+test("rejects permissionProfile with missing boolean fields", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "agent1", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      permissionProfile: {
+        canReadFiles: true, allowedDirectories: ["."],
+      } as unknown as AgentConfig["permissionProfile"],
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("canWriteFiles")));
+  assert.ok(errors.some((e) => e.includes("canRunCommands")));
+  assert.ok(errors.some((e) => e.includes("canInstallDependencies")));
+  assert.ok(errors.some((e) => e.includes("canGitCommit")));
+});

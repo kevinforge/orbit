@@ -1,5 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
+import { permissionProfile } from "../core/agent-profiles.ts";
 import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, PermissionProfile, RuntimeEvent } from "../shared/types.ts";
 
 const initialState: AppState = {
@@ -522,10 +523,7 @@ const PERM_FLAGS: { key: keyof PermissionProfile; label: string }[] = [
 
 function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange: (pp: PermissionProfile) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const pp: PermissionProfile = config.permissionProfile ?? {
-    canReadFiles: true, canWriteFiles: false, canRunCommands: false,
-    canInstallDependencies: false, canGitCommit: false, allowedDirectories: ["."],
-  };
+  const pp: PermissionProfile = config.permissionProfile ?? permissionProfile(config.role);
 
   return (
     <div className="permSection">

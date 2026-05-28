@@ -4,7 +4,7 @@ export type AgentRuntimeOverrides = Partial<Record<AgentId, AgentRuntimeKind>>;
 
 const CONFIGURABLE_RUNTIME_KINDS = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 
-function permissionProfile(role: AgentRole): PermissionProfile {
+export function permissionProfile(role: AgentRole): PermissionProfile {
   switch (role) {
     case "pm":
       return {
@@ -122,7 +122,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
 export function configsToProfiles(configs: readonly AgentConfig[], cwd: string): AgentProfile[] {
   return configs.map((config) => ({
     id: config.id,
-    name: config.name,
+    name: config.ui?.label || config.name,
     role: config.role,
     runtime: config.runtime,
     cwd,

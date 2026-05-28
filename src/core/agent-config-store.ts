@@ -87,6 +87,13 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
 
     if (config.permissionProfile) {
       const pp = config.permissionProfile;
+      const boolFlags: (keyof Pick<typeof pp, "canReadFiles" | "canWriteFiles" | "canRunCommands" | "canInstallDependencies" | "canGitCommit">)[] =
+        ["canReadFiles", "canWriteFiles", "canRunCommands", "canInstallDependencies", "canGitCommit"];
+      for (const flag of boolFlags) {
+        if (typeof pp[flag] !== "boolean") {
+          errors.push(`Agent "${config.id}" permissionProfile.${flag} must be a boolean.`);
+        }
+      }
       if (!Array.isArray(pp.allowedDirectories) || pp.allowedDirectories.length === 0) {
         errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty.`);
       }
