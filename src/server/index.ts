@@ -1,4 +1,5 @@
 import http from "node:http";
+import path from "node:path";
 
 import { createDefaultAgentProfiles, parseAgentRuntimeOverrides } from "../core/agent-profiles.ts";
 import { AgentRegistry } from "../core/agent-registry.ts";
@@ -10,6 +11,7 @@ import { MessageStore } from "../core/message-store.ts";
 import { RunManager } from "../core/run-manager.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
+import { WorkspaceStore } from "../core/workspace-store.ts";
 import type { AgentId } from "../shared/types.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
@@ -21,9 +23,16 @@ const port = Number(process.env.ORBIT_PORT ?? 4317);
 
 const eventBus = new EventBus();
 const sseHub = new SseHub();
-const messages = new MessageStore();
-const transcripts = new TerminalTranscriptStore();
-const sessionStore = new SessionStore();
+const workspaceStore = new WorkspaceStore();
+const workspace = workspaceStore.resolve(process.cwd());
+const messagesPath = path.join(
+  workspaceStore.channelsDir(workspace.id, CHANNEL_ID, CONVERSATION_ID),
+  "messages.json",
+);
+const transcriptsDir = workspaceStore.transcriptsDir(workspace.id, CHANNEL_ID, CONVERSATION_ID);
+const messages = new MessageStore(messagesPath);
+const transcripts = new TerminalTranscriptStore(transcriptsDir);
+const sessionStore = new SessionStore(workspaceStore.sessionsDir(workspace.id));
 const profiles = createDefaultAgentProfiles(
   process.cwd(),
   parseAgentRuntimeOverrides(process.env.ORBIT_AGENT_RUNTIMES),
@@ -82,6 +91,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/state") {
       sendJson(res, 200, {
+        workspace,
         agents: agents.states(),
         messages: messages.list(),
         terminal: transcripts.all(),

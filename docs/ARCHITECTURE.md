@@ -40,9 +40,10 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
 | `src/core/channel-context-builder.ts` | Builds private context passed into each agent run |
 | `src/core/channel-history.ts` | Builds scoped channel history for each agent run |
-| `src/core/message-store.ts` | In-memory channel messages |
+| `src/core/message-store.ts` | Workspace-persisted channel messages |
 | `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
-| `src/core/terminal-transcript-store.ts` | Runtime activity transcript storage |
+| `src/core/workspace-store.ts` | Workspace isolation and user directory persistence |
+| `src/core/terminal-transcript-store.ts` | Workspace-persisted runtime activity transcripts |
 | `src/core/claude-output-detector.ts` | Clean final answer validation and stream event mapping |
 | `src/ui/App.tsx` | Chat UI, agent buttons, composer, markdown, activity panel |
 
@@ -101,6 +102,22 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 
 Each agent's CLI session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. On subsequent runs, the runtime adapter passes the corresponding resume option so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without resuming.
 
+Session files are stored under `~/.orbit/sessions/<workspaceId>/<runtime>/<channelId>/<conversationId>/<agentId>.json`, namespaced by runtime, channel, conversation, and agent.
+
+## Workspace Isolation
+
+Each project directory gets its own isolated workspace via `src/core/workspace-store.ts`:
+
+- **Workspace ID**: deterministic 12-char hex derived from the project's absolute cwd using SHA-256. On Windows the path is lowercased before hashing to handle case-insensitive filesystems; on Linux/macOS the original case is preserved.
+- **Data directory**: `~/.orbit/` organized by data type, with workspace as an isolation dimension:
+  - `workspaces/<workspace-id>/workspace.json` — metadata (id, name, path, createdAt, lastOpenedAt)
+  - `sessions/<workspace-id>/<runtime>/<channelId>/<conversationId>/<agentId>.json` — per-agent session records (`SessionStore`)
+  - `channels/<workspace-id>/<channelId>/<conversationId>/messages.json` — persisted channel messages (`MessageStore`)
+  - `transcripts/<workspace-id>/<channelId>/<conversationId>/<agentId>.log` — per-agent terminal transcripts (`TerminalTranscriptStore`)
+- **Lifecycle**: on startup, the server calls `WorkspaceStore.resolve(cwd)` which creates the workspace directory and metadata on first run, or updates `lastOpenedAt` on subsequent runs.
+
+The current implementation does not migrate data from the legacy `.orbit/` directory inside the project. Old session data there is ignored once this version is active.
+
 Codex uses the user's normal Codex CLI home. Orbit does not create per-agent `CODEX_HOME` directories; agent-level continuity is handled by the session store above, which passes each agent's own saved session ID back to the runtime on the next run.
 
 ## CLI Runtimes
@@ -143,19 +160,14 @@ The UI keeps running activities expanded and scrolls to the latest event. Comple
 
 ## State
 
-Current state is in memory:
-
-- messages
-- agent statuses
-- queued runs
-- activity transcripts
+Agent statuses and run queues are in memory. Messages and terminal transcripts are persisted to the workspace data directory and survive server restarts.
 
 This keeps P0 simple. Persistent storage should be added behind existing stores rather than mixed into UI or runtime code.
 
 ## Future Extension Points
 
 - Replace hardcoded profiles with user-defined agents.
-- Add persistent SQLite storage behind `MessageStore` and transcript storage.
+- Add persistent SQLite storage behind `MessageStore` and transcript storage (currently JSON/log files).
 - Add runtime adapters for other agent backends.
 - Add richer queue controls: cancel, retry, pause, and priority.
 - Add branch/PR workflow integration as a separate layer, not inside the runtime adapter.

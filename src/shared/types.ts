@@ -86,7 +86,14 @@ export type RuntimeEvent =
 
 export type TerminalState = Record<string, string>;
 
+export type WorkspaceInfo = {
+  id: string;
+  name: string;
+  path: string;
+};
+
 export type AppState = {
+  workspace: WorkspaceInfo;
   messages: ChatMessage[];
   agents: AgentState[];
   terminal: TerminalState;

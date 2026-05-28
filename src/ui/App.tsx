@@ -1,8 +1,9 @@
 import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { marked } from "marked";
+import { renderMarkdown } from "./markdown-renderer.ts";
 import type { AgentActivityEvent, AgentId, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
 
 const initialState: AppState = {
+  workspace: { id: "", name: "orbit", path: "" },
   agents: [
     { id: "pm", label: "Product Manager", runtime: "codex", status: "starting", selected: true },
     { id: "architect", label: "Architect", runtime: "codex", status: "starting", selected: false },
@@ -235,8 +236,9 @@ export function App() {
       <section className="channel" aria-label="Chat channel">
         <header className="channelHeader">
           <div>
-            <p className="eyebrow">local channel</p>
-            <h1>Orbit P0</h1>
+            <p className="eyebrow">workspace</p>
+            <h1>{state.workspace.name || "Orbit"}</h1>
+            {state.workspace.path ? <p className="workspacePath">{state.workspace.path}</p> : null}
           </div>
           <div className="quickActions" aria-label="Quick agent selection">
             {agentIds.map((agentId) => (
@@ -513,7 +515,7 @@ function activityText(item: AgentActivityEvent): string {
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  const html = marked.parse(content, { async: false }) as string;
+  const html = renderMarkdown(content);
   return <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
@@ -570,6 +572,7 @@ function upsertMessage(state: AppState, nextMessage: ChatMessage): AppState {
 
 function normalizeState(nextState: AppState): AppState {
   return {
+    workspace: nextState.workspace ?? initialState.workspace,
     agents: nextState.agents?.length
       ? nextState.agents.map((agent) => ({ ...agent, runtime: agent.runtime ?? "claude-code" }))
       : initialState.agents,
