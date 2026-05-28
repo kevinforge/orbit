@@ -104,6 +104,54 @@ test("load handles corrupted file gracefully", () => {
   }
 });
 
+test("load returns defaults for valid JSON with invalid runtime", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "not-a-runtime", systemPrompt: "x", enabled: true }]));
+    const configs = store.load("ws1");
+    assert.equal(configs.length, 4);
+    assert.equal(configs[0].id, "pm");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("load returns defaults for valid JSON with duplicate ids", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify([
+      { id: "dup", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
+      { id: "dup", name: "B", role: "general", runtime: "codex", systemPrompt: "y", enabled: true },
+    ]));
+    const configs = store.load("ws1");
+    assert.equal(configs.length, 4);
+    assert.equal(configs[0].id, "pm");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("load returns defaults for valid JSON with no enabled agents", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: false }]));
+    const configs = store.load("ws1");
+    assert.equal(configs.length, 4);
+    assert.equal(configs[0].id, "pm");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- Validation tests ---
 
 test("validates ok for seed configs", () => {

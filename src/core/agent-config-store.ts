@@ -122,6 +122,11 @@ export class AgentConfigStore {
       if (!Array.isArray(configs) || configs.length === 0) {
         return structuredClone(DEFAULT_AGENT_CONFIGS);
       }
+      const errors = validateAgentConfigs(configs);
+      if (errors.length > 0) {
+        console.error(`[orbit] Invalid agents.json, using defaults: ${errors.join("; ")}`);
+        return structuredClone(DEFAULT_AGENT_CONFIGS);
+      }
       return configs;
     } catch {
       return structuredClone(DEFAULT_AGENT_CONFIGS);
