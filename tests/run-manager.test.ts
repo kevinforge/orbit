@@ -281,6 +281,211 @@ test("classifies failed Codex command execution", () => {
   }
 });
 
+test("split Claude tool_use across two terminal chunks still produces tool.started", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  let activeRunId = "";
+
+  const manager = new RunManager({
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string) {
+            activeRunId = runId;
+            return first.promise;
+          },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) {
+      return prompt;
+    },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "split tool_use test", createSourceMessage());
+
+  const fullJson = JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "src/main.ts" } }] },
+  });
+  const mid = Math.floor(fullJson.length / 2);
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: fullJson.slice(0, mid) });
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: fullJson.slice(mid) });
+
+  const msg = messages.get(run.resultMessageId);
+  const toolStarted = msg?.activity?.find((a) => a.type === "tool.started");
+  assert.ok(toolStarted, "Expected tool.started from split tool_use JSON");
+  if (toolStarted?.type === "tool.started") {
+    assert.equal(toolStarted.name, "Read");
+    assert.equal(toolStarted.input, "src/main.ts");
+  }
+
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+test("split Claude tool_use_result across chunks still produces tool.completed with summary", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  let activeRunId = "";
+
+  const manager = new RunManager({
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string) {
+            activeRunId = runId;
+            return first.promise;
+          },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) {
+      return prompt;
+    },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "split result test", createSourceMessage());
+
+  const started = JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name: "Bash", input: { command: "ls" } }] },
+  });
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: `${started}\n` });
+
+  const resultJson = JSON.stringify({
+    type: "user",
+    tool_use_result: { stdout: "file1.ts\nfile2.ts", stderr: "", is_error: false },
+  });
+  const mid = Math.floor(resultJson.length / 2);
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: resultJson.slice(0, mid) });
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: resultJson.slice(mid) });
+
+  const msg = messages.get(run.resultMessageId);
+  const toolCompleted = msg?.activity?.find((a) => a.type === "tool.completed");
+  assert.ok(toolCompleted, "Expected tool.completed from split tool_use_result JSON");
+  if (toolCompleted?.type === "tool.completed") {
+    assert.equal(toolCompleted.name, "Bash");
+    assert.ok(toolCompleted.summary?.includes("file1.ts"), `Expected summary with output, got: ${toolCompleted.summary}`);
+  }
+
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+test("split Claude tool_use_result error across chunks still produces tool.failed", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  let activeRunId = "";
+
+  const manager = new RunManager({
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string) {
+            activeRunId = runId;
+            return first.promise;
+          },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) {
+      return prompt;
+    },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "split failed result test", createSourceMessage());
+
+  const started = JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name: "Bash", input: { command: "bad" } }] },
+  });
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: `${started}\n` });
+
+  const failedJson = JSON.stringify({
+    type: "user",
+    tool_use_result: { stdout: "", stderr: "command not found", is_error: true },
+  });
+  const mid = Math.floor(failedJson.length / 2);
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: failedJson.slice(0, mid) });
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: failedJson.slice(mid) });
+
+  const msg = messages.get(run.resultMessageId);
+  const toolFailed = msg?.activity?.find((a) => a.type === "tool.failed");
+  assert.ok(toolFailed, "Expected tool.failed from split error tool_use_result JSON");
+  if (toolFailed?.type === "tool.failed") {
+    assert.equal(toolFailed.name, "Bash");
+    assert.ok(toolFailed.summary?.includes("command not found"), `Expected stderr in summary, got: ${toolFailed.summary}`);
+  }
+
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+test("split Codex command_execution completion across chunks still produces tool.completed", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  let activeRunId = "";
+
+  const manager = new RunManager({
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string) {
+            activeRunId = runId;
+            return first.promise;
+          },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) {
+      return prompt;
+    },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "split codex test", createSourceMessage());
+
+  const started = JSON.stringify({
+    type: "item.started",
+    item: { id: "item_1", type: "command_execution", command: "git status", status: "in_progress" },
+  });
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: `${started}\n` });
+
+  const completedJson = JSON.stringify({
+    type: "item.completed",
+    item: { id: "item_1", type: "command_execution", command: "git status", aggregated_output: "On branch main", exit_code: 0, status: "completed" },
+  });
+  const mid = Math.floor(completedJson.length / 2);
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: completedJson.slice(0, mid) });
+  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: completedJson.slice(mid) });
+
+  const msg = messages.get(run.resultMessageId);
+  const toolCompleted = msg?.activity?.find((a) => a.type === "tool.completed");
+  assert.ok(toolCompleted, "Expected tool.completed from split Codex command_execution JSON");
+  if (toolCompleted?.type === "tool.completed") {
+    assert.ok(toolCompleted.summary?.includes("On branch main"), `Expected output in summary, got: ${toolCompleted.summary}`);
+  }
+
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
 test("run failures store a concise error instead of raw stream output", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

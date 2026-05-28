@@ -43,6 +43,8 @@ export class RunManager {
   private readonly active = new Map<AgentId, ManagedRun>();
   private readonly runs = new Map<string, ManagedRun>();
   private readonly lastTerminalActivityAt = new Map<string, number>();
+  private readonly chunkBuffers = new Map<string, string>();
+  private readonly lastToolNames = new Map<string, string>();
 
   constructor(private readonly options: RunManagerOptions) {
     this.options.eventBus.subscribe((event) => this.handleRuntimeEvent(event));
@@ -116,6 +118,8 @@ export class RunManager {
     run.status = "completed";
     run.completedAt = new Date().toISOString();
     this.active.delete(run.agentId);
+    this.chunkBuffers.delete(run.id);
+    this.lastToolNames.delete(run.id);
     this.appendActivity(run, "Run completed.");
 
     const updated = this.options.messages.update(run.resultMessageId, {
@@ -143,6 +147,8 @@ export class RunManager {
     run.status = "failed";
     run.completedAt = new Date().toISOString();
     this.active.delete(run.agentId);
+    this.chunkBuffers.delete(run.id);
+    this.lastToolNames.delete(run.id);
     this.appendActivity(run, `Run failed: ${errorSummary}`);
 
     const updated = this.options.messages.update(run.resultMessageId, {
@@ -208,7 +214,29 @@ export class RunManager {
       return;
     }
 
-    const activities = classifyTerminalActivities(event.text);
+    const { complete, nonJson } = this.flushChunkBuffer(run.id, event.text);
+    const allActivities: AgentActivityEvent[] = [];
+
+    if (nonJson) {
+      allActivities.push(...classifyTerminalActivities(nonJson));
+    }
+    if (complete) {
+      allActivities.push(...classifyTerminalActivities(complete));
+    }
+
+    for (const activity of allActivities) {
+      if (activity.type === "tool.started") {
+        this.lastToolNames.set(run.id, activity.name);
+      }
+      if ((activity.type === "tool.completed" || activity.type === "tool.failed") && activity.name === "tool") {
+        const lastName = this.lastToolNames.get(run.id);
+        if (lastName) {
+          (activity as { name: string }).name = lastName;
+        }
+      }
+    }
+
+    const activities = allActivities;
     if (activities.length === 0) {
       return;
     }
@@ -237,6 +265,46 @@ export class RunManager {
     this.queues.set(agentId, nextQueue);
     return nextQueue;
   }
+
+  private flushChunkBuffer(runId: string, incoming: string): { complete: string; nonJson: string } {
+    const prev = this.chunkBuffers.get(runId) ?? "";
+
+    if (!prev) {
+      const lastBrace = findLastTopLevelClose(incoming);
+      if (lastBrace === -1) {
+        const startsLikeJson = /^\s*\{/.test(incoming);
+        if (startsLikeJson) {
+          this.chunkBuffers.set(runId, incoming);
+          return { complete: "", nonJson: "" };
+        }
+        return { complete: "", nonJson: incoming };
+      }
+      const complete = incoming.slice(0, lastBrace + 1);
+      const tail = incoming.slice(lastBrace + 1).replace(/^\s+/, "");
+      if (tail) {
+        this.chunkBuffers.set(runId, tail);
+      } else {
+        this.chunkBuffers.delete(runId);
+      }
+      return { complete, nonJson: "" };
+    }
+
+    const combined = prev + incoming;
+    const lastBrace = findLastTopLevelClose(combined);
+    if (lastBrace === -1) {
+      this.chunkBuffers.set(runId, combined);
+      return { complete: "", nonJson: "" };
+    }
+
+    const complete = combined.slice(0, lastBrace + 1);
+    const tail = combined.slice(lastBrace + 1).replace(/^\s+/, "");
+    if (tail) {
+      this.chunkBuffers.set(runId, tail);
+    } else {
+      this.chunkBuffers.delete(runId);
+    }
+    return { complete, nonJson: "" };
+  }
 }
 
 function createRunId(agentId: AgentId): string {
@@ -249,6 +317,41 @@ function createActivity(text: string): AgentActivityEvent {
 
 function getAgentLabel(agentId: AgentId): string {
   return agentId;
+}
+
+function findLastTopLevelClose(text: string): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let lastClose = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        lastClose = i;
+      }
+    }
+  }
+
+  return lastClose;
 }
 
 export function classifyTerminalActivity(text: string): AgentActivityEvent | null {
