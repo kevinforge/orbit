@@ -9,7 +9,10 @@ The current version is intentionally small. It validates the core workflow befor
 ## Features
 
 - One local channel: `Orbit P0`
-- Four built-in agents: `@pm:`, `@architect:`, `@developer:`, `@tester:`
+- Configurable agents with settings UI (gear icon in sidebar)
+- Four built-in agents by default: `@pm:`, `@architect:`, `@developer:`, `@tester:`
+- Custom agent creation, editing, enable/disable, and delete
+- Per-agent configurable permissions (read/write/run/install/git commit, allowed directories)
 - Explicit assignment syntax with a colon, for example `@developer: inspect the current project`
 - Multiple agent assignments in one channel message
 - Per-agent run queue, so long-running work does not block the whole channel
@@ -23,7 +26,6 @@ The current version is intentionally small. It validates the core workflow befor
 
 ## Not Included Yet
 
-- Custom agent creation
 - Persistent database storage
 - Online sync or multi-device support
 - GitHub PR workflow automation inside Orbit
@@ -49,15 +51,38 @@ npm run dev
 
 Open `http://localhost:4317`.
 
-By default, `@pm:` and `@architect:` use Codex, `@developer:` uses Claude Code,
-and `@tester:` uses CodeBuddy. To override selected agents, set
-`ORBIT_AGENT_RUNTIMES` before starting Orbit:
+### Agent Configuration
 
-```powershell
-$env:ORBIT_AGENT_RUNTIMES="developer=codex,tester=claude-code"; npm run dev
+Agents are configured via the settings modal (gear icon in the sidebar) or by
+editing the config file directly:
+
+```
+~/.orbit/workspaces/<workspace-id>/agents.json
 ```
 
-Supported runtime values are `codex`, `claude-code`, and `codebuddy`.
+By default, four agents are seeded: `pm`, `architect`, `developer`, `tester`.
+You can add, edit, disable, or remove agents through the UI. Disabled agents
+are excluded from routing — mentions like `@disabled_agent:` will not trigger
+runs.
+
+Each agent config includes:
+- **id**: Unique identifier (alphanumeric, hyphens, underscores)
+- **name**: Display name
+- **description**: Short description of the agent's purpose
+- **role**: One of `pm`, `architect`, `developer`, `tester`, `general`
+- **runtime**: `claude-code`, `codex`, or `codebuddy`
+- **systemPrompt**: System prompt injected into each run
+- **permissionProfile**: Read/write/run/install/git commit permissions and allowed directories
+- **enabled**: Whether the agent is active
+- **ui.label**: Optional display label override
+
+Changes take effect immediately after save. If any agent is currently running,
+save is blocked with a 409 response until the run completes.
+
+**API endpoints:**
+- `GET /api/agents` — list all agent configs
+- `PUT /api/agents` — save agent configs (validates first)
+- `POST /api/agents/reset` — restore default configs
 
 To restart the local service on Windows PowerShell and clear the default port first:
 

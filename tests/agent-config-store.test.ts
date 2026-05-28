@@ -160,6 +160,36 @@ test("rejects empty name", () => {
   assert.ok(errors.some((e) => e.includes("name")));
 });
 
+test("rejects permissionProfile with empty allowedDirectories", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "agent1", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      permissionProfile: {
+        canReadFiles: true, canWriteFiles: false, canRunCommands: false,
+        canInstallDependencies: false, canGitCommit: false, allowedDirectories: [],
+      },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("allowedDirectories")));
+});
+
+test("accepts config with valid permissionProfile", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "agent1", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      permissionProfile: {
+        canReadFiles: true, canWriteFiles: true, canRunCommands: true,
+        canInstallDependencies: false, canGitCommit: false, allowedDirectories: ["."],
+      },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
 test("rejects config with no enabled agents", () => {
   const configs: AgentConfig[] = DEFAULT_AGENT_CONFIGS.map((c) => ({ ...c, enabled: false }));
   const errors = validateAgentConfigs(configs);

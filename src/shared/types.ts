@@ -13,6 +13,10 @@ export type PermissionProfile = {
 
 export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 
+export type AgentConfigUi = {
+  label?: string;
+};
+
 export type AgentConfig = {
   id: AgentId;
   name: string;
@@ -22,6 +26,7 @@ export type AgentConfig = {
   systemPrompt: string;
   permissionProfile?: PermissionProfile;
   enabled: boolean;
+  ui?: AgentConfigUi;
 };
 
 export type AgentProfile = {

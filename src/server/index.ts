@@ -195,6 +195,7 @@ function refreshEnabledAgents(): void {
   agentIds = agents.ids();
   agents.startAll();
 
+  runManager.dispose();
   runManager = new RunManager({
     agents,
     messages,

@@ -84,6 +84,13 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
     if (!config.systemPrompt || !config.systemPrompt.trim()) {
       errors.push(`Agent "${config.id}" systemPrompt is required.`);
     }
+
+    if (config.permissionProfile) {
+      const pp = config.permissionProfile;
+      if (!Array.isArray(pp.allowedDirectories) || pp.allowedDirectories.length === 0) {
+        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty.`);
+      }
+    }
   }
 
   if (!configs.some((c) => c.enabled)) {

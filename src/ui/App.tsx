@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
-import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
+import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, PermissionProfile, RuntimeEvent } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "orbit", path: "" },
@@ -512,6 +512,43 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
 
 const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
 const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
+const PERM_FLAGS: { key: keyof PermissionProfile; label: string }[] = [
+  { key: "canReadFiles", label: "Read files" },
+  { key: "canWriteFiles", label: "Write files" },
+  { key: "canRunCommands", label: "Run commands" },
+  { key: "canInstallDependencies", label: "Install deps" },
+  { key: "canGitCommit", label: "Git commit" },
+];
+
+function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange: (pp: PermissionProfile) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const pp: PermissionProfile = config.permissionProfile ?? {
+    canReadFiles: true, canWriteFiles: false, canRunCommands: false,
+    canInstallDependencies: false, canGitCommit: false, allowedDirectories: ["."],
+  };
+
+  return (
+    <div className="permSection">
+      <button type="button" className="permToggle" onClick={() => setExpanded((v) => !v)}>
+        {expanded ? "▼" : "▶"} Permissions
+      </button>
+      {expanded ? (
+        <div className="permFields">
+          {PERM_FLAGS.map(({ key, label }) => (
+            <label key={key}>
+              <input type="checkbox" checked={pp[key] as boolean} onChange={(e) => onChange({ ...pp, [key]: e.target.checked })} /> {label}
+            </label>
+          ))}
+          <input
+            placeholder="Allowed directories (comma-separated)"
+            value={pp.allowedDirectories.join(", ")}
+            onChange={(e) => onChange({ ...pp, allowedDirectories: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [configs, setConfigs] = useState<AgentConfig[]>([]);
@@ -600,6 +637,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                 <div className="configFields">
                   <input placeholder="ID" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
                   <input placeholder="Name" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
+                  <input placeholder="Display label (optional)" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
                   <input placeholder="Description" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
                   <select value={config.role} onChange={(e) => updateConfig(i, { role: e.target.value as AgentRole })}>
                     {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -608,6 +646,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                     {RUNTIMES.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
+                  <PermissionEditor config={config} onChange={(pp) => updateConfig(i, { permissionProfile: pp })} />
                 </div>
               </div>
             ))}

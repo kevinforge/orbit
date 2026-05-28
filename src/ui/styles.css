@@ -883,6 +883,50 @@ button:disabled {
   resize: vertical;
 }
 
+.permSection {
+  grid-column: 1 / -1;
+}
+
+.permToggle {
+  background: none;
+  border: 0;
+  font-size: 11px;
+  color: #5d6877;
+  cursor: pointer;
+  padding: 0;
+}
+
+.permFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #e8ecf0;
+  border-radius: 4px;
+  background: #fafbfc;
+}
+
+.permFields label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #3d4756;
+  cursor: pointer;
+}
+
+.permFields input[type="text"],
+.permFields input:not([type]) {
+  grid-column: 1 / -1;
+  font: inherit;
+  font-size: 11px;
+  border: 1px solid #d0d6de;
+  border-radius: 4px;
+  padding: 4px 7px;
+  outline: none;
+}
+
 .addBtn {
   justify-self: start;
   font: inherit;
