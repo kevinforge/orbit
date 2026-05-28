@@ -448,6 +448,7 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
   const [expanded, setExpanded] = useState(!shouldAutoCollapse);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const toolCount = activity.filter((item) => item.type === "tool.started").length;
+  const failedCount = activity.filter((item) => item.type === "tool.failed").length;
   const errorCount = activity.filter((item) => item.type === "error").length;
   const latest = activity[activity.length - 1];
   const visibleActivity = expanded ? activity : activity.slice(-3);
@@ -476,6 +477,7 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
           <strong>Activity</strong>
           <span>{activity.length} events</span>
           {toolCount > 0 ? <span>{toolCount} tools</span> : null}
+          {failedCount > 0 ? <span className="activityErrorCount">{failedCount} failed</span> : null}
           {errorCount > 0 ? <span className="activityErrorCount">{errorCount} errors</span> : null}
         </div>
         {activity.length > 3 ? (
@@ -507,6 +509,9 @@ function activityText(item: AgentActivityEvent): string {
       return item.summary ? `Completed: ${item.summary}` : "Completed";
     }
     return item.summary ? `Completed ${item.name}: ${item.summary}` : `Completed ${item.name}`;
+  }
+  if (item.type === "tool.failed") {
+    return item.summary ? `Failed ${item.name}: ${item.summary}` : `Failed ${item.name}`;
   }
   if (item.type === "error") {
     return item.message;

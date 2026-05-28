@@ -43,6 +43,7 @@ export type AgentActivityEvent =
   | { type: "status"; text: string; timestamp: string }
   | { type: "tool.started"; name: string; input?: string; timestamp: string }
   | { type: "tool.completed"; name: string; summary?: string; timestamp: string }
+  | { type: "tool.failed"; name: string; summary?: string; timestamp: string }
   | { type: "error"; message: string; timestamp: string };
 
 export type ChatMessage = {

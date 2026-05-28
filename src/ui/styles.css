@@ -543,6 +543,10 @@ button:disabled {
   background: #50a46f;
 }
 
+.activityItem.tool-failed .activityDot {
+  background: #d45b5b;
+}
+
 .activityItem.error .activityDot {
   background: #c94b4b;
 }
@@ -558,7 +562,8 @@ button:disabled {
   white-space: nowrap;
 }
 
-.activityItem.error .activityText {
+.activityItem.error .activityText,
+.activityItem.tool-failed .activityText {
   color: #a33838;
 }
 
