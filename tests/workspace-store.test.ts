@@ -40,7 +40,7 @@ test("resolve returns workspace info from existing metadata file", () => {
   assert.ok(workspace.id);
   assert.equal(workspace.path, cwd);
   assert.equal(workspace.name, "orbit");
-  assert.ok(fs.existsSync(path.join(dir, workspace.id, "workspace.json")));
+  assert.ok(fs.existsSync(path.join(dir, "workspaces", workspace.id, "workspace.json")));
 });
 
 test("resolve creates workspace directory and metadata on first call", () => {
@@ -49,7 +49,7 @@ test("resolve creates workspace directory and metadata on first call", () => {
 
   const workspace = store.resolve("/home/user/projects/new-project");
 
-  const metadataPath = path.join(dir, workspace.id, "workspace.json");
+  const metadataPath = path.join(dir, "workspaces", workspace.id, "workspace.json");
   assert.ok(fs.existsSync(metadataPath));
   const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
   assert.equal(metadata.id, workspace.id);
@@ -66,7 +66,7 @@ test("resolve loads existing workspace and updates lastOpenedAt", () => {
   const cwd = "/home/user/projects/existing";
 
   const first = store.resolve(cwd);
-  const metadataPath = path.join(dir, first.id, "workspace.json");
+  const metadataPath = path.join(dir, "workspaces", first.id, "workspace.json");
   const firstMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
 
   // Small delay to ensure different timestamp
@@ -88,7 +88,7 @@ test("sessionsDir returns workspace sessions path", () => {
   const workspace = store.resolve("/home/user/projects/test");
 
   const sessionsDir = store.sessionsDir(workspace.id);
-  assert.equal(sessionsDir, path.join(dir, workspace.id, "sessions"));
+  assert.equal(sessionsDir, path.join(dir, "sessions", workspace.id));
 });
 
 test("name defaults to last path segment", () => {
@@ -104,7 +104,7 @@ test("sessionsDir returns path under workspace base", () => {
   const store = new WorkspaceStore(dir);
   const id = WorkspaceStore.deriveId(process.cwd());
 
-  assert.equal(store.sessionsDir(id), path.join(dir, id, "sessions"));
+  assert.equal(store.sessionsDir(id), path.join(dir, "sessions", id));
 });
 
 test("dataDir returns workspace data path", () => {
@@ -112,5 +112,43 @@ test("dataDir returns workspace data path", () => {
   const store = new WorkspaceStore(dir);
   const ws = store.resolve("/tmp/project-data");
   const dataDir = store.dataDir(ws.id);
-  assert.equal(dataDir, path.join(dir, ws.id, "data"));
+  assert.equal(dataDir, path.join(dir, "data", ws.id));
+});
+
+test("channelsDir returns path with workspace, channel and conversation", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("/tmp/project-channels");
+
+  assert.equal(
+    store.channelsDir(ws.id, "general", "conv-1"),
+    path.join(dir, "channels", ws.id, "general", "conv-1"),
+  );
+});
+
+test("channelsDir defaults to 'default' for channel and conversation", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("/tmp/project-defaults");
+
+  assert.equal(store.channelsDir(ws.id), path.join(dir, "channels", ws.id, "default", "default"));
+});
+
+test("transcriptsDir returns path with workspace, channel and conversation", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("/tmp/project-transcripts");
+
+  assert.equal(
+    store.transcriptsDir(ws.id, "general", "conv-1"),
+    path.join(dir, "transcripts", ws.id, "general", "conv-1"),
+  );
+});
+
+test("transcriptsDir defaults to 'default' for channel and conversation", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("/tmp/project-defaults");
+
+  assert.equal(store.transcriptsDir(ws.id), path.join(dir, "transcripts", ws.id, "default", "default"));
 });

@@ -25,8 +25,11 @@ const eventBus = new EventBus();
 const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const workspace = workspaceStore.resolve(process.cwd());
-const messagesPath = path.join(workspaceStore.channelsDir(workspace.id), "messages.json");
-const transcriptsDir = workspaceStore.transcriptsDir(workspace.id);
+const messagesPath = path.join(
+  workspaceStore.channelsDir(workspace.id, CHANNEL_ID, CONVERSATION_ID),
+  "messages.json",
+);
+const transcriptsDir = workspaceStore.transcriptsDir(workspace.id, CHANNEL_ID, CONVERSATION_ID);
 const messages = new MessageStore(messagesPath);
 const transcripts = new TerminalTranscriptStore(transcriptsDir);
 const sessionStore = new SessionStore(workspaceStore.sessionsDir(workspace.id));

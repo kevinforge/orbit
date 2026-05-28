@@ -102,18 +102,18 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 
 Each agent's CLI session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. On subsequent runs, the runtime adapter passes the corresponding resume option so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without resuming.
 
-Session files are stored under the workspace directory (see below), not in the project-local `.orbit/` directory.
+Session files are stored under `~/.orbit/sessions/<workspaceId>/<runtime>/<channelId>/<conversationId>/<agentId>.json`, namespaced by runtime, channel, conversation, and agent.
 
 ## Workspace Isolation
 
 Each project directory gets its own isolated workspace via `src/core/workspace-store.ts`:
 
 - **Workspace ID**: deterministic 12-char hex derived from the project's absolute cwd using SHA-256. On Windows the path is lowercased before hashing to handle case-insensitive filesystems; on Linux/macOS the original case is preserved.
-- **Data directory**: `~/.orbit/workspaces/<workspace-id>/` containing:
-  - `workspace.json` — metadata (id, name, path, createdAt, lastOpenedAt)
-  - `sessions/` — per-agent session records used by `SessionStore`
-  - `channels/default/conversations/default/messages.json` — persisted channel messages (`MessageStore`)
-  - `transcripts/default/` — per-agent terminal transcripts (`TerminalTranscriptStore`, one `.log` file per agent)
+- **Data directory**: `~/.orbit/` organized by data type, with workspace as an isolation dimension:
+  - `workspaces/<workspace-id>/workspace.json` — metadata (id, name, path, createdAt, lastOpenedAt)
+  - `sessions/<workspace-id>/<runtime>/<channelId>/<conversationId>/<agentId>.json` — per-agent session records (`SessionStore`)
+  - `channels/<workspace-id>/<channelId>/<conversationId>/messages.json` — persisted channel messages (`MessageStore`)
+  - `transcripts/<workspace-id>/<channelId>/<conversationId>/<agentId>.log` — per-agent terminal transcripts (`TerminalTranscriptStore`)
 - **Lifecycle**: on startup, the server calls `WorkspaceStore.resolve(cwd)` which creates the workspace directory and metadata on first run, or updates `lastOpenedAt` on subsequent runs.
 
 The current implementation does not migrate data from the legacy `.orbit/` directory inside the project. Old session data there is ignored once this version is active.

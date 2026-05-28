@@ -18,7 +18,7 @@ export class WorkspaceStore {
   private readonly baseDir: string;
 
   constructor(baseDir?: string) {
-    this.baseDir = baseDir ?? path.join(os.homedir(), ".orbit", "workspaces");
+    this.baseDir = baseDir ?? path.join(os.homedir(), ".orbit");
   }
 
   static deriveId(cwd: string): string {
@@ -29,7 +29,7 @@ export class WorkspaceStore {
 
   resolve(cwd: string): WorkspaceInfo {
     const id = WorkspaceStore.deriveId(cwd);
-    const metadataPath = path.join(this.baseDir, id, "workspace.json");
+    const metadataPath = path.join(this.baseDir, "workspaces", id, "workspace.json");
 
     try {
       const data = fs.readFileSync(metadataPath, "utf8");
@@ -53,18 +53,18 @@ export class WorkspaceStore {
   }
 
   sessionsDir(workspaceId: string): string {
-    return path.join(this.baseDir, workspaceId, "sessions");
+    return path.join(this.baseDir, "sessions", workspaceId);
   }
 
   dataDir(workspaceId: string): string {
-    return path.join(this.baseDir, workspaceId, "data");
+    return path.join(this.baseDir, "data", workspaceId);
   }
 
-  channelsDir(workspaceId: string): string {
-    return path.join(this.baseDir, workspaceId, "channels", "default", "conversations", "default");
+  channelsDir(workspaceId: string, channelId = "default", conversationId = "default"): string {
+    return path.join(this.baseDir, "channels", workspaceId, channelId, conversationId);
   }
 
-  transcriptsDir(workspaceId: string): string {
-    return path.join(this.baseDir, workspaceId, "transcripts", "default");
+  transcriptsDir(workspaceId: string, channelId = "default", conversationId = "default"): string {
+    return path.join(this.baseDir, "transcripts", workspaceId, channelId, conversationId);
   }
 }
