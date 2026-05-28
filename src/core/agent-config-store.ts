@@ -13,6 +13,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
     id: "pm",
     name: "Product Manager",
+    description: "Clarifies requirements, defines scope and acceptance criteria.",
     role: "pm",
     runtime: "codex",
     systemPrompt:
@@ -22,6 +23,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
     id: "architect",
     name: "Architect",
+    description: "Designs technical boundaries, reviews implementation risk.",
     role: "architect",
     runtime: "codex",
     systemPrompt:
@@ -31,6 +33,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
     id: "developer",
     name: "Developer",
+    description: "Implements features with TDD, creates branches and draft PRs.",
     role: "developer",
     runtime: "claude-code",
     systemPrompt:
@@ -40,6 +43,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
     id: "tester",
     name: "Tester",
+    description: "Validates behavior, runs tests, reports risks.",
     role: "tester",
     runtime: "codebuddy",
     systemPrompt:

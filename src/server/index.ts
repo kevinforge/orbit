@@ -53,7 +53,7 @@ agents.startAll();
 
 let channelRouter: ChannelRouter;
 
-const runManager = new RunManager({
+let runManager = new RunManager({
   agents,
   messages,
   eventBus,
@@ -117,6 +117,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/agents/reset") {
+      if (hasRunningAgent()) {
+        sendJson(res, 409, { ok: false, message: "Cannot reset while an agent is running. Wait for it to finish." });
+        return;
+      }
       allConfigs = configStore.reset(workspace.id);
       refreshEnabledAgents();
       sendJson(res, 200, allConfigs);
@@ -190,6 +194,35 @@ function refreshEnabledAgents(): void {
   agents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, CONVERSATION_ID);
   agentIds = agents.ids();
   agents.startAll();
+
+  runManager = new RunManager({
+    agents,
+    messages,
+    eventBus,
+    buildPrompt(agentId: AgentId, prompt: string) {
+      const history = buildHistoryForAgent(agentId, messages.list());
+      return buildChannelContext({ agentId, profiles, channelMessage: prompt, history });
+    },
+    onRunCompleted(message) {
+      channelRouter.process(message);
+    },
+  });
+
+  channelRouter = new ChannelRouter({
+    availableAgents: agentIds,
+    maxRouteDepth: MAX_ROUTE_DEPTH,
+    createSystemMessage(content: string, parentMessageId?: string) {
+      const msg = messages.add({ kind: "system", content, status: "done", parentMessageId });
+      eventBus.publish({ type: "message.created", message: msg });
+      return msg;
+    },
+    startAgentRun(agentId: AgentId, prompt: string, sourceMessage) {
+      runManager.enqueue(agentId, prompt, sourceMessage);
+    },
+    markMessageRouted(messageId: string, routeState) {
+      messages.markRouteState(messageId, routeState);
+    },
+  });
 }
 
 function hasRunningAgent(): boolean {

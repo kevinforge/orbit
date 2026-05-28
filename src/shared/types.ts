@@ -16,9 +16,11 @@ export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 export type AgentConfig = {
   id: AgentId;
   name: string;
+  description?: string;
   role: AgentRole;
   runtime: AgentRuntimeKind;
   systemPrompt: string;
+  permissionProfile?: PermissionProfile;
   enabled: boolean;
 };
 

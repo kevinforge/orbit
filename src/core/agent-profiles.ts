@@ -127,6 +127,6 @@ export function configsToProfiles(configs: readonly AgentConfig[], cwd: string):
     runtime: config.runtime,
     cwd,
     systemPrompt: config.systemPrompt,
-    permissionProfile: permissionProfile(config.role),
+    permissionProfile: config.permissionProfile ?? permissionProfile(config.role),
   }));
 }

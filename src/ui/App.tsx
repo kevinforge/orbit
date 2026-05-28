@@ -600,6 +600,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                 <div className="configFields">
                   <input placeholder="ID" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
                   <input placeholder="Name" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
+                  <input placeholder="Description" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
                   <select value={config.role} onChange={(e) => updateConfig(i, { role: e.target.value as AgentRole })}>
                     {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
