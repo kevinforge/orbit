@@ -86,9 +86,15 @@ export class MessageStore {
     if (!this.filePath) return;
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
-    const data: PersistedData = { messages: this.messages, nextId: this.nextId };
     const tmp = this.filePath + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(data));
+    const body = this.messages.map((m) => "  " + JSON.stringify(m)).join(",\n");
+    const json =
+      '{"messages": [' +
+      (body ? "\n" + body + "\n" : "") +
+      '], "nextId": ' +
+      this.nextId +
+      "}\n";
+    fs.writeFileSync(tmp, json);
     fs.renameSync(tmp, this.filePath);
   }
 }

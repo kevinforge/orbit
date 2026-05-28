@@ -177,3 +177,29 @@ test("different file paths keep messages isolated", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("persisted store writes each message on its own line", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  try {
+    const store = new MessageStore(filePath);
+    store.append({ kind: "user", content: "first" });
+    store.append({ kind: "agent", agentId: "dev", content: "second", status: "done" });
+
+    const raw = fs.readFileSync(filePath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+
+    // Should have: {"messages": [, <msg1>, <msg2>, ], "nextId": ...}
+    // At minimum the two message objects must each appear on their own line
+    const msgLines = lines.filter((l) => l.includes('"kind"'));
+    assert.equal(msgLines.length, 2, "each message should be on its own line");
+
+    // Each message line should be valid JSON
+    for (const line of msgLines) {
+      const parsed = JSON.parse(line.trimEnd().replace(/,$/, ""));
+      assert.ok(parsed.kind, "line should be a message object");
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
