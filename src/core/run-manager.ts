@@ -442,11 +442,9 @@ function extractStreamJsonActivities(text: string): AgentActivityEvent[] {
             timestamp: new Date().toISOString(),
           });
         } else {
-          const summary = summarizeToolResult(record.tool_use_result);
           activities.push({
             type: "tool.completed",
             name: lastToolName,
-            summary,
             timestamp: new Date().toISOString(),
           });
         }
@@ -554,8 +552,8 @@ function activityFromCodexItem(item: unknown, eventType: unknown): AgentActivity
     return null;
   }
 
-  const summary = summarizeCodexCommandOutput(record.aggregated_output);
   if (typeof record.exit_code === "number" && record.exit_code !== 0) {
+    const summary = summarizeCodexCommandOutput(record.aggregated_output);
     return {
       type: "tool.failed",
       name,
@@ -565,6 +563,7 @@ function activityFromCodexItem(item: unknown, eventType: unknown): AgentActivity
   }
 
   if (record.status === "failed") {
+    const summary = summarizeCodexCommandOutput(record.aggregated_output);
     return {
       type: "tool.failed",
       name,
@@ -576,7 +575,6 @@ function activityFromCodexItem(item: unknown, eventType: unknown): AgentActivity
   return {
     type: "tool.completed",
     name,
-    summary: summary || "completed",
     timestamp: new Date().toISOString(),
   };
 }
@@ -683,17 +681,6 @@ function summarizeToolInput(input: unknown): string | undefined {
   const filePath = typeof value.file_path === "string" ? value.file_path : undefined;
   const pattern = typeof value.pattern === "string" ? value.pattern : undefined;
   return command ?? filePath ?? pattern;
-}
-
-function summarizeToolResult(result: { stdout?: unknown; stderr?: unknown; is_error?: unknown }): string {
-  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
-  const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
-  const summary = stdout || stderr;
-  if (!summary) {
-    return "completed";
-  }
-
-  return truncateText(summary, MAX_TOOL_SUMMARY_CHARS);
 }
 
 function summarizeFailedToolResult(result: { stdout?: unknown; stderr?: unknown }): string {

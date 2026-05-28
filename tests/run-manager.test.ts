@@ -150,7 +150,10 @@ test("classifies Claude stream-json tool events", () => {
   );
   assert.equal(activities[0]?.type === "tool.started" ? activities[0].name : "", "Bash");
   assert.equal(activities[0]?.type === "tool.started" ? activities[0].input : "", "pwd");
-  assert.equal(activities[1]?.type === "tool.completed" ? activities[1].summary : "", "/d/projects/orbit");
+  if (activities[1]?.type === "tool.completed") {
+    assert.equal(activities[1].name, "Bash");
+    assert.equal(activities[1].summary, undefined);
+  }
 });
 
 test("classifies tool_use_result with is_error=true as tool.failed", () => {
@@ -199,6 +202,43 @@ test("tool.failed falls back to stdout when stderr is empty", () => {
   assert.equal(activities[0]?.type, "tool.failed");
   if (activities[0]?.type === "tool.failed") {
     assert.ok(activities[0].summary?.includes("fallback output"), `Expected stdout in summary, got: ${activities[0].summary}`);
+  }
+});
+
+test("tool.completed does not include stdout/stderr summary", () => {
+  const started = JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name: "Bash", input: { command: "cat large.log" } }] },
+  });
+  const completed = JSON.stringify({
+    type: "user",
+    tool_use_result: { stdout: "x".repeat(10_000), stderr: "some error output", is_error: false },
+  });
+
+  const activities = classifyTerminalActivities(`${started}\n${completed}`);
+  assert.equal(activities[1]?.type, "tool.completed");
+  if (activities[1]?.type === "tool.completed") {
+    assert.equal(activities[1].name, "Bash");
+    assert.equal(activities[1].summary, undefined);
+  }
+});
+
+test("Codex tool.completed does not include aggregated_output summary", () => {
+  const completed = JSON.stringify({
+    type: "item.completed",
+    item: {
+      type: "command_execution",
+      command: "npm test",
+      aggregated_output: "x".repeat(10_000),
+      exit_code: 0,
+      status: "completed",
+    },
+  });
+
+  const activities = classifyTerminalActivities(completed);
+  assert.equal(activities[0]?.type, "tool.completed");
+  if (activities[0]?.type === "tool.completed") {
+    assert.equal(activities[0].summary, undefined);
   }
 });
 
@@ -253,10 +293,10 @@ test("classifies Codex command execution items in order", () => {
 
   assert.deepEqual(activities.map((a) => a.type), ["tool.started", "tool.completed"]);
   assert.equal(activities[0]?.type === "tool.started" ? activities[0].name : "", "PowerShell");
-  assert.equal(
-    activities[1]?.type === "tool.completed" ? activities[1].summary : "",
-    "## fix/issue-14-activity-tool-visibility",
-  );
+  if (activities[1]?.type === "tool.completed") {
+    assert.equal(activities[1].name, "PowerShell");
+    assert.equal(activities[1].summary, undefined);
+  }
 });
 
 test("classifies failed Codex command execution", () => {
@@ -374,7 +414,7 @@ test("split Claude tool_use_result across chunks still produces tool.completed w
   assert.ok(toolCompleted, "Expected tool.completed from split tool_use_result JSON");
   if (toolCompleted?.type === "tool.completed") {
     assert.equal(toolCompleted.name, "Bash");
-    assert.ok(toolCompleted.summary?.includes("file1.ts"), `Expected summary with output, got: ${toolCompleted.summary}`);
+    assert.equal(toolCompleted.summary, undefined);
   }
 
   first.resolve({ content: "done" });
@@ -479,7 +519,8 @@ test("split Codex command_execution completion across chunks still produces tool
   const toolCompleted = msg?.activity?.find((a) => a.type === "tool.completed");
   assert.ok(toolCompleted, "Expected tool.completed from split Codex command_execution JSON");
   if (toolCompleted?.type === "tool.completed") {
-    assert.ok(toolCompleted.summary?.includes("On branch main"), `Expected output in summary, got: ${toolCompleted.summary}`);
+    assert.equal(toolCompleted.name, "Command");
+    assert.equal(toolCompleted.summary, undefined);
   }
 
   first.resolve({ content: "done" });
