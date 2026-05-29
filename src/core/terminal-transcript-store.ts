@@ -7,7 +7,8 @@ const RETRY_SAVE_DELAY_MS = 50;
 
 export class TerminalTranscriptStore {
   private transcripts: TerminalState = {};
-  private pendingChunks = new Map<AgentId, string>();
+  private handles = new Map<AgentId, number>();
+  private persistedLengths = new Map<AgentId, number>();
   private retryTimers = new Map<AgentId, ReturnType<typeof setTimeout>>();
   private warnedAgents = new Set<AgentId>();
   private readonly dirPath?: string;
@@ -39,6 +40,16 @@ export class TerminalTranscriptStore {
     return this.list();
   }
 
+  dispose(): void {
+    for (const timer of this.retryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.retryTimers.clear();
+    for (const agentId of this.handles.keys()) {
+      this.closeHandle(agentId);
+    }
+  }
+
   private load(): void {
     try {
       const entries = fs.readdirSync(this.dirPath!);
@@ -47,8 +58,10 @@ export class TerminalTranscriptStore {
         const agentId = entry.slice(0, -4);
         try {
           this.transcripts[agentId] = fs.readFileSync(path.join(this.dirPath!, entry), "utf8");
+          this.persistedLengths.set(agentId, this.transcripts[agentId].length);
         } catch {
           this.transcripts[agentId] = "";
+          this.persistedLengths.set(agentId, 0);
         }
       }
     } catch {
@@ -58,23 +71,49 @@ export class TerminalTranscriptStore {
 
   private saveAgentChunk(agentId: AgentId, chunk: string): void {
     if (!this.dirPath || chunk.length === 0) return;
-    this.pendingChunks.set(agentId, `${this.pendingChunks.get(agentId) ?? ""}${chunk}`);
     this.flushAgent(agentId);
   }
 
   private flushAgent(agentId: AgentId): void {
     if (!this.dirPath) return;
-    const pending = this.pendingChunks.get(agentId);
-    if (!pending) return;
+    const transcript = this.transcripts[agentId] ?? "";
+    const persistedLength = this.persistedLengths.get(agentId) ?? 0;
+    const pending = transcript.slice(persistedLength);
+    if (!pending) {
+      this.clearRetry(agentId);
+      return;
+    }
     try {
-      fs.mkdirSync(this.dirPath, { recursive: true });
-      fs.appendFileSync(path.join(this.dirPath, `${agentId}.log`), pending);
-      this.pendingChunks.delete(agentId);
+      const handle = this.openHandle(agentId);
+      fs.writeSync(handle, pending);
+      this.persistedLengths.set(agentId, transcript.length);
       this.warnedAgents.delete(agentId);
       this.clearRetry(agentId);
     } catch (error) {
+      this.closeHandle(agentId);
       this.warnOnce(agentId, error);
       this.scheduleRetry(agentId);
+    }
+  }
+
+  private openHandle(agentId: AgentId): number {
+    const existing = this.handles.get(agentId);
+    if (existing !== undefined) return existing;
+    if (!this.dirPath) throw new Error("Transcript directory is not configured.");
+    fs.mkdirSync(this.dirPath, { recursive: true });
+    const handle = fs.openSync(path.join(this.dirPath, `${agentId}.log`), "a");
+    this.handles.set(agentId, handle);
+    return handle;
+  }
+
+  private closeHandle(agentId: AgentId): void {
+    const handle = this.handles.get(agentId);
+    if (handle === undefined) return;
+    this.handles.delete(agentId);
+    try {
+      fs.closeSync(handle);
+    } catch {
+      // best effort cleanup after a write failure
     }
   }
 
