@@ -72,12 +72,29 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/channel-router.ts`** + **`mention-router.ts`** — Message routing and @mention parsing
 - **`src/core/run-manager.ts`** — Per-agent FIFO run queue, lifecycle events, activity classification
 - **`src/core/claude-cli-runtime.ts`** — Spawns `claude --print --output-format stream-json`, parses stdout
+- **`src/core/codex-cli-runtime.ts`** — Spawns Codex CLI in JSONL mode, parses output
+- **`src/core/codebuddy-cli-runtime.ts`** — Spawns CodeBuddy CLI in stream-json mode, parses output
+- **`src/core/agent-runtime.ts`** — Shared runtime interface for all CLI adapters
+- **`src/core/agent-config-store.ts`** — Persistent agent configuration (load/save/reset via JSON file)
 - **`src/core/channel-context-builder.ts`** — Builds private system prompt injected into each Claude run
 - **`src/core/channel-history.ts`** — Builds scoped channel history (messages since agent's last completed run)
 - **`src/core/session-store.ts`** — Per-agent session persistence for `--resume`
-- **`src/core/agent-profiles.ts`** — Four hardcoded agent profiles (pm, architect, developer, tester)
+- **`src/core/agent-profiles.ts`** — Four built-in agent profiles (pm, architect, developer, tester)
 - **`src/core/agent-session.ts`** — Manages one agent's lifecycle (idle/running/error/stopped)
 - **`src/core/agent-registry.ts`** — Owns AgentSession instances, exposes agent state
+- **`src/core/message-store.ts`** — Message persistence (in-memory + optional file-based storage)
+- **`src/core/event-bus.ts`** — Typed pub/sub event bus for runtime events
+- **`src/core/terminal-transcript-store.ts`** — Per-agent terminal output logging with ANSI stripping
+- **`src/core/workspace-store.ts`** — Workspace resolution and metadata (path-based isolation)
+- **`src/core/claude-output-detector.ts`** — Detects tool.started/completed/failed from Claude stream events
+- **`src/core/ansi-text-extractor.ts`** — Strips ANSI codes and extracts readable text
+- **`src/core/agent-prompt.ts`** — Prompt templates for agent role instructions
+
+### UI Module
+
+- **`src/ui/App.tsx`** — Single-page React app (all UI in one file, no router)
+- **`src/ui/styles.css`** — "Warm Observatory" design system (CSS custom properties, no Tailwind)
+- **`src/ui/markdown-renderer.ts`** — Markdown→HTML with code block headers (language label + copy button)
 
 ### Built-in Agents
 
@@ -96,6 +113,9 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 |---|---|---|
 | GET | `/api/state` | Full state snapshot |
 | POST | `/api/messages` | Send user message (`{ content: string }`) |
+| GET | `/api/agents` | List agent configurations |
+| PUT | `/api/agents` | Update agent configurations |
+| POST | `/api/agents/reset` | Reset agents to default configuration |
 | GET | `/events` | SSE stream of all runtime events |
 | GET | `/*` | Static files from `dist/ui/` |
 
@@ -105,6 +125,19 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 - **Per-agent serial queue**: Each agent runs one CLI process at a time; additional tasks queue automatically
 - **Private context injection**: Each agent prompt is wrapped with a private routing context block; leaked markers are stripped from replies
 - **In-memory state**: All state (messages, agent statuses, queued runs) lives in memory with no persistence layer
+
+### UI Design System ("Warm Observatory")
+
+The UI uses a warm cream + deep teal design system, implemented entirely in CSS custom properties. No dark mode support.
+
+**Design tokens** (all in `:root` CSS variables):
+- **Surfaces**: `--bg-base: #f5f3ef` (warm cream), `--bg-sidebar: #eeebe5`, `--bg-surface: #ffffff`
+- **Accent**: `--accent: #0f766e` (deep teal), `--secondary: #c2410c` (burnt sienna for inline code)
+- **Shadows**: 5-tier warm-tinted system (`--shadow-xs` through `--shadow-xl`)
+- **Typography**: Plus Jakarta Sans (Google Fonts import), no Inter/Roboto
+- **Animations**: Custom cubic-bezier easing (`--ease-out`, `--ease-spring`)
+
+When modifying UI: use CSS variables, never hardcode colors. Keep all changes in `styles.css`. JSX changes in `App.tsx` only.
 
 ### Routing Rules
 

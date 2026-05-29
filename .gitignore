@@ -3,7 +3,7 @@ dist/
 output/
 .local/
 .claude/
-
+.playwright-mcp/
 .env
 .env.*
 *.log
@@ -14,3 +14,6 @@ coverage/
 .orbit/
 .DS_Store
 Thumbs.db
+
+# Local screenshots (not for repo)
+orbit-ui-*.png
