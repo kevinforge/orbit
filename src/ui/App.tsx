@@ -261,7 +261,24 @@ export function App() {
 
         <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="Message list" onScroll={handleMessagesScroll}>
           {state.messages.length === 0 ? (
-            <div className="emptyState">Choose an agent, then type a task.</div>
+            <div className="emptyState">
+              <div className="emptyOrbital" aria-hidden="true">
+                <svg viewBox="0 0 120 120" width="120" height="120">
+                  <circle className="orbitRing orbitRing1" cx="60" cy="60" r="48" fill="none" stroke="var(--border)" strokeWidth="1" />
+                  <circle className="orbitRing orbitRing2" cx="60" cy="60" r="34" fill="none" stroke="var(--border-light)" strokeWidth="1" />
+                  <circle className="orbitCore" cx="60" cy="60" r="8" fill="var(--accent)" opacity="0.2" />
+                  <circle className="orbitDot orbitDot1" cx="60" cy="12" r="4" fill="var(--accent)" />
+                  <circle className="orbitDot orbitDot2" cx="94" cy="60" r="3" fill="var(--secondary)" />
+                  <circle className="orbitDot orbitDot3" cx="60" cy="94" r="3.5" fill="var(--success)" />
+                </svg>
+              </div>
+              <p className="emptyTitle">Ready to launch</p>
+              <ol className="emptySteps">
+                <li><strong>1</strong> Select an agent from the sidebar</li>
+                <li><strong>2</strong> Type your task with <code>@agent:</code></li>
+                <li><strong>3</strong> Watch agents collaborate</li>
+              </ol>
+            </div>
           ) : (
             state.messages.map((message) => (
               <MessageRow
