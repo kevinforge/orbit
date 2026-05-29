@@ -662,7 +662,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
             {configs.map((config, i) => {
               const isExpanded = expandedIndex === i;
               return (
-                <div key={config.id} className={`configCard ${isExpanded ? "configCardExpanded" : ""} ${!config.enabled ? "configCardDisabled" : ""}`}>
+                <div key={`config-${i}`} className={`configCard ${isExpanded ? "configCardExpanded" : ""} ${!config.enabled ? "configCardDisabled" : ""}`}>
                   <div className="configCardHeader" onClick={() => setExpandedIndex(isExpanded ? null : i)}>
                     <div className="configCardSummary">
                       <label className="toggleSwitch" onClick={(e) => e.stopPropagation()}>
