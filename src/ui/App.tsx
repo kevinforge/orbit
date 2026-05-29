@@ -375,8 +375,10 @@ function MentionMenu(props: {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => props.onSelect(agentId)}
           >
-            <span className={`mentionDot ${status}`} aria-hidden="true" />
-            <span>@{agentId}</span>
+            <span className="mentionName">
+              <span className={`mentionDot ${status}`} aria-hidden="true" />
+              <span>@{agentId}</span>
+            </span>
             <small>{status}</small>
           </button>
         );
