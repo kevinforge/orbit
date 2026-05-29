@@ -62,7 +62,12 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
   }
 
   const seen = new Set<AgentId>();
-  for (const config of configs) {
+  for (let i = 0; i < configs.length; i++) {
+    const config = configs[i];
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+      errors.push(`Agent config at index ${i} must be an object.`);
+      continue;
+    }
     const configId = typeof config.id === "string" ? config.id : String(config.id ?? "");
 
     if (typeof config.id !== "string" || !config.id.trim()) {
@@ -111,7 +116,7 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
     }
   }
 
-  if (!configs.some((c) => c.enabled)) {
+  if (!configs.some((c) => c && typeof c === "object" && c.enabled)) {
     errors.push("At least one agent must be enabled.");
   }
 

@@ -328,3 +328,13 @@ test("rejects non-string systemPrompt without throwing", () => {
   const errors = validateAgentConfigs(configs);
   assert.ok(errors.some((e) => e.includes("systemPrompt")), `Expected a systemPrompt error, got: ${JSON.stringify(errors)}`);
 });
+
+test("rejects null array element without throwing", () => {
+  const errors = validateAgentConfigs([null] as unknown as AgentConfig[]);
+  assert.ok(errors.some((e) => e.includes("object")), `Expected an object error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects non-object array element without throwing", () => {
+  const errors = validateAgentConfigs(["bad"] as unknown as AgentConfig[]);
+  assert.ok(errors.some((e) => e.includes("object")), `Expected an object error, got: ${JSON.stringify(errors)}`);
+});
