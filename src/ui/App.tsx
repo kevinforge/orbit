@@ -251,18 +251,6 @@ export function App() {
             </h1>
             {state.workspace.path ? <p className="workspacePath">{state.workspace.path}</p> : null}
           </div>
-          <div className="quickActions" aria-label="Quick agent selection">
-            {agentIds.map((agentId) => (
-              <button
-                key={agentId}
-                className={`quickPill ${selectedAgent === agentId ? "active" : ""}`}
-                type="button"
-                onClick={() => chooseAgent(agentId)}
-              >
-                @{agentId}
-              </button>
-            ))}
-          </div>
         </header>
 
         <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="Message list" onScroll={handleMessagesScroll}>
