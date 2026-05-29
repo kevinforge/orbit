@@ -570,6 +570,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
   useEffect(() => {
     fetch("/api/agents")
@@ -583,14 +584,18 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
   }
 
   function addConfig() {
+    const newIndex = configs.length;
     setConfigs((prev) => [
       ...prev,
       { id: `agent-${Date.now()}`, name: "", role: "general", runtime: "claude-code", systemPrompt: "", enabled: true },
     ]);
+    setExpandedIndex(newIndex);
   }
 
   function removeConfig(index: number) {
     setConfigs((prev) => prev.filter((_, i) => i !== index));
+    if (expandedIndex === index) setExpandedIndex(null);
+    else if (expandedIndex !== null && expandedIndex > index) setExpandedIndex(expandedIndex - 1);
   }
 
   async function save() {
@@ -641,30 +646,58 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
           <h2>Agent Settings</h2>
           <button type="button" onClick={onClose}>&times;</button>
         </div>
-        {loading ? <p>Loading...</p> : (
+        {loading ? <p className="settingsLoading">Loading...</p> : (
           <div className="settingsBody">
-            {configs.map((config, i) => (
-              <div key={config.id} className="configRow">
-                <div className="configRowHeader">
-                  <label><input type="checkbox" checked={config.enabled} onChange={() => updateConfig(i, { enabled: !config.enabled })} /> Enabled</label>
-                  <button type="button" className="removeBtn" onClick={() => removeConfig(i)} title="Remove">Remove</button>
+            {configs.map((config, i) => {
+              const isExpanded = expandedIndex === i;
+              return (
+                <div key={config.id} className={`configCard ${isExpanded ? "configCardExpanded" : ""} ${!config.enabled ? "configCardDisabled" : ""}`}>
+                  <div className="configCardHeader" onClick={() => setExpandedIndex(isExpanded ? null : i)}>
+                    <div className="configCardSummary">
+                      <label className="toggleSwitch" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={config.enabled} onChange={() => updateConfig(i, { enabled: !config.enabled })} />
+                        <span className="toggleTrack" />
+                      </label>
+                      <span className="configCardName">{config.name || config.id}</span>
+                      <span className="configCardPill configCardRole">{config.role}</span>
+                      <span className="configCardPill configCardRuntime">{config.runtime}</span>
+                    </div>
+                    <div className="configCardActions">
+                      <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="Remove">&times;</button>
+                      <span className={`configChevron ${isExpanded ? "configChevronOpen" : ""}`}>▶</span>
+                    </div>
+                  </div>
+                  {isExpanded ? (
+                    <div className="configCardBody">
+                      <div className="configFields">
+                        <input placeholder="ID" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
+                        <input placeholder="Name" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
+                        <input placeholder="Display label (optional)" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
+                        <input placeholder="Description" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
+                        <div className="pillGroup">
+                          <span className="pillLabel">Role</span>
+                          <div className="pillOptions">
+                            {ROLES.map((r) => (
+                              <button key={r} type="button" className={`pillBtn ${config.role === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { role: r })}>{r}</button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="pillGroup">
+                          <span className="pillLabel">Runtime</span>
+                          <div className="pillOptions">
+                            {RUNTIMES.map((r) => (
+                              <button key={r} type="button" className={`pillBtn ${config.runtime === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { runtime: r })}>{r}</button>
+                            ))}
+                          </div>
+                        </div>
+                        <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
+                        <PermissionEditor config={config} onChange={(pp) => updateConfig(i, { permissionProfile: pp })} />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-                <div className="configFields">
-                  <input placeholder="ID" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
-                  <input placeholder="Name" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
-                  <input placeholder="Display label (optional)" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
-                  <input placeholder="Description" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
-                  <select value={config.role} onChange={(e) => updateConfig(i, { role: e.target.value as AgentRole })}>
-                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                  <select value={config.runtime} onChange={(e) => updateConfig(i, { runtime: e.target.value as AgentRuntimeKind })}>
-                    {RUNTIMES.map((r) => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                  <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
-                  <PermissionEditor config={config} onChange={(pp) => updateConfig(i, { permissionProfile: pp })} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
             <button type="button" className="addBtn" onClick={addConfig}>+ Add Agent</button>
             {error ? <p className="settingsError">{error}</p> : null}
           </div>
