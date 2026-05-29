@@ -273,6 +273,15 @@ button:active:not(:disabled) {
   to { background-position: 0 0; }
 }
 
+.sidebarFooter {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* ── Status Dot ────────────────────────────────────────────── */
 
 .statusDot {

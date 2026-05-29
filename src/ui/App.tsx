@@ -220,10 +220,7 @@ export function App() {
       <aside className="sidebar" aria-label="Agent status">
         <div className="brandBlock">
           <div className="brandMark">orbit</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
-            <button className="settingsBtn" type="button" onClick={() => setShowSettings(true)} title="Agent settings">&#9881;</button>
-          </div>
+          <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
         </div>
 
         <nav className="agentList" aria-label="Choose agent">
@@ -236,6 +233,10 @@ export function App() {
             />
           ))}
         </nav>
+
+        <div className="sidebarFooter">
+          <button className="settingsBtn" type="button" onClick={() => setShowSettings(true)} title="Agent settings">&#9881;</button>
+        </div>
       </aside>
 
       <section className="channel" aria-label="Chat channel">
