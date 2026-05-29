@@ -62,6 +62,28 @@ test("persisted store appends to existing transcripts", () => {
   }
 });
 
+test("persisted store survives Windows rename failures while saving transcript chunks", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const originalRenameSync = fs.renameSync;
+  try {
+    fs.renameSync = (() => {
+      const error = new Error("operation not permitted, rename") as NodeJS.ErrnoException;
+      error.code = "EPERM";
+      throw error;
+    }) as typeof fs.renameSync;
+
+    const store = new TerminalTranscriptStore(dir);
+    assert.doesNotThrow(() => store.append("ux", "output"));
+    assert.equal(store.get("ux"), "output");
+
+    const loaded = new TerminalTranscriptStore(dir);
+    assert.equal(loaded.get("ux"), "output");
+  } finally {
+    fs.renameSync = originalRenameSync;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("persisted store strips ANSI before saving", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
   try {

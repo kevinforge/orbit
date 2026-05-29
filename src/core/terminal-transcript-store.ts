@@ -18,7 +18,7 @@ export class TerminalTranscriptStore {
     const cleaned = stripAnsi(chunk);
     this.transcripts[agentId] ??= "";
     this.transcripts[agentId] += cleaned;
-    this.saveAgent(agentId);
+    this.saveAgentChunk(agentId, cleaned);
     return this.transcripts[agentId];
   }
 
@@ -51,12 +51,14 @@ export class TerminalTranscriptStore {
     }
   }
 
-  private saveAgent(agentId: AgentId): void {
-    if (!this.dirPath) return;
-    fs.mkdirSync(this.dirPath, { recursive: true });
-    const filePath = path.join(this.dirPath, `${agentId}.log`);
-    const tmp = filePath + ".tmp";
-    fs.writeFileSync(tmp, this.transcripts[agentId]);
-    fs.renameSync(tmp, filePath);
+  private saveAgentChunk(agentId: AgentId, chunk: string): void {
+    if (!this.dirPath || chunk.length === 0) return;
+    try {
+      fs.mkdirSync(this.dirPath, { recursive: true });
+      fs.appendFileSync(path.join(this.dirPath, `${agentId}.log`), chunk);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[orbit] failed to persist terminal transcript for ${agentId}: ${message}`);
+    }
   }
 }
