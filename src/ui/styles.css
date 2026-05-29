@@ -1528,7 +1528,6 @@ button:active:not(:disabled) {
   border-radius: var(--radius-md);
   background: var(--bg-muted);
   transition: all var(--transition-base);
-  overflow: hidden;
 }
 
 .configCard:hover {
@@ -1616,14 +1615,8 @@ button:active:not(:disabled) {
 }
 
 .configCardBody {
-  padding: 0 14px 14px;
+  padding: 14px;
   border-top: 1px solid var(--border-light);
-  animation: cardExpand 200ms var(--ease-out);
-}
-
-@keyframes cardExpand {
-  from { opacity: 0; max-height: 0; }
-  to { opacity: 1; max-height: 800px; }
 }
 
 .removeBtn {
