@@ -1756,6 +1756,54 @@ button:active:not(:disabled) {
   resize: vertical;
 }
 
+/* ── Field Tooltip Hints ────────────────────────────────────── */
+
+.fieldWithHint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.fieldWithHint input,
+.fieldWithHint textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.fieldFullWidth {
+  grid-column: 1 / -1;
+}
+
+.fieldHint {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+  transition: all var(--transition-fast);
+}
+
+.fieldHint:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.fieldHintTop {
+  align-self: flex-start;
+  margin-top: 7px;
+}
+
 .permSection {
   grid-column: 1 / -1;
 }
