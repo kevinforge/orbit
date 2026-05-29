@@ -26,7 +26,7 @@ export function App() {
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [showNewMessageHint, setShowNewMessageHint] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -303,27 +303,39 @@ export function App() {
                 setIsNearBottom(true);
               }}
             >
-              ↓ 滚动到底部
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12V4m0 0L4 8m4-4l4 4" /></svg>
             </button>
           )}
         </div>
 
         <form className="composer" onSubmit={sendMessage}>
           <div className="composerInputWrap">
-            <input
+            <textarea
               ref={inputRef}
               value={content}
+              rows={1}
               onBlur={() => window.setTimeout(() => setInputFocused(false), 120)}
               onChange={(event) => {
                 setContent(event.target.value);
                 setCursorIndex(event.target.selectionStart ?? event.target.value.length);
+                event.target.style.height = "auto";
+                const maxRows = 6;
+                const lineHeight = 22;
+                event.target.style.height = `${Math.min(event.target.scrollHeight, lineHeight * maxRows)}px`;
               }}
               onClick={updateCursorFromInput}
               onFocus={(event) => {
                 setInputFocused(true);
                 setCursorIndex(event.target.selectionStart ?? event.target.value.length);
               }}
-              onKeyDown={handleComposerKeyDown}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  sendMessage(event as unknown as FormEvent<HTMLFormElement>);
+                  return;
+                }
+                handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
+              }}
               onKeyUp={updateCursorFromInput}
               placeholder={`@${selectedAgent}: Hello!`}
               aria-label="Message to agent"
@@ -339,7 +351,7 @@ export function App() {
             ) : null}
           </div>
           <button type="submit" disabled={!content.trim() || isSending}>
-            {isSending ? "Sending" : "Send"}
+            {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "Send"}
           </button>
         </form>
       </section>
