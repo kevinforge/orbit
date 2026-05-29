@@ -1844,6 +1844,16 @@ button:active:not(:disabled) {
   font-weight: 500;
 }
 
+.permLabel .fieldHint {
+  width: 14px;
+  height: 14px;
+  font-size: 9px;
+}
+
+.permFields .fieldWithHint {
+  grid-column: 1 / -1;
+}
+
 .permFields input[type="text"],
 .permFields input:not([type]) {
   grid-column: 1 / -1;

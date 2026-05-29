@@ -235,7 +235,7 @@ export function App() {
         </nav>
 
         <div className="sidebarFooter">
-          <button className="settingsBtn" type="button" onClick={() => setShowSettings(true)} title="Agent settings">&#9881;</button>
+          <button className="settingsBtn" type="button" onClick={() => setShowSettings(true)} title="智能体设置">&#9881;</button>
         </div>
       </aside>
 
@@ -543,12 +543,12 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
 
 const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
 const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
-const PERM_FLAGS: { key: keyof PermissionProfile; label: string }[] = [
-  { key: "canReadFiles", label: "Read files" },
-  { key: "canWriteFiles", label: "Write files" },
-  { key: "canRunCommands", label: "Run commands" },
-  { key: "canInstallDependencies", label: "Install deps" },
-  { key: "canGitCommit", label: "Git commit" },
+const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
+  { key: "canReadFiles", label: "读取文件", hint: "允许智能体读取工作区中的文件内容。" },
+  { key: "canWriteFiles", label: "写入文件", hint: "允许智能体创建、修改或删除工作区中的文件。" },
+  { key: "canRunCommands", label: "运行命令", hint: "允许智能体执行终端命令（如构建、测试等）。" },
+  { key: "canInstallDependencies", label: "安装依赖", hint: "允许智能体安装项目依赖包（如 npm install）。" },
+  { key: "canGitCommit", label: "Git 提交", hint: "允许智能体执行 git commit 和 git push 操作。" },
 ];
 
 function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange: (pp: PermissionProfile) => void }) {
@@ -558,20 +558,24 @@ function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange:
   return (
     <div className="permSection">
       <button type="button" className="permToggle" onClick={() => setExpanded((v) => !v)}>
-        {expanded ? "▼" : "▶"} Permissions
+        {expanded ? "▼" : "▶"} 权限设置
       </button>
       {expanded ? (
         <div className="permFields">
-          {PERM_FLAGS.map(({ key, label }) => (
-            <label key={key}>
+          {PERM_FLAGS.map(({ key, label, hint }) => (
+            <label key={key} className="permLabel">
               <input type="checkbox" checked={pp[key] as boolean} onChange={(e) => onChange({ ...pp, [key]: e.target.checked })} /> {label}
+              <span className="fieldHint" title={hint}>?</span>
             </label>
           ))}
-          <input
-            placeholder="Allowed directories (comma-separated)"
-            value={pp.allowedDirectories.join(", ")}
-            onChange={(e) => onChange({ ...pp, allowedDirectories: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
-          />
+          <div className="fieldWithHint">
+            <input
+              placeholder="允许访问的目录（逗号分隔）"
+              value={pp.allowedDirectories.join(", ")}
+              onChange={(e) => onChange({ ...pp, allowedDirectories: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+            />
+            <span className="fieldHint" title="限制智能体只能访问指定目录。留空表示允许访问整个工作区。多个目录用逗号分隔。">?</span>
+          </div>
         </div>
       ) : null}
     </div>
@@ -589,7 +593,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
     fetch("/api/agents")
       .then((r) => r.json())
       .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
-      .catch(() => { setError("Failed to load agent configs."); setLoading(false); });
+      .catch(() => { setError("加载智能体配置失败。"); setLoading(false); });
   }, []);
 
   function updateConfig(index: number, patch: Partial<AgentConfig>) {
@@ -622,12 +626,12 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
       });
       if (!res.ok) {
         const body = await res.json() as { message?: string };
-        setError(body.message ?? `Save failed (${res.status})`);
+        setError(body.message ?? `保存失败 (${res.status})`);
         return;
       }
       onSaved();
     } catch {
-      setError("Network error saving configs.");
+      setError("网络错误，保存失败。");
     } finally {
       setSaving(false);
     }
@@ -639,14 +643,14 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
     try {
       const res = await fetch("/api/agents/reset", { method: "POST" });
       if (!res.ok) {
-        setError("Reset failed.");
+        setError("重置失败。");
         return;
       }
       const data = await res.json() as AgentConfig[];
       setConfigs(data);
       onSaved();
     } catch {
-      setError("Network error resetting configs.");
+      setError("网络错误，重置失败。");
     } finally {
       setSaving(false);
     }
@@ -656,10 +660,10 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader">
-          <h2>Agent Settings</h2>
+          <h2>智能体设置</h2>
           <button type="button" onClick={onClose}>&times;</button>
         </div>
-        {loading ? <p className="settingsLoading">Loading...</p> : (
+        {loading ? <p className="settingsLoading">加载中...</p> : (
           <div className="settingsBody">
             {configs.map((config, i) => {
               const isExpanded = expandedIndex === i;
@@ -676,7 +680,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                       <span className="configCardPill configCardRuntime">{config.runtime}</span>
                     </div>
                     <div className="configCardActions">
-                      <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="Remove">&times;</button>
+                      <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="删除">&times;</button>
                       <span className={`configChevron ${isExpanded ? "configChevronOpen" : ""}`}>▶</span>
                     </div>
                   </div>
@@ -685,22 +689,22 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                       <div className="configFields">
                         <div className="fieldWithHint">
                           <input placeholder="ID" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
-                          <span className="fieldHint" title="Unique identifier for this agent. Used in @mention syntax (e.g. @developer:). Must be lowercase, no spaces.">?</span>
+                          <span className="fieldHint" title="智能体的唯一标识符，用于 @mention 语法（如 @developer:）。只能用小写字母，不能有空格。">?</span>
                         </div>
                         <div className="fieldWithHint">
                           <input placeholder="Name" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
-                          <span className="fieldHint" title="Human-readable display name shown in the sidebar and message headers.">?</span>
+                          <span className="fieldHint" title="显示在侧边栏和消息头中的可读名称。">?</span>
                         </div>
                         <div className="fieldWithHint">
                           <input placeholder="Display label (optional)" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
-                          <span className="fieldHint" title="Override label shown in the sidebar. If empty, the Name field is used.">?</span>
+                          <span className="fieldHint" title="侧边栏显示的标签，为空则使用 Name 字段。">?</span>
                         </div>
                         <div className="fieldWithHint">
                           <input placeholder="Description" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
-                          <span className="fieldHint" title="Short description of this agent's capabilities. Visible to other agents when they discover available collaborators.">?</span>
+                          <span className="fieldHint" title="智能体能力的简短描述。其他智能体发现可协作成员时会看到此内容。">?</span>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">Role <span className="fieldHint" title="Determines default permissions and behavior. pm = planning, architect = design, developer = coding, tester = testing, general = custom.">?</span></span>
+                          <span className="pillLabel">Role <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义。">?</span></span>
                           <div className="pillOptions">
                             {ROLES.map((r) => (
                               <button key={r} type="button" className={`pillBtn ${config.role === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { role: r })}>{r}</button>
@@ -708,7 +712,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                           </div>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">Runtime <span className="fieldHint" title="Which CLI tool powers this agent. claude-code = Claude CLI, codex = OpenAI Codex, codebuddy = CodeBuddy CLI.">?</span></span>
+                          <span className="pillLabel">Runtime <span className="fieldHint" title="驱动该智能体的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
                           <div className="pillOptions">
                             {RUNTIMES.map((r) => (
                               <button key={r} type="button" className={`pillBtn ${config.runtime === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { runtime: r })}>{r}</button>
@@ -717,7 +721,7 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                         </div>
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
-                          <span className="fieldHint fieldHintTop" title="Instructions sent to the agent on every run. Defines personality, expertise, and behavioral constraints.">?</span>
+                          <span className="fieldHint fieldHintTop" title="每次运行时发送给智能体的指令。定义其角色、专业能力和行为约束。">?</span>
                         </div>
                         <PermissionEditor config={config} onChange={(pp) => updateConfig(i, { permissionProfile: pp })} />
                       </div>
@@ -726,13 +730,13 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                 </div>
               );
             })}
-            <button type="button" className="addBtn" onClick={addConfig}>+ Add Agent</button>
+            <button type="button" className="addBtn" onClick={addConfig}>+ 添加智能体</button>
             {error ? <p className="settingsError">{error}</p> : null}
           </div>
         )}
         <div className="modalFooter">
-          <button type="button" onClick={resetDefaults} disabled={saving}>Reset Defaults</button>
-          <button type="button" onClick={save} disabled={saving}>{saving ? "Saving..." : "Save"}</button>
+          <button type="button" onClick={resetDefaults} disabled={saving}>恢复默认</button>
+          <button type="button" onClick={save} disabled={saving}>{saving ? "保存中..." : "保存"}</button>
         </div>
       </div>
     </div>
