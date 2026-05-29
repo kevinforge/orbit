@@ -63,35 +63,37 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
 
   const seen = new Set<AgentId>();
   for (const config of configs) {
-    if (!config.id || !config.id.trim()) {
+    const configId = typeof config.id === "string" ? config.id : String(config.id ?? "");
+
+    if (typeof config.id !== "string" || !config.id.trim()) {
       errors.push(`Agent id is required.`);
     } else if (RESERVED_IDS.has(config.id)) {
       errors.push(`Agent id "${config.id}" is reserved.`);
     } else if (!ID_PATTERN.test(config.id)) {
       errors.push(`Agent id "${config.id}" has invalid format. Use letters, digits, hyphens, and underscores.`);
-    } else if (seen.has(config.id)) {
+    } else if (seen.has(config.id as AgentId)) {
       errors.push(`Duplicate agent id "${config.id}".`);
     }
-    seen.add(config.id);
+    seen.add(configId as AgentId);
 
-    if (!config.name || !config.name.trim()) {
-      errors.push(`Agent "${config.id}" name is required.`);
+    if (typeof config.name !== "string" || !config.name.trim()) {
+      errors.push(`Agent "${configId}" name is required.`);
     }
 
     if (!VALID_ROLES.has(config.role)) {
-      errors.push(`Agent "${config.id}" has invalid role "${config.role}".`);
+      errors.push(`Agent "${configId}" has invalid role "${config.role}".`);
     }
 
     if (typeof config.enabled !== "boolean") {
-      errors.push(`Agent "${config.id}" enabled must be a boolean.`);
+      errors.push(`Agent "${configId}" enabled must be a boolean.`);
     }
 
     if (!VALID_RUNTIMES.has(config.runtime)) {
-      errors.push(`Agent "${config.id}" has invalid runtime "${config.runtime}".`);
+      errors.push(`Agent "${configId}" has invalid runtime "${config.runtime}".`);
     }
 
-    if (!config.systemPrompt || !config.systemPrompt.trim()) {
-      errors.push(`Agent "${config.id}" systemPrompt is required.`);
+    if (typeof config.systemPrompt !== "string" || !config.systemPrompt.trim()) {
+      errors.push(`Agent "${configId}" systemPrompt is required.`);
     }
 
     if (config.permissionProfile) {

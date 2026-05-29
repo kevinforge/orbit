@@ -304,3 +304,27 @@ test("rejects permissionProfile with missing boolean fields", () => {
   assert.ok(errors.some((e) => e.includes("canInstallDependencies")));
   assert.ok(errors.some((e) => e.includes("canGitCommit")));
 });
+
+test("rejects non-string id without throwing", () => {
+  const configs = [
+    { id: 123, name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
+  ] as unknown as AgentConfig[];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("id")), `Expected an id error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects non-string name without throwing", () => {
+  const configs = [
+    { id: "a", name: 123, role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
+  ] as unknown as AgentConfig[];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("name")), `Expected a name error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects non-string systemPrompt without throwing", () => {
+  const configs = [
+    { id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: 123, enabled: true },
+  ] as unknown as AgentConfig[];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("systemPrompt")), `Expected a systemPrompt error, got: ${JSON.stringify(errors)}`);
+});
