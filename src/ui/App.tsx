@@ -242,14 +242,19 @@ export function App() {
         <header className="channelHeader">
           <div>
             <p className="eyebrow">workspace</p>
-            <h1>{state.workspace.name || "Orbit"}</h1>
+            <h1>
+              <svg className="workspaceIcon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.672a.5.5 0 0 1 .39.188l1.633 2.041a.5.5 0 0 0 .39.188H12.5A1.5 1.5 0 0 1 14 6.916V11.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5V4.5Z" />
+              </svg>
+              {state.workspace.name || "Orbit"}
+            </h1>
             {state.workspace.path ? <p className="workspacePath">{state.workspace.path}</p> : null}
           </div>
           <div className="quickActions" aria-label="Quick agent selection">
             {agentIds.map((agentId) => (
               <button
                 key={agentId}
-                className={selectedAgent === agentId ? "active" : ""}
+                className={`quickPill ${selectedAgent === agentId ? "active" : ""}`}
                 type="button"
                 onClick={() => chooseAgent(agentId)}
               >
@@ -358,6 +363,7 @@ function MentionMenu(props: {
     <div className="mentionMenu" role="listbox" aria-label="Choose agent">
       {props.candidates.map((agentId, index) => {
         const agent = props.agentsById.get(agentId);
+        const status = agent?.status ?? "idle";
         return (
           <button
             key={agentId}
@@ -368,18 +374,22 @@ function MentionMenu(props: {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => props.onSelect(agentId)}
           >
+            <span className={`mentionDot ${status}`} aria-hidden="true" />
             <span>@{agentId}</span>
-            <small>{agent?.status ?? "idle"}</small>
+            <small>{status}</small>
           </button>
         );
       })}
+      <div className="mentionHint">↑↓ select · Tab/Enter confirm · Esc close</div>
     </div>
   );
 }
 
 function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void }) {
+  const isRunning = props.agent.status === "running" || props.agent.status === "starting";
   return (
-    <button className={`agentButton ${props.selected ? "selected" : ""}`} onClick={props.onClick} type="button">
+    <button className={`agentButton ${props.selected ? "selected" : ""} ${isRunning ? "agentRunning" : ""}`} onClick={props.onClick} type="button">
+      {isRunning ? <span className="agentProgressBar" aria-hidden="true" /> : null}
       <span className={`statusDot ${props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
         <strong>
@@ -388,7 +398,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
         </strong>
         <small>{props.agent.id}</small>
       </span>
-      <span className="agentStatus">{props.agent.status}</span>
+      <span className={`agentStatusPill ${props.agent.status}`}>{props.agent.status}</span>
     </button>
   );
 }
