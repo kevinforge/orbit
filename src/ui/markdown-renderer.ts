@@ -35,6 +35,11 @@ marked.use({
       if (!safeHref) return escapeHtml(text);
       return `<img src="${escapeHtml(safeHref)}" alt="${escapeHtml(text)}" />`;
     },
+    code({ text, lang }: { text: string; lang?: string }): string {
+      const language = lang || "";
+      const langLabel = language ? `<span class="codeLang">${escapeHtml(language)}</span>` : "";
+      return `<div class="codeBlock"><div class="codeHeader">${langLabel}<button class="codeCopyBtn" type="button" onclick="(function(btn){var c=btn.closest('.codeBlock').querySelector('code');navigator.clipboard.writeText(c.textContent);btn.textContent='✓';btn.classList.add('copied');setTimeout(function(){btn.textContent='Copy';btn.classList.remove('copied');},1500)})(this)">Copy</button></div><pre><code class="language-${escapeHtml(language)}">${escapeHtml(text)}</code></pre></div>`;
+    },
   },
 });
 

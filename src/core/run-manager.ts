@@ -45,9 +45,14 @@ export class RunManager {
   private readonly lastTerminalActivityAt = new Map<string, number>();
   private readonly chunkBuffers = new Map<string, string>();
   private readonly lastToolNames = new Map<string, string>();
+  private readonly unsubscribe: () => void;
 
   constructor(private readonly options: RunManagerOptions) {
-    this.options.eventBus.subscribe((event) => this.handleRuntimeEvent(event));
+    this.unsubscribe = this.options.eventBus.subscribe((event) => this.handleRuntimeEvent(event));
+  }
+
+  dispose(): void {
+    this.unsubscribe();
   }
 
   enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage): ManagedRun {

@@ -21,7 +21,10 @@ function renderHistory(entries: ChannelHistoryEntry[]): string[] {
 
 export function buildChannelContext(input: ChannelContextInput): string {
   const profile = input.profiles.find((agent) => agent.id === input.agentId);
-  const availableAgents = input.profiles.map((agent) => `@${agent.id}: ${agent.name}`).join("\n");
+  const availableAgents = input.profiles.map((agent) => {
+    const desc = agent.description ? ` — ${agent.description}` : "";
+    return `@${agent.id}: ${agent.name}${desc}`;
+  }).join("\n");
   const permissions = profile
     ? [
         `- read files: ${profile.permissionProfile.canReadFiles ? "yes" : "no"}`,

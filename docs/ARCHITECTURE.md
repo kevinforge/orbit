@@ -28,7 +28,8 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/server/index.ts` | Local HTTP routes, SSE wiring, message intake |
 | `src/server/sse-hub.ts` | Server-Sent Events client management |
 | `src/server/static-server.ts` | Static UI serving |
-| `src/core/agent-profiles.ts` | Built-in role definitions and permission profiles |
+| `src/core/agent-profiles.ts` | Built-in role definitions, permission profiles, and config-to-profile conversion |
+| `src/core/agent-config-store.ts` | Persistent agent configuration (load/save/reset/validate) |
 | `src/core/agent-registry.ts` | Owns agent sessions and exposes agent state |
 | `src/core/agent-session.ts` | Starts one runtime adapter run and tracks status |
 | `src/core/agent-runtime.ts` | Shared runtime adapter contract |
@@ -49,29 +50,42 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 
 ## Agents
 
-The current build has four fixed agents:
+Agents are configured via `AgentConfigStore` and persisted per-workspace in `~/.orbit/workspaces/<workspace-id>/agents.json`. Four agents are seeded by default:
 
-| Agent | Role |
-| --- | --- |
-| `@pm:` | Product manager |
-| `@architect:` | Architect |
-| `@developer:` | Developer |
-| `@tester:` | Tester |
+| Agent | Role | Default runtime |
+| --- | --- | --- |
+| `@pm:` | Product manager | `codex` |
+| `@architect:` | Architect | `codex` |
+| `@developer:` | Developer | `claude-code` |
+| `@tester:` | Tester | `codebuddy` |
 
-Agent profiles are defined in `src/core/agent-profiles.ts`. They are intentionally hardcoded for now to keep the first local product loop simple. Each profile has a `runtime` value. Defaults are:
+These defaults can be modified, disabled, or removed through the settings UI. Custom agents can be added with any of the supported runtimes and configurable permissions. Only enabled agents participate in routing.
 
-| Agent | Default runtime |
-| --- | --- |
-| `@pm:` | `codex` |
-| `@architect:` | `codex` |
-| `@developer:` | `claude-code` |
-| `@tester:` | `codebuddy` |
+### Two-Layer Model
 
-`ORBIT_AGENT_RUNTIMES` can override selected agents at startup:
+- **`AgentConfig`** (`src/shared/types.ts`): Persistence and UI model — includes id, name, description, role, runtime, systemPrompt, permissionProfile, enabled, and ui metadata.
+- **`AgentProfile`** (`src/shared/types.ts`): Runtime model used by `AgentRegistry` and `AgentSession` — includes cwd and resolved permissionProfile.
 
-```text
-ORBIT_AGENT_RUNTIMES=developer=codex,tester=claude-code
-```
+`configsToProfiles()` in `agent-profiles.ts` converts enabled `AgentConfig` entries to `AgentProfile` instances, using the config's `permissionProfile` if provided or deriving one from the role.
+
+### Config Store
+
+`AgentConfigStore` (`src/core/agent-config-store.ts`) handles:
+- **load**: Reads `agents.json`, returns seed defaults if missing or corrupted
+- **save**: Validates then writes with atomic file swap
+- **reset**: Restores the four built-in default configs
+- **validateAgentConfigs**: Checks id format, uniqueness, reserved names, runtime validity, systemPrompt, name, permissionProfile.allowedDirectories, and at least one enabled agent
+
+### Runtime Refresh
+
+When config is saved or reset, the server calls `refreshEnabledAgents()` which:
+1. Filters to enabled configs, converts to profiles
+2. Stops all current agent sessions
+3. Creates a new `AgentRegistry` and starts fresh sessions
+4. Disposes the old `RunManager` (unsubscribes from EventBus)
+5. Creates a new `RunManager` and `ChannelRouter` with the updated agent set
+
+This ensures routing and run dispatch use the current agent configuration. A 409 response is returned if any agent is currently running.
 
 ## Routing Rules
 
@@ -166,7 +180,6 @@ This keeps P0 simple. Persistent storage should be added behind existing stores 
 
 ## Future Extension Points
 
-- Replace hardcoded profiles with user-defined agents.
 - Add persistent SQLite storage behind `MessageStore` and transcript storage (currently JSON/log files).
 - Add runtime adapters for other agent backends.
 - Add richer queue controls: cancel, retry, pause, and priority.

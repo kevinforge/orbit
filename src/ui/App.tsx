@@ -1,6 +1,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
-import type { AgentActivityEvent, AgentId, AgentState, AppState, ChatMessage, RuntimeEvent } from "../shared/types.ts";
+import { permissionProfile } from "../core/agent-profiles.ts";
+import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, PermissionProfile, RuntimeEvent } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "orbit", path: "" },
@@ -25,9 +26,10 @@ export function App() {
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [showNewMessageHint, setShowNewMessageHint] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const isNearBottomRef = useRef(true);
 
   useEffect(() => {
@@ -231,32 +233,46 @@ export function App() {
             />
           ))}
         </nav>
+
+        <div className="sidebarFooter">
+          <button className="settingsBtn" type="button" onClick={() => setShowSettings(true)} title="智能体设置">&#9881;</button>
+        </div>
       </aside>
 
       <section className="channel" aria-label="Chat channel">
         <header className="channelHeader">
           <div>
             <p className="eyebrow">workspace</p>
-            <h1>{state.workspace.name || "Orbit"}</h1>
+            <h1>
+              <svg className="workspaceIcon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.672a.5.5 0 0 1 .39.188l1.633 2.041a.5.5 0 0 0 .39.188H12.5A1.5 1.5 0 0 1 14 6.916V11.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5V4.5Z" />
+              </svg>
+              {state.workspace.name || "Orbit"}
+            </h1>
             {state.workspace.path ? <p className="workspacePath">{state.workspace.path}</p> : null}
-          </div>
-          <div className="quickActions" aria-label="Quick agent selection">
-            {agentIds.map((agentId) => (
-              <button
-                key={agentId}
-                className={selectedAgent === agentId ? "active" : ""}
-                type="button"
-                onClick={() => chooseAgent(agentId)}
-              >
-                @{agentId}
-              </button>
-            ))}
           </div>
         </header>
 
         <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="Message list" onScroll={handleMessagesScroll}>
           {state.messages.length === 0 ? (
-            <div className="emptyState">Choose an agent, then type a task.</div>
+            <div className="emptyState">
+              <div className="emptyOrbital" aria-hidden="true">
+                <svg viewBox="0 0 120 120" width="120" height="120">
+                  <circle className="orbitRing orbitRing1" cx="60" cy="60" r="48" fill="none" stroke="var(--border)" strokeWidth="1" />
+                  <circle className="orbitRing orbitRing2" cx="60" cy="60" r="34" fill="none" stroke="var(--border-light)" strokeWidth="1" />
+                  <circle className="orbitCore" cx="60" cy="60" r="8" fill="var(--accent)" opacity="0.2" />
+                  <circle className="orbitDot orbitDot1" cx="60" cy="12" r="4" fill="var(--accent)" />
+                  <circle className="orbitDot orbitDot2" cx="94" cy="60" r="3" fill="var(--secondary)" />
+                  <circle className="orbitDot orbitDot3" cx="60" cy="94" r="3.5" fill="var(--success)" />
+                </svg>
+              </div>
+              <p className="emptyTitle">Ready to launch</p>
+              <ol className="emptySteps">
+                <li><strong>1</strong> Select an agent from the sidebar</li>
+                <li><strong>2</strong> Type your task with <code>@agent:</code></li>
+                <li><strong>3</strong> Watch agents collaborate</li>
+              </ol>
+            </div>
           ) : (
             state.messages.map((message) => (
               <MessageRow
@@ -276,27 +292,39 @@ export function App() {
                 setIsNearBottom(true);
               }}
             >
-              ↓ 滚动到底部
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12V4m0 0L4 8m4-4l4 4" /></svg>
             </button>
           )}
         </div>
 
         <form className="composer" onSubmit={sendMessage}>
           <div className="composerInputWrap">
-            <input
+            <textarea
               ref={inputRef}
               value={content}
+              rows={1}
               onBlur={() => window.setTimeout(() => setInputFocused(false), 120)}
               onChange={(event) => {
                 setContent(event.target.value);
                 setCursorIndex(event.target.selectionStart ?? event.target.value.length);
+                event.target.style.height = "auto";
+                const maxRows = 6;
+                const lineHeight = 22;
+                event.target.style.height = `${Math.min(event.target.scrollHeight, lineHeight * maxRows)}px`;
               }}
               onClick={updateCursorFromInput}
               onFocus={(event) => {
                 setInputFocused(true);
                 setCursorIndex(event.target.selectionStart ?? event.target.value.length);
               }}
-              onKeyDown={handleComposerKeyDown}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  sendMessage(event as unknown as FormEvent<HTMLFormElement>);
+                  return;
+                }
+                handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
+              }}
               onKeyUp={updateCursorFromInput}
               placeholder={`@${selectedAgent}: Hello!`}
               aria-label="Message to agent"
@@ -312,10 +340,16 @@ export function App() {
             ) : null}
           </div>
           <button type="submit" disabled={!content.trim() || isSending}>
-            {isSending ? "Sending" : "Send"}
+            {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "Send"}
           </button>
         </form>
       </section>
+      {showSettings ? (
+        <AgentSettingsPanel
+          onClose={() => setShowSettings(false)}
+          onSaved={() => { setShowSettings(false); window.location.reload(); }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -330,6 +364,7 @@ function MentionMenu(props: {
     <div className="mentionMenu" role="listbox" aria-label="Choose agent">
       {props.candidates.map((agentId, index) => {
         const agent = props.agentsById.get(agentId);
+        const status = agent?.status ?? "idle";
         return (
           <button
             key={agentId}
@@ -340,18 +375,24 @@ function MentionMenu(props: {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => props.onSelect(agentId)}
           >
-            <span>@{agentId}</span>
-            <small>{agent?.status ?? "idle"}</small>
+            <span className="mentionName">
+              <span className={`mentionDot ${status}`} aria-hidden="true" />
+              <span>@{agentId}</span>
+            </span>
+            <small>{status}</small>
           </button>
         );
       })}
+      <div className="mentionHint">↑↓ select · Tab/Enter confirm · Esc close</div>
     </div>
   );
 }
 
 function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void }) {
+  const isRunning = props.agent.status === "running" || props.agent.status === "starting";
   return (
-    <button className={`agentButton ${props.selected ? "selected" : ""}`} onClick={props.onClick} type="button">
+    <button className={`agentButton ${props.selected ? "selected" : ""} ${isRunning ? "agentRunning" : ""}`} onClick={props.onClick} type="button">
+      {isRunning ? <span className="agentProgressBar" aria-hidden="true" /> : null}
       <span className={`statusDot ${props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
         <strong>
@@ -360,7 +401,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
         </strong>
         <small>{props.agent.id}</small>
       </span>
-      <span className="agentStatus">{props.agent.status}</span>
+      <span className={`agentStatusPill ${props.agent.status}`}>{props.agent.status}</span>
     </button>
   );
 }
@@ -495,6 +536,208 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
             <time>{formatTime(item.timestamp)}</time>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
+const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
+const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
+  { key: "canReadFiles", label: "读取文件", hint: "允许智能体读取工作区中的文件内容。" },
+  { key: "canWriteFiles", label: "写入文件", hint: "允许智能体创建、修改或删除工作区中的文件。" },
+  { key: "canRunCommands", label: "运行命令", hint: "允许智能体执行终端命令（如构建、测试等）。" },
+  { key: "canInstallDependencies", label: "安装依赖", hint: "允许智能体安装项目依赖包（如 npm install）。" },
+  { key: "canGitCommit", label: "Git 提交", hint: "允许智能体执行 git commit 和 git push 操作。" },
+];
+
+function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange: (pp: PermissionProfile) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const pp: PermissionProfile = config.permissionProfile ?? permissionProfile(config.role);
+
+  return (
+    <div className="permSection">
+      <button type="button" className="permToggle" onClick={() => setExpanded((v) => !v)}>
+        {expanded ? "▼" : "▶"} 权限设置
+      </button>
+      {expanded ? (
+        <div className="permFields">
+          {PERM_FLAGS.map(({ key, label, hint }) => (
+            <label key={key} className="permLabel">
+              <input type="checkbox" checked={pp[key] as boolean} onChange={(e) => onChange({ ...pp, [key]: e.target.checked })} /> {label}
+              <span className="fieldHint" title={hint}>?</span>
+            </label>
+          ))}
+          <div className="fieldWithHint">
+            <input
+              placeholder="允许访问的目录（逗号分隔）"
+              value={pp.allowedDirectories.join(", ")}
+              onChange={(e) => onChange({ ...pp, allowedDirectories: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+            />
+            <span className="fieldHint" title="限制智能体只能访问指定目录。留空表示允许访问整个工作区。多个目录用逗号分隔。">?</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [configs, setConfigs] = useState<AgentConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch("/api/agents")
+      .then((r) => r.json())
+      .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
+      .catch(() => { setError("加载智能体配置失败。"); setLoading(false); });
+  }, []);
+
+  function updateConfig(index: number, patch: Partial<AgentConfig>) {
+    setConfigs((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  }
+
+  function addConfig() {
+    const newIndex = configs.length;
+    setConfigs((prev) => [
+      ...prev,
+      { id: `agent-${Date.now()}`, name: "", role: "general", runtime: "claude-code", systemPrompt: "", enabled: true },
+    ]);
+    setExpandedIndex(newIndex);
+  }
+
+  function removeConfig(index: number) {
+    setConfigs((prev) => prev.filter((_, i) => i !== index));
+    if (expandedIndex === index) setExpandedIndex(null);
+    else if (expandedIndex !== null && expandedIndex > index) setExpandedIndex(expandedIndex - 1);
+  }
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/agents", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(configs),
+      });
+      if (!res.ok) {
+        const body = await res.json() as { message?: string };
+        setError(body.message ?? `保存失败 (${res.status})`);
+        return;
+      }
+      onSaved();
+    } catch {
+      setError("网络错误，保存失败。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resetDefaults() {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/agents/reset", { method: "POST" });
+      if (!res.ok) {
+        setError("重置失败。");
+        return;
+      }
+      const data = await res.json() as AgentConfig[];
+      setConfigs(data);
+      onSaved();
+    } catch {
+      setError("网络错误，重置失败。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader">
+          <h2>智能体设置</h2>
+          <button type="button" onClick={onClose}>&times;</button>
+        </div>
+        {loading ? <p className="settingsLoading">加载中...</p> : (
+          <div className="settingsBody">
+            {configs.map((config, i) => {
+              const isExpanded = expandedIndex === i;
+              return (
+                <div key={`config-${i}`} className={`configCard ${isExpanded ? "configCardExpanded" : ""} ${!config.enabled ? "configCardDisabled" : ""}`}>
+                  <div className="configCardHeader" onClick={() => setExpandedIndex(isExpanded ? null : i)}>
+                    <div className="configCardSummary">
+                      <label className="toggleSwitch" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={config.enabled} onChange={() => updateConfig(i, { enabled: !config.enabled })} />
+                        <span className="toggleTrack" />
+                      </label>
+                      <span className="configCardName">{config.name || config.id}</span>
+                      <span className="configCardPill configCardRole">{config.role}</span>
+                      <span className="configCardPill configCardRuntime">{config.runtime}</span>
+                    </div>
+                    <div className="configCardActions">
+                      <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="删除">&times;</button>
+                      <span className={`configChevron ${isExpanded ? "configChevronOpen" : ""}`}>▶</span>
+                    </div>
+                  </div>
+                  {isExpanded ? (
+                    <div className="configCardBody">
+                      <div className="configFields">
+                        <div className="fieldWithHint">
+                          <input placeholder="ID" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
+                          <span className="fieldHint" title="智能体的唯一标识符，用于 @mention 语法（如 @developer:）。只能用小写字母，不能有空格。">?</span>
+                        </div>
+                        <div className="fieldWithHint">
+                          <input placeholder="Name" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
+                          <span className="fieldHint" title="显示在侧边栏和消息头中的可读名称。">?</span>
+                        </div>
+                        <div className="fieldWithHint">
+                          <input placeholder="Display label (optional)" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
+                          <span className="fieldHint" title="侧边栏显示的标签，为空则使用 Name 字段。">?</span>
+                        </div>
+                        <div className="fieldWithHint">
+                          <input placeholder="Description" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
+                          <span className="fieldHint" title="智能体能力的简短描述。其他智能体发现可协作成员时会看到此内容。">?</span>
+                        </div>
+                        <div className="pillGroup">
+                          <span className="pillLabel">Role <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义。">?</span></span>
+                          <div className="pillOptions">
+                            {ROLES.map((r) => (
+                              <button key={r} type="button" className={`pillBtn ${config.role === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { role: r })}>{r}</button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="pillGroup">
+                          <span className="pillLabel">Runtime <span className="fieldHint" title="驱动该智能体的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
+                          <div className="pillOptions">
+                            {RUNTIMES.map((r) => (
+                              <button key={r} type="button" className={`pillBtn ${config.runtime === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { runtime: r })}>{r}</button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="fieldWithHint fieldFullWidth">
+                          <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
+                          <span className="fieldHint fieldHintTop" title="每次运行时发送给智能体的指令。定义其角色、专业能力和行为约束。">?</span>
+                        </div>
+                        <PermissionEditor config={config} onChange={(pp) => updateConfig(i, { permissionProfile: pp })} />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            <button type="button" className="addBtn" onClick={addConfig}>+ 添加智能体</button>
+            {error ? <p className="settingsError">{error}</p> : null}
+          </div>
+        )}
+        <div className="modalFooter">
+          <button type="button" onClick={resetDefaults} disabled={saving}>恢复默认</button>
+          <button type="button" onClick={save} disabled={saving}>{saving ? "保存中..." : "保存"}</button>
+        </div>
       </div>
     </div>
   );

@@ -1,10 +1,10 @@
-import type { AgentId, AgentProfile, AgentRole, AgentRuntimeKind, PermissionProfile } from "../shared/types.ts";
+import type { AgentConfig, AgentId, AgentProfile, AgentRole, AgentRuntimeKind, PermissionProfile } from "../shared/types.ts";
 
 export type AgentRuntimeOverrides = Partial<Record<AgentId, AgentRuntimeKind>>;
 
 const CONFIGURABLE_RUNTIME_KINDS = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 
-function permissionProfile(role: AgentRole): PermissionProfile {
+export function permissionProfile(role: AgentRole): PermissionProfile {
   switch (role) {
     case "pm":
       return {
@@ -79,6 +79,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
     {
       id: "pm",
       name: "Product Manager",
+      description: "Clarifies requirements, defines scope and acceptance criteria.",
       role: "pm",
       runtime: runtimeOverrides.pm ?? "codex",
       cwd,
@@ -89,6 +90,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
     {
       id: "architect",
       name: "Architect",
+      description: "Designs technical boundaries, reviews implementation risk.",
       role: "architect",
       runtime: runtimeOverrides.architect ?? "codex",
       cwd,
@@ -99,6 +101,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
     {
       id: "developer",
       name: "Developer",
+      description: "Implements features with TDD, creates branches and draft PRs.",
       role: "developer",
       runtime: runtimeOverrides.developer ?? "claude-code",
       cwd,
@@ -109,6 +112,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
     {
       id: "tester",
       name: "Tester",
+      description: "Validates behavior, runs tests, reports risks.",
       role: "tester",
       runtime: runtimeOverrides.tester ?? "codebuddy",
       cwd,
@@ -117,4 +121,17 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       permissionProfile: permissionProfile("tester"),
     },
   ];
+}
+
+export function configsToProfiles(configs: readonly AgentConfig[], cwd: string): AgentProfile[] {
+  return configs.map((config) => ({
+    id: config.id,
+    name: config.ui?.label || config.name,
+    description: config.description,
+    role: config.role,
+    runtime: config.runtime,
+    cwd,
+    systemPrompt: config.systemPrompt,
+    permissionProfile: config.permissionProfile ?? permissionProfile(config.role),
+  }));
 }

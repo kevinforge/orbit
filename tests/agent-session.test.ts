@@ -319,3 +319,64 @@ test("resume failure clears stale session and retries without resume", async () 
   assert.equal(calls[1]!.resumeSessionId, undefined);
   assert.equal(store.load("codebuddy", "default", "default", "developer")!.sessionId, "fresh-session");
 });
+
+test("Claude API deserialize failure clears stale resume session and retries without resume", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  store.save("claude-code", "default", "default", "developer", {
+    agentId: "developer",
+    channelId: "default",
+    runtime: "claude-code",
+    sessionId: "bad-claude-session",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+
+  const calls: AgentRuntimeRunOptions[] = [];
+  const runtime: AgentRuntime = {
+    kind: "claude-code",
+    run(options) {
+      calls.push(options);
+      return {
+        process: {
+          kill() {
+            return true;
+          },
+        },
+        result: calls.length === 1
+          ? Promise.reject(new Error("unknown API Error: 400 Failed to deserialize the JSON body into the target type: messages[1].role: unknown variant `system`, expected `user` or `assistant` at line 1 column 15698"))
+          : Promise.resolve("clean final"),
+        sessionId: Promise.resolve(calls.length === 1 ? null : "fresh-claude-session"),
+      };
+    },
+  };
+
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    channelId: "default",
+    conversationId: "default",
+  });
+
+  session.start();
+  const result = await session.send("run-1", "hello");
+
+  assert.equal(result.content, "clean final");
+  assert.equal(result.sessionId, "fresh-claude-session");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]!.resumeSessionId, "bad-claude-session");
+  assert.equal(calls[1]!.resumeSessionId, undefined);
+  assert.equal(store.load("claude-code", "default", "default", "developer")!.sessionId, "fresh-claude-session");
+});
