@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AgentConfig, AgentId, AgentRuntimeKind } from "../shared/types.ts";
+import type { AgentConfig, AgentId, AgentRole, AgentRuntimeKind } from "../shared/types.ts";
 
 export type { AgentConfig };
 
+const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general"]);
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -75,6 +76,14 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
 
     if (!config.name || !config.name.trim()) {
       errors.push(`Agent "${config.id}" name is required.`);
+    }
+
+    if (!VALID_ROLES.has(config.role)) {
+      errors.push(`Agent "${config.id}" has invalid role "${config.role}".`);
+    }
+
+    if (typeof config.enabled !== "boolean") {
+      errors.push(`Agent "${config.id}" enabled must be a boolean.`);
     }
 
     if (!VALID_RUNTIMES.has(config.runtime)) {

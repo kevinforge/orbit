@@ -264,6 +264,30 @@ test("rejects permissionProfile with non-boolean canReadFiles", () => {
   assert.ok(errors.some((e) => e.includes("canReadFiles")));
 });
 
+test("rejects invalid role", () => {
+  const configs: AgentConfig[] = [
+    { id: "agent1", name: "A", role: "bad-role" as AgentConfig["role"], runtime: "claude-code", systemPrompt: "do stuff", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("role") && e.includes("agent1")), `Expected a role error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects non-boolean enabled field", () => {
+  const configs: AgentConfig[] = [
+    { id: "agent1", name: "A", role: "general", runtime: "claude-code", systemPrompt: "do stuff", enabled: "false" as unknown as boolean },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("enabled") && e.includes("boolean")), `Expected an enabled/boolean error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects missing enabled field", () => {
+  const configs: AgentConfig[] = [
+    { id: "agent1", name: "A", role: "general", runtime: "claude-code", systemPrompt: "do stuff", enabled: undefined as unknown as boolean },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("enabled")), `Expected an enabled error, got: ${JSON.stringify(errors)}`);
+});
+
 test("rejects permissionProfile with missing boolean fields", () => {
   const configs: AgentConfig[] = [
     {

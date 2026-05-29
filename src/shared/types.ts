@@ -32,6 +32,7 @@ export type AgentConfig = {
 export type AgentProfile = {
   id: AgentId;
   name: string;
+  description?: string;
   role: AgentRole;
   runtime: AgentRuntimeKind;
   cwd: string;
