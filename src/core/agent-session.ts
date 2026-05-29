@@ -97,7 +97,14 @@ export class AgentSession {
       lower.includes("session expired") ||
       lower.includes("could not resume") ||
       lower.includes("invalid session") ||
-      lower.includes("no conversation found")
+      lower.includes("no conversation found") ||
+      (
+        lower.includes("failed to deserialize the json body") &&
+        lower.includes("messages[") &&
+        lower.includes(".role") &&
+        lower.includes("unknown variant") &&
+        lower.includes("system")
+      )
     );
   }
 
