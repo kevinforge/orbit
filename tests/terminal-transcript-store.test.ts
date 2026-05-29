@@ -84,6 +84,44 @@ test("persisted store survives Windows rename failures while saving transcript c
   }
 });
 
+test("persisted store queues transcript chunks and retries after the log file is busy", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const originalAppendFileSync = fs.appendFileSync;
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  let attempts = 0;
+  try {
+    fs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
+      attempts += 1;
+      if (attempts <= 2) {
+        const error = new Error("resource busy or locked") as NodeJS.ErrnoException;
+        error.code = "EBUSY";
+        throw error;
+      }
+      return originalAppendFileSync(...args);
+    }) as typeof fs.appendFileSync;
+    console.warn = (message?: unknown) => {
+      warnings.push(String(message));
+    };
+
+    const store = new TerminalTranscriptStore(dir);
+    assert.doesNotThrow(() => store.append("ux", "first "));
+    assert.doesNotThrow(() => store.append("ux", "second"));
+    assert.equal(store.get("ux"), "first second");
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const loaded = new TerminalTranscriptStore(dir);
+    assert.equal(loaded.get("ux"), "first second");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /failed to persist terminal transcript for ux/);
+  } finally {
+    fs.appendFileSync = originalAppendFileSync;
+    console.warn = originalWarn;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("persisted store strips ANSI before saving", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
   try {
