@@ -90,8 +90,9 @@ This ensures routing and run dispatch use the current agent configuration. A 409
 ## Routing Rules
 
 - Only `@agent:` with a colon assigns work.
+- `@all:` assigns work to all registered agents (sender excluded); it expands at route time into individual agent assignments, not a real agent profile.
 - Plain `@agent` mentions are references and do not trigger routing.
-- Unknown placeholders such as `@agent:` are treated as normal text.
+- Unknown `@xx:` mentions are silently ignored (no error, no routing).
 - A message can assign work to multiple agents.
 - Each assigned agent receives the full channel message as context.
 - Agent replies can also contain assignments, but self-assignments are ignored.

@@ -35,8 +35,6 @@ export class ChannelRouter {
         this.options.markMessageRouted(message.id, "ignored");
         break;
 
-      case "all_unsupported":
-      case "unknown":
       case "self":
       case "empty_assignment":
         this.options.createSystemMessage(result.message, message.id);

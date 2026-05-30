@@ -93,7 +93,12 @@ export function App() {
       return [];
     }
 
-    return agentIds.filter((agentId) => agentId.toLowerCase().startsWith(mentionDraft.query.toLowerCase()));
+    const query = mentionDraft.query.toLowerCase();
+    const matched = agentIds.filter((agentId) => agentId.toLowerCase().startsWith(query));
+    if ("all".startsWith(query) && !matched.includes("all")) {
+      matched.push("all" as AgentId);
+    }
+    return matched;
   }, [agentIds, inputFocused, mentionDraft]);
 
   useEffect(() => {
@@ -177,7 +182,9 @@ export function App() {
 
     const nextContent = `${content.slice(0, mentionDraft.start)}@${agentId}: ${content.slice(mentionDraft.end)}`;
     const nextCursorIndex = mentionDraft.start + agentId.length + 3;
-    setSelectedAgent(agentId);
+    if (agentId !== "all") {
+      setSelectedAgent(agentId);
+    }
     setContent(nextContent);
     setCursorIndex(nextCursorIndex);
     window.setTimeout(() => {
@@ -363,6 +370,7 @@ function MentionMenu(props: {
   return (
     <div className="mentionMenu" role="listbox" aria-label="Choose agent">
       {props.candidates.map((agentId, index) => {
+        const isAll = agentId === "all";
         const agent = props.agentsById.get(agentId);
         const status = agent?.status ?? "idle";
         return (
@@ -376,10 +384,10 @@ function MentionMenu(props: {
             onClick={() => props.onSelect(agentId)}
           >
             <span className="mentionName">
-              <span className={`mentionDot ${status}`} aria-hidden="true" />
+              <span className={`mentionDot ${isAll ? "idle" : status}`} aria-hidden="true" />
               <span>@{agentId}</span>
             </span>
-            <small>{status}</small>
+            <small>{isAll ? "all agents" : status}</small>
           </button>
         );
       })}

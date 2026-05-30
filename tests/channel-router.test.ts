@@ -137,14 +137,32 @@ test("agent self-assignment does not block peer assignment", () => {
   assert.equal(routeStates[0]?.state, "routed");
 });
 
-test("@all assignment is blocked with system message", () => {
-  const { router, systemMessages, agentRuns, routeStates } = createRouter();
+test("@all: assignment routes to all agents", () => {
+  const { router, agentRuns, routeStates } = createRouter();
   router.process(createUserMessage("@all: summarize project"));
 
+  assert.equal(agentRuns.length, 2);
+  assert.deepEqual(agentRuns.map((run) => run.agentId).sort(), ["agent1", "agent2"]);
+  assert.ok(agentRuns.every((run) => run.prompt === "@all: summarize project"));
+  assert.equal(routeStates[0]?.state, "routed");
+});
+
+test("@all: from agent excludes self from routing", () => {
+  const { router, agentRuns, routeStates } = createRouter();
+  router.process(createAgentMessage("agent1", "@all: everyone help"));
+
+  assert.equal(agentRuns.length, 1);
+  assert.equal(agentRuns[0].agentId, "agent2");
+  assert.equal(routeStates[0]?.state, "routed");
+});
+
+test("unknown @xx: from user is silently ignored with hint", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter();
+  router.process(createUserMessage("@nonexistent: do something"));
+
   assert.equal(agentRuns.length, 0);
-  assert.equal(systemMessages.length, 1);
-  assert.ok(systemMessages[0].content.includes("does not support @all"));
-  assert.equal(routeStates[0]?.state, "blocked");
+  assert.equal(routeStates[0]?.state, "ignored");
+  assert.ok(systemMessages[0].content.includes("@agent1:"));
 });
 
 test("already routed message is skipped", () => {

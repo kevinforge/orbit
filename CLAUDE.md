@@ -144,5 +144,5 @@ When modifying UI: use CSS variables, never hardcode colors. Keep all changes in
 - `@agent:` with a colon assigns work; plain `@agent` is just a reference
 - Multiple assignments in one message are allowed
 - Self-assignments are ignored
-- `@all` is explicitly unsupported
+- `@all:` assigns work to all registered agents (sender excluded); expands at route time, not a real agent profile
 - Route depth capped at 5 to prevent infinite delegation loops

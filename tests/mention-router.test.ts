@@ -60,11 +60,71 @@ test("unknown: known assignments still route when ordinary text contains unknown
   }
 });
 
-test("all_unsupported: @all colon assignment returns unsupported message", () => {
+test("@all: expands to all available agents", () => {
   const result = routeMention("@all: summarize project", agents);
-  assert.equal(result.kind, "all_unsupported");
-  if (result.kind === "all_unsupported") {
-    assert.ok(result.message.includes("does not support @all"));
+  assert.equal(result.kind, "assignments");
+  if (result.kind === "assignments") {
+    assert.deepEqual(result.agentIds, ["agent1", "agent2"]);
+  }
+});
+
+test("@all：with Chinese colon expands to all available agents", () => {
+  const result = routeMention("@all：总结这个项目", agents);
+  assert.equal(result.kind, "assignments");
+  if (result.kind === "assignments") {
+    assert.deepEqual(result.agentIds, ["agent1", "agent2"]);
+  }
+});
+
+test("@all: mixed with specific agents deduplicates", () => {
+  const content = "@all: review everything; @agent1: focus on docs";
+  const result = routeMention(content, agents);
+  assert.equal(result.kind, "assignments");
+  if (result.kind === "assignments") {
+    assert.deepEqual(result.agentIds, ["agent1", "agent2"]);
+    assert.equal(result.prompt, content);
+  }
+});
+
+test("@all: from agent excludes self", () => {
+  const result = routeMention("@all: everyone help", agents, "agent1");
+  assert.equal(result.kind, "assignments");
+  if (result.kind === "assignments") {
+    assert.deepEqual(result.agentIds, ["agent2"]);
+  }
+});
+
+test("@all: from sender excludes self, routes to remaining agents", () => {
+  const result = routeMention("@all: help", agents, "agent1");
+  // agent1 is the sender, only 2 agents total -> only agent2 left
+  assert.equal(result.kind, "assignments");
+  if (result.kind === "assignments") {
+    assert.deepEqual(result.agentIds, ["agent2"]);
+  }
+});
+
+test("@all: with single agent who is sender returns none", () => {
+  const singleAgent = ["agent1"] as const;
+  const result = routeMention("@all: do it", singleAgent, "agent1");
+  assert.equal(result.kind, "none");
+});
+
+test("unknown @xx: is silently ignored without error", () => {
+  const result = routeMention("@nonexistent: do something", agents);
+  assert.equal(result.kind, "none");
+  if (result.kind === "none") {
+    assert.ok(result.message.includes("@agent1:"));
+    assert.ok(result.message.includes("@agent2:"));
+  }
+});
+
+test("unknown @xx: mixed with known assignment still routes", () => {
+  const content = "@agent1: do work @unknown: ignored part";
+  const result = routeMention(content, agents);
+  assert.equal(result.kind, "assignments");
+  if (result.kind === "assignments") {
+    assert.deepEqual(result.agentIds, ["agent1"]);
+    assert.equal(result.prompt, content);
   }
 });
 
@@ -107,5 +167,46 @@ test("empty_assignment: one empty assignment blocks the whole message", () => {
   assert.equal(result.kind, "empty_assignment");
   if (result.kind === "empty_assignment") {
     assert.equal(result.agentId, "agent1");
+  }
+});
+
+test("empty_assignment: duplicate same-agent marker with first empty blocks", () => {
+  const result = routeMention("@agent1: @agent1: do code", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "agent1");
+  }
+});
+
+test("empty_assignment: @all mixed with explicit empty assignment blocks", () => {
+  const result = routeMention("@all: review @agent1:", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "agent1");
+  }
+});
+
+test("empty_assignment: @all: alone with no content blocks", () => {
+  const result = routeMention("@all:", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "all");
+    assert.ok(result.message.includes("@all"));
+  }
+});
+
+test("empty_assignment: @all: with only whitespace blocks", () => {
+  const result = routeMention("@all:   ", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "all");
+  }
+});
+
+test("empty_assignment: @all: with only unknown mentions blocks", () => {
+  const result = routeMention("@all: @unknown: @fake:", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "all");
   }
 });
