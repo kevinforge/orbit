@@ -188,3 +188,35 @@ test("truncation marker includes original message length", () => {
   // The marker should mention "original message was N chars]" for some N > 0
   assert.match(truncated!.content, /\[truncated: original message was \d+ chars\]/);
 });
+
+test("recent user assignment and UX feedback survive even when older messages fill budget", () => {
+  // Regression: older entries should NOT consume budget before recent critical messages.
+  // With RECENT_UNTRUNCATED_COUNT=6, we need many older entries whose truncated form
+  // can consume the entire budget if processed first.
+  // 22 older entries × ~547 chars truncated = ~12034 > MAX_HISTORY_CHARS(12000)
+  const messages: ChatMessage[] = [];
+
+  const olderCount = RECENT_UNTRUNCATED_COUNT + 16; // 22 older entries
+  for (let i = 0; i < olderCount; i++) {
+    messages.push(msg({ kind: "user", content: `old_${i}: ` + "o".repeat(800) }));
+  }
+
+  // Then add a critical recent UX review and user assignment
+  const uxReview = "UX feedback: " + "P1: Fix header spacing. ".repeat(50);
+  const userAssignment = "@developer: fix all UX feedback items above";
+
+  messages.push(msg({ kind: "agent", agentId: "ux", content: uxReview, status: "done" }));
+  messages.push(msg({ kind: "user", content: userAssignment }));
+
+  const history = buildHistoryForAgent("developer", messages);
+  const allContent = history.map((e) => e.content).join("\n");
+
+  assert.ok(
+    allContent.includes(userAssignment),
+    `recent user assignment must be present in history. Got ${history.length} entries, last: ${history[history.length - 1]?.content.slice(0, 60)}`
+  );
+  assert.ok(
+    allContent.includes(uxReview),
+    `recent UX review must be present in history. Got ${history.length} entries`
+  );
+});

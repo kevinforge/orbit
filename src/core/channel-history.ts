@@ -28,17 +28,30 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
   }
 
   // Split into older and recent groups.
-  // Recent = last N entries, kept untruncated.
-  // Older = everything before, truncated with marker if needed.
+  // Recent = last N entries, kept untruncated, processed FIRST for budget priority.
+  // Older = everything before, truncated with marker, fills remaining budget.
   const recentStart = Math.max(0, eligible.length - RECENT_UNTRUNCATED_COUNT);
   const older = eligible.slice(0, recentStart);
   const recent = eligible.slice(recentStart);
 
-  const entries: ChannelHistoryEntry[] = [];
-  let totalChars = 0;
+  // Phase 1: Reserve budget for recent entries (newest → oldest within recent)
+  // These are the most critical — user assignments, latest agent feedback.
+  const recentEntries: ChannelHistoryEntry[] = [];
+  let recentChars = 0;
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const msg = recent[i];
+    const sender = msg.kind === "user" ? "user" : (msg.agentId ?? "agent");
+    if (recentChars + msg.content.length > MAX_HISTORY_CHARS) break;
+    recentEntries.unshift({ sender, content: msg.content });
+    recentChars += msg.content.length;
+  }
 
-  // Process older entries with truncation
-  for (const msg of older) {
+  // Phase 2: Fill remaining budget with older entries (newest → oldest)
+  const remainingBudget = MAX_HISTORY_CHARS - recentChars;
+  const olderEntries: ChannelHistoryEntry[] = [];
+  let olderChars = 0;
+  for (let i = older.length - 1; i >= 0; i--) {
+    const msg = older[i];
     const sender = msg.kind === "user" ? "user" : (msg.agentId ?? "agent");
     let text: string;
     if (msg.content.length <= OLDER_ENTRY_MAX_CHARS) {
@@ -47,20 +60,10 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
       text = msg.content.slice(0, OLDER_ENTRY_MAX_CHARS) + `\n[truncated: original message was ${msg.content.length} chars]`;
     }
 
-    if (totalChars + text.length > MAX_HISTORY_CHARS) break;
-    entries.push({ sender, content: text });
-    totalChars += text.length;
+    if (olderChars + text.length > remainingBudget) break;
+    olderEntries.unshift({ sender, content: text });
+    olderChars += text.length;
   }
 
-  // Process recent entries — kept in full, but still respect total budget
-  for (const msg of recent) {
-    const sender = msg.kind === "user" ? "user" : (msg.agentId ?? "agent");
-    const text = msg.content;
-
-    if (totalChars + text.length > MAX_HISTORY_CHARS) break;
-    entries.push({ sender, content: text });
-    totalChars += text.length;
-  }
-
-  return entries;
+  return [...olderEntries, ...recentEntries];
 }
