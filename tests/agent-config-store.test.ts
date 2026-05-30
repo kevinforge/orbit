@@ -10,7 +10,7 @@ function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-test-config-"));
 }
 
-test("DEFAULT_AGENT_CONFIGS seeds four built-in agents", () => {
+test("DEFAULT_AGENT_CONFIGS seeds four disabled built-in templates", () => {
   assert.equal(DEFAULT_AGENT_CONFIGS.length, 4);
   const ids = DEFAULT_AGENT_CONFIGS.map((c) => c.id);
   assert.ok(ids.includes("pm"));
@@ -18,7 +18,7 @@ test("DEFAULT_AGENT_CONFIGS seeds four built-in agents", () => {
   assert.ok(ids.includes("developer"));
   assert.ok(ids.includes("tester"));
   for (const config of DEFAULT_AGENT_CONFIGS) {
-    assert.ok(config.enabled, `${config.id} should be enabled by default`);
+    assert.equal(config.enabled, false, `${config.id} should be disabled by default`);
     assert.ok(config.systemPrompt.length > 0, `${config.id} should have a systemPrompt`);
   }
 });
@@ -137,7 +137,7 @@ test("load returns defaults for valid JSON with duplicate ids", () => {
   }
 });
 
-test("load returns defaults for valid JSON with no enabled agents", () => {
+test("load accepts valid JSON with no enabled agents", () => {
   const dir = tempDir();
   try {
     const store = new AgentConfigStore(dir);
@@ -145,8 +145,9 @@ test("load returns defaults for valid JSON with no enabled agents", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: false }]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
-    assert.equal(configs[0].id, "pm");
+    assert.equal(configs.length, 1);
+    assert.equal(configs[0].id, "a");
+    assert.equal(configs[0].enabled, false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -238,10 +239,10 @@ test("accepts config with valid permissionProfile", () => {
   assert.deepEqual(errors, []);
 });
 
-test("rejects config with no enabled agents", () => {
+test("accepts config with no enabled agents", () => {
   const configs: AgentConfig[] = DEFAULT_AGENT_CONFIGS.map((c) => ({ ...c, enabled: false }));
   const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("enabled")));
+  assert.deepEqual(errors, []);
 });
 
 test("rejects empty config list", () => {

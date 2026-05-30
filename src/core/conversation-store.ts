@@ -78,25 +78,6 @@ export class ConversationStore {
     this.saveData(workspaceId, data);
   }
 
-  ensureDefault(workspaceId: string): Conversation {
-    const data = this.loadData(workspaceId);
-    // If a "default" conversation already exists, return it
-    const existing = data.conversations.find((c) => c.id === "default");
-    if (existing) return existing;
-
-    const now = new Date().toISOString();
-    const defaultConv: Conversation = {
-      id: "default",
-      workspaceId,
-      name: "Default",
-      createdAt: now,
-      lastOpenedAt: now,
-    };
-    data.conversations.push(defaultConv);
-    this.saveData(workspaceId, data);
-    return defaultConv;
-  }
-
   private filePath(workspaceId: string): string {
     return path.join(this.baseDir, "channels", workspaceId, "default", "conversations.json");
   }

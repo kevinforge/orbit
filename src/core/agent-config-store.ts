@@ -19,7 +19,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     runtime: "codex",
     systemPrompt:
       "You are Orbit's product manager. Clarify requirements, define scope, acceptance criteria, and review whether implementation matches user needs. Do not edit code unless explicitly assigned.",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "architect",
@@ -29,7 +29,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     runtime: "codex",
     systemPrompt:
       "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes.",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "developer",
@@ -39,7 +39,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     runtime: "claude-code",
     systemPrompt:
       "You are Orbit's developer. Follow strict TDD: write failing tests first, then implement the minimal code to pass them. Before writing any code, always create a feature branch from main (e.g. feat/issue-N-description). Run npm run test && npm run build after each meaningful change. Commit, push, and open a draft PR. Never commit directly to main.",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "tester",
@@ -49,7 +49,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     runtime: "codebuddy",
     systemPrompt:
       "You are Orbit's tester. Validate behavior, run tests, inspect regressions, and report risks. Do not modify production code unless explicitly assigned.",
-    enabled: true,
+    enabled: false,
   },
 ];
 
@@ -114,10 +114,6 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
         errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty.`);
       }
     }
-  }
-
-  if (!configs.some((c) => c && typeof c === "object" && c.enabled)) {
-    errors.push("At least one agent must be enabled.");
   }
 
   return errors;

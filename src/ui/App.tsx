@@ -1,17 +1,12 @@
-import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
 import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, Conversation, ConversationInfo, PermissionProfile, RuntimeEvent, Workspace } from "../shared/types.ts";
 
 const initialState: AppState = {
-  workspace: { id: "", name: "orbit", path: "" },
-  conversation: { id: "default", name: "Default" },
-  agents: [
-    { id: "pm", label: "Product Manager", runtime: "codex", status: "starting", selected: true },
-    { id: "architect", label: "Architect", runtime: "codex", status: "starting", selected: false },
-    { id: "developer", label: "Developer", runtime: "claude-code", status: "starting", selected: false },
-    { id: "tester", label: "Tester", runtime: "codebuddy", status: "starting", selected: false },
-  ],
+  workspace: { id: "", name: "", path: "" },
+  conversation: { id: "", name: "" },
+  agents: [],
   messages: [],
   terminal: {},
 };
@@ -19,7 +14,7 @@ const initialState: AppState = {
 export function App() {
   const [state, setState] = useState<AppState>(initialState);
   const [content, setContent] = useState("");
-  const [selectedAgent, setSelectedAgent] = useState<AgentId>(initialState.agents[0].id);
+  const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
@@ -33,22 +28,34 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false);
-  const [showConversationDropdown, setShowConversationDropdown] = useState(false);
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
-  const [showNewConversation, setShowNewConversation] = useState(false);
-  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [showWorkspaceConversations, setShowWorkspaceConversations] = useState(true);
+  const [showAgentManager, setShowAgentManager] = useState(false);
   const [newWorkspacePath, setNewWorkspacePath] = useState("");
-  const [newConversationName, setNewConversationName] = useState("");
+  const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
+  const [editingWorkspaceName, setEditingWorkspaceName] = useState("");
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+  const [editingConversationName, setEditingConversationName] = useState("");
+  const [isPickingDirectory, setIsPickingDirectory] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const isNearBottomRef = useRef(true);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
+  const hasWorkspace = Boolean(state.workspace.id);
 
   const refreshWorkspaces = () => {
     fetch("/api/workspaces").then((r) => r.json()).then(setWorkspaces).catch(() => {});
   };
   const refreshConversations = () => {
     fetch("/api/conversations").then((r) => r.json()).then(setConversations).catch(() => {});
+  };
+  const refreshState = () => {
+    fetch("/api/state")
+      .then((r) => r.json())
+      .then((nextState: AppState) => setState(normalizeState(nextState)))
+      .catch(() => setConnectionState("offline"));
   };
 
   useEffect(() => {
@@ -108,6 +115,7 @@ export function App() {
 
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
+  const hasEnabledAgent = agentIds.length > 0;
   const scrollKey = useMemo(
     () =>
       state.messages
@@ -141,6 +149,30 @@ export function App() {
       setSelectedAgent(agentIds[0]);
     }
   }, [agentIds, agentsById, selectedAgent]);
+
+  useEffect(() => {
+    if (sidebarCollapsed) return;
+    window.localStorage.setItem("orbit.sidebarWidth", String(sidebarWidth));
+  }, [sidebarCollapsed, sidebarWidth]);
+
+  useEffect(() => {
+    if (!isResizingSidebar) return;
+    function handlePointerMove(event: PointerEvent) {
+      setSidebarWidth(clampSidebarWidth(event.clientX));
+    }
+    function handlePointerUp() {
+      setIsResizingSidebar(false);
+      document.body.classList.remove("sidebarResizing");
+    }
+    document.body.classList.add("sidebarResizing");
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      document.body.classList.remove("sidebarResizing");
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [isResizingSidebar]);
 
   useEffect(() => {
     setSelectedMentionIndex(0);
@@ -194,7 +226,7 @@ export function App() {
     } catch {
       setState((current) => ({
         ...current,
-        messages: [...current.messages, createLocalSystemMessage("Send failed. Check that the local server is running.")],
+        messages: [...current.messages, createLocalSystemMessage("发送失败，请检查本地服务是否正在运行。")],
       }));
     } finally {
       setIsSending(false);
@@ -203,7 +235,121 @@ export function App() {
 
   function chooseAgent(agentId: AgentId) {
     setSelectedAgent(agentId);
-    window.setTimeout(() => inputRef.current?.focus(), 0);
+    setContent((current) => {
+      if (!current.trim() || /^@\w[\w-]*:\s*$/.test(current.trim())) {
+        return `@${agentId}: `;
+      }
+      return current;
+    });
+    const nextCursorIndex = agentId.length + 3;
+    setCursorIndex(nextCursorIndex);
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+      if (!content.trim() || /^@\w[\w-]*:\s*$/.test(content.trim())) {
+        inputRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
+      }
+    }, 0);
+  }
+
+  async function switchWorkspace(workspaceId: string) {
+    if (workspaceId === state.workspace.id || isAnyAgentRunning) return;
+    const response = await fetch(`/api/workspaces/${workspaceId}/switch`, { method: "POST" });
+    if (!response.ok) return;
+    refreshWorkspaces();
+    refreshConversations();
+    refreshState();
+  }
+
+  async function createWorkspace(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!newWorkspacePath.trim()) return;
+    const response = await fetch("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: newWorkspacePath }),
+    });
+    if (!response.ok) return;
+    setShowNewWorkspace(false);
+    setNewWorkspacePath("");
+    refreshWorkspaces();
+  }
+
+  async function pickWorkspaceDirectory() {
+    setIsPickingDirectory(true);
+    try {
+      const response = await fetch("/api/workspaces/pick-directory", { method: "POST" });
+      if (!response.ok) return;
+      const result = (await response.json()) as { path?: string };
+      if (result.path) {
+        setNewWorkspacePath(result.path);
+      }
+    } finally {
+      setIsPickingDirectory(false);
+    }
+  }
+
+  async function renameWorkspace(workspaceId: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const response = await fetch(`/api/workspaces/${workspaceId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed }),
+    });
+    if (!response.ok) return;
+    setEditingWorkspaceId(null);
+    setEditingWorkspaceName("");
+    refreshWorkspaces();
+    refreshState();
+  }
+
+  async function deleteWorkspace(workspace: Workspace) {
+    if (workspace.id === state.workspace.id) return;
+    if (!confirm(`Delete workspace "${workspace.name}"?`)) return;
+    const response = await fetch(`/api/workspaces/${workspace.id}`, { method: "DELETE" });
+    if (response.ok) refreshWorkspaces();
+  }
+
+  async function switchConversation(conversationId: string) {
+    if (conversationId === state.conversation.id || isAnyAgentRunning) return;
+    const response = await fetch(`/api/conversations/${conversationId}/switch`, { method: "POST" });
+    if (!response.ok) return;
+    refreshConversations();
+    refreshState();
+  }
+
+  async function createConversation() {
+    if (!state.workspace.id) return;
+    const response = await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) return;
+    refreshConversations();
+    refreshState();
+  }
+
+  async function renameConversation(conversationId: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const response = await fetch(`/api/conversations/${conversationId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed }),
+    });
+    if (!response.ok) return;
+    setEditingConversationId(null);
+    setEditingConversationName("");
+    refreshConversations();
+    refreshState();
+  }
+
+  async function deleteConversation(conversation: Conversation) {
+    if (conversation.id === state.conversation.id) return;
+    if (!confirm(`Delete conversation "${conversation.name}"?`)) return;
+    const response = await fetch(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+    if (response.ok) refreshConversations();
   }
 
   function updateCursorFromInput() {
@@ -258,182 +404,231 @@ export function App() {
   }
 
   return (
-    <main className="shell">
-      <aside className="sidebar" aria-label="Agent status">
-        <div className="brandBlock">
-          <div className="brandMark">orbit</div>
-          <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
+    <main
+      className={`shell ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}
+      style={{
+        gridTemplateColumns: sidebarCollapsed ? "0 minmax(0, 1fr)" : `${sidebarWidth}px minmax(0, 1fr)`,
+        "--sidebar-resize-left": `${sidebarWidth}px`,
+      } as CSSProperties}
+    >
+      <aside className="sidebar" aria-label="工作区导航" aria-hidden={sidebarCollapsed}>
+        <div className="sidebarTop">
+          <div className="brandBlock">
+            <div className="brandMark">orbit</div>
+            <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
+            <button className="sidebarCollapseBtn" type="button" onClick={() => setSidebarCollapsed(true)} title="隐藏侧边栏">
+              <NavIcon kind="collapse" />
+            </button>
+          </div>
         </div>
 
-        <nav className="agentList" aria-label="Choose agent">
-          {agentIds.map((agentId) => (
-            <AgentButton
-              key={agentId}
-              agent={agentsById.get(agentId) ?? initialState.agents[0]}
-              selected={selectedAgent === agentId}
-              onClick={() => chooseAgent(agentId)}
-            />
-          ))}
-        </nav>
+        <section className="navSection workspaceStack" aria-label="当前工作区和会话">
+          <div className="navSectionHeader">
+            <span><NavIcon kind="workspace" />工作区</span>
+            <button type="button" onClick={() => setShowNewWorkspace((value) => !value)} title="新建工作区">+</button>
+          </div>
+          <div className="workspaceCard">
+            <div className="navList workspaceList">
+              {workspaces.length === 0 ? (
+                <div className="emptyNavHint">还没有工作区</div>
+              ) : (
+                workspaces.map((ws) => (
+                  <div className={`navRow workspaceRow ${ws.id === state.workspace.id ? "active" : ""}`} key={ws.id}>
+                    {editingWorkspaceId === ws.id ? (
+                      <form
+                        className="rowRenameForm"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          renameWorkspace(ws.id, editingWorkspaceName);
+                        }}
+                      >
+                        <input
+                          value={editingWorkspaceName}
+                          onChange={(event) => setEditingWorkspaceName(event.target.value)}
+                          onBlur={() => renameWorkspace(ws.id, editingWorkspaceName)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              setEditingWorkspaceId(null);
+                              setEditingWorkspaceName("");
+                            }
+                          }}
+                          autoFocus
+                        />
+                        <small title={ws.path}>{ws.path}</small>
+                      </form>
+                    ) : (
+                      <button type="button" onClick={() => switchWorkspace(ws.id)} disabled={isAnyAgentRunning}>
+                        <span>{ws.name}</span>
+                        <small title={ws.path}>{ws.path}</small>
+                      </button>
+                    )}
+                    {editingWorkspaceId !== ws.id ? (
+                      <button
+                        className="rowIconButton"
+                        type="button"
+                        onClick={() => {
+                          setEditingWorkspaceId(ws.id);
+                          setEditingWorkspaceName(ws.name);
+                        }}
+                        title="重命名工作区"
+                      >
+                        <NavIcon kind="edit" />
+                      </button>
+                    ) : null}
+                    {ws.id !== state.workspace.id && editingWorkspaceId !== ws.id ? (
+                      <button className="rowIconButton" type="button" onClick={() => deleteWorkspace(ws)} title="删除工作区">x</button>
+                    ) : null}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          {showNewWorkspace ? (
+            <form className="inlineCreateForm" onSubmit={createWorkspace}>
+              <div className="pathPickerRow">
+                <input placeholder="选择本地目录" value={newWorkspacePath} onChange={(event) => setNewWorkspacePath(event.target.value)} />
+                <button type="button" onClick={pickWorkspaceDirectory} disabled={isPickingDirectory}>
+                  {isPickingDirectory ? "选择中" : "浏览"}
+                </button>
+              </div>
+              <div>
+                <button type="submit">创建</button>
+                <button type="button" onClick={() => setShowNewWorkspace(false)}>取消</button>
+              </div>
+            </form>
+          ) : null}
+
+          <div className="nestedConversations">
+            <div className="navSectionHeader nestedHeader">
+              <button
+                className="nestedToggle"
+                type="button"
+                onClick={() => setShowWorkspaceConversations((value) => !value)}
+                disabled={!state.workspace.id}
+                title={showWorkspaceConversations ? "收起会话" : "展开会话"}
+              >
+                <NavIcon kind={showWorkspaceConversations ? "collapse" : "expand"} />
+                <span><NavIcon kind="conversation" />{state.workspace.name ? `${state.workspace.name} 的会话` : "会话"}</span>
+              </button>
+              <button type="button" onClick={createConversation} disabled={!state.workspace.id} title="新建会话">+</button>
+            </div>
+            {showWorkspaceConversations ? (
+            <div className="navList conversationList">
+              {conversations.map((conv) => (
+                <div className={`navRow ${conv.id === state.conversation.id ? "active" : ""}`} key={conv.id}>
+                  {editingConversationId === conv.id ? (
+                    <form
+                      className="rowRenameForm"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        renameConversation(conv.id, editingConversationName);
+                      }}
+                    >
+                      <input
+                        value={editingConversationName}
+                        onChange={(event) => setEditingConversationName(event.target.value)}
+                        onBlur={() => renameConversation(conv.id, editingConversationName)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            setEditingConversationId(null);
+                            setEditingConversationName("");
+                          }
+                        }}
+                        autoFocus
+                      />
+                    </form>
+                  ) : (
+                    <button type="button" onClick={() => switchConversation(conv.id)} disabled={isAnyAgentRunning}>
+                      <span>{conv.name}</span>
+                    </button>
+                  )}
+                  {conv.id !== state.conversation.id ? (
+                    <button className="rowIconButton" type="button" onClick={() => deleteConversation(conv)} title="删除会话">x</button>
+                  ) : editingConversationId !== conv.id ? (
+                    <button
+                      className="rowIconButton"
+                      type="button"
+                      onClick={() => {
+                        setEditingConversationId(conv.id);
+                        setEditingConversationName(conv.name);
+                      }}
+                      title="重命名会话"
+                    >
+                      <NavIcon kind="edit" />
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="navSection compactAgents" aria-label="智能体">
+          <div className="navSectionHeader">
+            <span><NavIcon kind="agents" />智能体</span>
+            <button type="button" onClick={() => setShowAgentManager(true)} disabled={!hasWorkspace} title="添加或启用智能体">+</button>
+          </div>
+          <nav className="agentList" aria-label="选择智能体">
+            {agentIds.length === 0 ? (
+              <div className="emptyAgentsHint">
+                <strong>还没有启用智能体</strong>
+                <span>点击右上角 +，启用默认模板或添加自定义智能体。</span>
+              </div>
+            ) : (
+              agentIds.map((agentId) => (
+                <AgentButton
+                  key={agentId}
+                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", status: "idle" }}
+                  selected={selectedAgent === agentId}
+                  onClick={() => chooseAgent(agentId)}
+                />
+              ))
+            )}
+          </nav>
+        </section>
 
         <div className="sidebarFooter">
-          <button className="settingsBtn" type="button" onClick={() => setShowSettings(true)} title="智能体设置">&#9881;</button>
+          <button className="settingsBtn" type="button" onClick={() => setShowSettings(true)} title="智能体设置">
+            <NavIcon kind="settings" />
+            设置
+          </button>
         </div>
       </aside>
+      <button
+        className="sidebarRevealBtn"
+        type="button"
+        onClick={() => setSidebarCollapsed(false)}
+        title="显示侧边栏"
+        aria-label="显示侧边栏"
+      >
+        <NavIcon kind="expand" />
+      </button>
+      <div
+        className="sidebarResizeHandle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整侧边栏宽度"
+        onPointerDown={(event) => {
+          if (sidebarCollapsed) return;
+          event.preventDefault();
+          setIsResizingSidebar(true);
+        }}
+      />
 
       <section className="channel" aria-label="Chat channel">
         <header className="channelHeader">
           <div className="channelHeaderLeft">
-            <p className="eyebrow">workspace</p>
-            <h1 className="workspaceTitle" onClick={() => { setShowWorkspaceDropdown(!showWorkspaceDropdown); setShowConversationDropdown(false); }}>
-              <svg className="workspaceIcon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.672a.5.5 0 0 1 .39.188l1.633 2.041a.5.5 0 0 0 .39.188H12.5A1.5 1.5 0 0 1 14 6.916V11.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5V4.5Z" />
-              </svg>
-              {state.workspace.name || "Orbit"}
-              <span className="dropdownCaret">&#9662;</span>
-            </h1>
-            {state.workspace.path ? <p className="workspacePath">{state.workspace.path}</p> : null}
+            <p className="eyebrow">{state.workspace.name || "工作区"}</p>
+            <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
+            {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
           </div>
           <div className="channelHeaderRight">
-            <button
-              className="conversationSelector"
-              onClick={() => { setShowConversationDropdown(!showConversationDropdown); setShowWorkspaceDropdown(false); }}
-              title="Switch conversation"
-            >
-              {state.conversation.name}
-              <span className="dropdownCaret">&#9662;</span>
-            </button>
+            <span className="headerMeta">{state.messages.length} 条消息</span>
           </div>
-
-          {showWorkspaceDropdown && (
-            <div className="contextDropdown workspaceDropdown">
-              {workspaces.map((ws) => (
-                <button
-                  key={ws.id}
-                  className={`contextItem ${ws.id === state.workspace.id ? "active" : ""}`}
-                  onClick={() => {
-                    if (ws.id !== state.workspace.id && !isAnyAgentRunning) {
-                      fetch(`/api/workspaces/${ws.id}/switch`, { method: "POST" }).then(() => {
-                        setShowWorkspaceDropdown(false);
-                        refreshWorkspaces();
-                      });
-                    }
-                  }}
-                  disabled={isAnyAgentRunning}
-                >
-                  <span className="contextItemName">{ws.name}</span>
-                  <span className="contextItemPath">{ws.path}</span>
-                  {ws.id !== state.workspace.id && (
-                    <span
-                      className="contextItemDelete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`Delete workspace "${ws.name}"?`)) {
-                          fetch(`/api/workspaces/${ws.id}`, { method: "DELETE" }).then(() => refreshWorkspaces());
-                        }
-                      }}
-                      title="Delete workspace"
-                    >&#10005;</span>
-                  )}
-                </button>
-              ))}
-              {!showNewWorkspace ? (
-                <button className="contextItem contextCreateBtn" onClick={() => setShowNewWorkspace(true)}>
-                  + New Workspace
-                </button>
-              ) : (
-                <form
-                  className="contextCreateForm"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (!newWorkspaceName.trim() || !newWorkspacePath.trim()) return;
-                    fetch("/api/workspaces", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ name: newWorkspaceName, path: newWorkspacePath }),
-                    }).then(() => {
-                      setShowNewWorkspace(false);
-                      setNewWorkspaceName("");
-                      setNewWorkspacePath("");
-                      refreshWorkspaces();
-                    });
-                  }}
-                >
-                  <input placeholder="Name" value={newWorkspaceName} onChange={(e) => setNewWorkspaceName(e.target.value)} />
-                  <input placeholder="Path" value={newWorkspacePath} onChange={(e) => setNewWorkspacePath(e.target.value)} />
-                  <div className="contextCreateFormActions">
-                    <button type="submit">Create</button>
-                    <button type="button" onClick={() => setShowNewWorkspace(false)}>Cancel</button>
-                  </div>
-                </form>
-              )}
-            </div>
-          )}
-
-          {showConversationDropdown && (
-            <div className="contextDropdown conversationDropdown">
-              {conversations.map((conv) => (
-                <button
-                  key={conv.id}
-                  className={`contextItem ${conv.id === state.conversation.id ? "active" : ""}`}
-                  onClick={() => {
-                    if (conv.id !== state.conversation.id && !isAnyAgentRunning) {
-                      fetch(`/api/conversations/${conv.id}/switch`, { method: "POST" }).then(() => {
-                        setShowConversationDropdown(false);
-                        refreshConversations();
-                      });
-                    }
-                  }}
-                  disabled={isAnyAgentRunning}
-                >
-                  <span className="contextItemName">{conv.name}</span>
-                  {conv.id !== state.conversation.id && (
-                    <span
-                      className="contextItemDelete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`Delete conversation "${conv.name}"?`)) {
-                          fetch(`/api/conversations/${conv.id}`, { method: "DELETE" }).then(() => refreshConversations());
-                        }
-                      }}
-                      title="Delete conversation"
-                    >&#10005;</span>
-                  )}
-                </button>
-              ))}
-              {!showNewConversation ? (
-                <button className="contextItem contextCreateBtn" onClick={() => setShowNewConversation(true)}>
-                  + New Conversation
-                </button>
-              ) : (
-                <form
-                  className="contextCreateForm"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (!newConversationName.trim()) return;
-                    fetch("/api/conversations", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ name: newConversationName }),
-                    }).then(() => {
-                      setShowNewConversation(false);
-                      setNewConversationName("");
-                      refreshConversations();
-                    });
-                  }}
-                >
-                  <input placeholder="Conversation name" value={newConversationName} onChange={(e) => setNewConversationName(e.target.value)} />
-                  <div className="contextCreateFormActions">
-                    <button type="submit">Create</button>
-                    <button type="button" onClick={() => setShowNewConversation(false)}>Cancel</button>
-                  </div>
-                </form>
-              )}
-            </div>
-          )}
         </header>
 
-        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="Message list" onScroll={handleMessagesScroll}>
+        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="消息列表" onScroll={handleMessagesScroll}>
           {state.messages.length === 0 ? (
             <div className="emptyState">
               <div className="emptyOrbital" aria-hidden="true">
@@ -446,11 +641,21 @@ export function App() {
                   <circle className="orbitDot orbitDot3" cx="60" cy="94" r="3.5" fill="var(--success)" />
                 </svg>
               </div>
-              <p className="emptyTitle">Ready to launch</p>
+              <p className="emptyTitle">{hasWorkspace ? "准备开始" : "先选择工作区"}</p>
               <ol className="emptySteps">
-                <li><strong>1</strong> Select an agent from the sidebar</li>
-                <li><strong>2</strong> Type your task with <code>@agent:</code></li>
-                <li><strong>3</strong> Watch agents collaborate</li>
+                {hasWorkspace ? (
+                  <>
+                    <li><strong>1</strong> 启用或添加智能体</li>
+                    <li><strong>2</strong> 使用 <code>@agent:</code> 输入任务</li>
+                    <li><strong>3</strong> 首句话会成为会话名称</li>
+                  </>
+                ) : (
+                  <>
+                    <li><strong>1</strong> 点击工作区旁边的 <code>+</code></li>
+                    <li><strong>2</strong> 选择本地项目目录</li>
+                    <li><strong>3</strong> 开始输入第一条任务</li>
+                  </>
+                )}
               </ol>
             </div>
           ) : (
@@ -506,8 +711,9 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={`@${selectedAgent}: Hello!`}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用智能体"}
               aria-label="Message to agent"
+              disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
             />
             {mentionCandidates.length > 0 ? (
@@ -519,15 +725,20 @@ export function App() {
               />
             ) : null}
           </div>
-          <button type="submit" disabled={!content.trim() || isSending}>
-            {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "Send"}
+          <button type="submit" disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
+            {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
           </button>
         </form>
       </section>
       {showSettings ? (
-        <AgentSettingsPanel
+        <SystemSettingsPanel
           onClose={() => setShowSettings(false)}
-          onSaved={() => { setShowSettings(false); window.location.reload(); }}
+        />
+      ) : null}
+      {showAgentManager ? (
+        <AgentManagerPanel
+          onClose={() => setShowAgentManager(false)}
+          onSaved={() => { setShowAgentManager(false); window.location.reload(); }}
         />
       ) : null}
     </main>
@@ -566,6 +777,59 @@ function MentionMenu(props: {
       })}
       <div className="mentionHint">↑↓ select · Tab/Enter confirm · Esc close</div>
     </div>
+  );
+}
+
+function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "settings" | "collapse" | "expand" | "edit" }) {
+  if (kind === "workspace") {
+    return (
+      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M2.5 4.5h3l1.1 1.4h6.9v5.6a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 2.5 11.5v-7Z" />
+      </svg>
+    );
+  }
+  if (kind === "conversation") {
+    return (
+      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3 4.5A2 2 0 0 1 5 2.5h6A2 2 0 0 1 13 4.5v4A2 2 0 0 1 11 10.5H7L4 13v-2.6A2 2 0 0 1 3 8.5v-4Z" />
+      </svg>
+    );
+  }
+  if (kind === "agents") {
+    return (
+      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M8 3.2a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Z" />
+        <path d="M3.8 13a4.2 4.2 0 0 1 8.4 0" />
+      </svg>
+    );
+  }
+  if (kind === "collapse") {
+    return (
+      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M10 3 5 8l5 5" />
+      </svg>
+    );
+  }
+  if (kind === "expand") {
+    return (
+      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M6 3l5 5-5 5" />
+      </svg>
+    );
+  }
+  if (kind === "edit") {
+    return (
+      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3 11.5V13h1.5l7-7L10 4.5l-7 7Z" />
+        <path d="M9.5 5 11 3.5 12.5 5 11 6.5" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z" />
+      <path d="M8 1.8v1.4M8 12.8v1.4M3.6 3.6l1 1M11.4 11.4l1 1M1.8 8h1.4M12.8 8h1.4M3.6 12.4l1-1M11.4 4.6l1-1" />
+    </svg>
   );
 }
 
@@ -763,7 +1027,29 @@ function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange:
   );
 }
 
-function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalPanel settingsPlaceholderPanel" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader">
+          <h2>系统设置</h2>
+          <button type="button" onClick={onClose}>&times;</button>
+        </div>
+        <div className="settingsBody">
+          <div className="settingsPlaceholder">
+            <strong>暂时没有系统设置项</strong>
+            <span>智能体管理已经移动到左侧“智能体”标题右侧的 +。</span>
+          </div>
+        </div>
+        <div className="modalFooter">
+          <button type="button" onClick={onClose}>关闭</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentManagerPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [configs, setConfigs] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -841,11 +1127,16 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader">
-          <h2>智能体设置</h2>
+          <h2>智能体</h2>
           <button type="button" onClick={onClose}>&times;</button>
         </div>
         {loading ? <p className="settingsLoading">加载中...</p> : (
           <div className="settingsBody">
+            <div className="agentManagerIntro">
+              <strong>默认智能体模板</strong>
+              <span>Product Manager、Architect、Developer、Tester 是内置模板，默认不启用。你可以按当前工作区需要开启，也可以创建自己的智能体。</span>
+            </div>
+            <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义智能体</button>
             {configs.map((config, i) => {
               const isExpanded = expandedIndex === i;
               return (
@@ -911,7 +1202,6 @@ function AgentSettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved
                 </div>
               );
             })}
-            <button type="button" className="addBtn" onClick={addConfig}>+ 添加智能体</button>
             {error ? <p className="settingsError">{error}</p> : null}
           </div>
         )}
@@ -1051,6 +1341,23 @@ function connectionLabel(state: "connecting" | "live" | "offline"): string {
     return "offline";
   }
   return "connecting";
+}
+
+const SIDEBAR_MIN_WIDTH = 280;
+const SIDEBAR_MAX_WIDTH = 460;
+const SIDEBAR_DEFAULT_WIDTH = 336;
+
+function loadSidebarWidth(): number {
+  if (typeof window === "undefined") {
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+  const stored = window.localStorage.getItem("orbit.sidebarWidth");
+  const parsed = stored ? Number(stored) : SIDEBAR_DEFAULT_WIDTH;
+  return clampSidebarWidth(Number.isFinite(parsed) ? parsed : SIDEBAR_DEFAULT_WIDTH);
+}
+
+function clampSidebarWidth(value: number): number {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)));
 }
 
 function formatTime(value: string): string {

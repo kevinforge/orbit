@@ -81,7 +81,9 @@ export class WorkspaceStore {
       throw new Error(`Workspace already exists for path "${dirPath}": ${existing.name} (${existing.id})`);
     }
     const now = new Date().toISOString();
-    const metadata: WorkspaceMetadata = { id, name, path: path.resolve(dirPath), createdAt: now, lastOpenedAt: now };
+    const resolvedPath = path.resolve(dirPath);
+    const workspaceName = name.trim() || path.basename(resolvedPath) || resolvedPath;
+    const metadata: WorkspaceMetadata = { id, name: workspaceName, path: resolvedPath, createdAt: now, lastOpenedAt: now };
     this.writeMetadata(id, metadata);
     return metadata;
   }
