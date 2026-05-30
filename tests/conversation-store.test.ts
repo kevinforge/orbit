@@ -100,6 +100,44 @@ test("delete removes a conversation", () => {
   assert.equal(store.list("ws1").length, 0);
 });
 
+test("delete cleans up channels, transcripts and sessions directories for the conversation", () => {
+  const dir = tmpDir();
+  const store = new ConversationStore(dir);
+  const conv = store.create("ws1", "Delete Me");
+  const other = store.create("ws1", "Keep Me");
+
+  // Create directories that should be removed
+  const channelsDir = path.join(dir, "channels", "ws1", "default", conv.id);
+  const transcriptsDir = path.join(dir, "transcripts", "ws1", "default", conv.id);
+  const sessionsDir = path.join(dir, "sessions", "ws1", "claude-code", "default", conv.id);
+
+  fs.mkdirSync(channelsDir, { recursive: true });
+  fs.mkdirSync(transcriptsDir, { recursive: true });
+  fs.mkdirSync(sessionsDir, { recursive: true });
+
+  // Write some data files
+  fs.writeFileSync(path.join(channelsDir, "messages.json"), '{"messages":[],"nextId":1}');
+  fs.writeFileSync(path.join(transcriptsDir, "developer.log"), "transcript data");
+  fs.writeFileSync(path.join(sessionsDir, "developer.json"), '{"sessionId":"abc"}');
+
+  // Create directories for the other conversation that should NOT be removed
+  const otherChannelsDir = path.join(dir, "channels", "ws1", "default", other.id);
+  const otherTranscriptsDir = path.join(dir, "transcripts", "ws1", "default", other.id);
+  fs.mkdirSync(otherChannelsDir, { recursive: true });
+  fs.writeFileSync(path.join(otherChannelsDir, "messages.json"), '{"messages":[],"nextId":1}');
+
+  store.delete("ws1", conv.id);
+
+  // Deleted conversation's data should be gone
+  assert.ok(!fs.existsSync(channelsDir), "channels dir should be removed");
+  assert.ok(!fs.existsSync(transcriptsDir), "transcripts dir should be removed");
+  assert.ok(!fs.existsSync(sessionsDir), "sessions dir should be removed");
+
+  // Other conversation's data should still exist
+  assert.ok(fs.existsSync(otherChannelsDir), "other channels dir should remain");
+  assert.ok(fs.existsSync(path.join(otherChannelsDir, "messages.json")), "other messages should remain");
+});
+
 test("delete throws for unknown id", () => {
   const dir = tmpDir();
   const store = new ConversationStore(dir);

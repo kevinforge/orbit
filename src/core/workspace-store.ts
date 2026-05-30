@@ -41,9 +41,9 @@ export class WorkspaceStore {
     } catch {
       const now = new Date().toISOString();
       const name = path.basename(cwd);
-      const workspace: WorkspaceMetadata = { id, name, path: cwd, createdAt: now, lastOpenedAt: now };
+      const workspace: WorkspaceMetadata = { id, name, path: path.resolve(cwd), createdAt: now, lastOpenedAt: now };
       this.writeMetadata(id, workspace);
-      return { id, name, path: cwd };
+      return { id, name, path: path.resolve(cwd) };
     }
   }
 
@@ -81,7 +81,7 @@ export class WorkspaceStore {
       throw new Error(`Workspace already exists for path "${dirPath}": ${existing.name} (${existing.id})`);
     }
     const now = new Date().toISOString();
-    const metadata: WorkspaceMetadata = { id, name, path: dirPath, createdAt: now, lastOpenedAt: now };
+    const metadata: WorkspaceMetadata = { id, name, path: path.resolve(dirPath), createdAt: now, lastOpenedAt: now };
     this.writeMetadata(id, metadata);
     return metadata;
   }

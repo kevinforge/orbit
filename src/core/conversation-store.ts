@@ -65,6 +65,9 @@ export class ConversationStore {
     }
     data.conversations.splice(index, 1);
     this.saveData(workspaceId, data);
+
+    // Clean up data directories for this conversation
+    this.cleanupConversationData(workspaceId, conversationId);
   }
 
   touchLastOpened(workspaceId: string, conversationId: string): void {
@@ -97,6 +100,36 @@ export class ConversationStore {
 
   private filePath(workspaceId: string): string {
     return path.join(this.baseDir, "channels", workspaceId, "default", "conversations.json");
+  }
+
+  private cleanupConversationData(workspaceId: string, conversationId: string): void {
+    // Remove channels data (messages)
+    const channelsDir = path.join(this.baseDir, "channels", workspaceId, "default", conversationId);
+    this.rmDir(channelsDir);
+
+    // Remove transcripts
+    const transcriptsDir = path.join(this.baseDir, "transcripts", workspaceId, "default", conversationId);
+    this.rmDir(transcriptsDir);
+
+    // Remove sessions for all runtimes under this workspace/channel/conversation
+    const sessionsBase = path.join(this.baseDir, "sessions", workspaceId);
+    try {
+      const runtimeDirs = fs.readdirSync(sessionsBase);
+      for (const runtime of runtimeDirs) {
+        const convSessionsDir = path.join(sessionsBase, runtime, "default", conversationId);
+        this.rmDir(convSessionsDir);
+      }
+    } catch {
+      // sessions dir may not exist
+    }
+  }
+
+  private rmDir(dirPath: string): void {
+    try {
+      fs.rmSync(dirPath, { recursive: true, force: true });
+    } catch {
+      // best effort — directory may not exist
+    }
   }
 
   private loadData(workspaceId: string): ConversationData {

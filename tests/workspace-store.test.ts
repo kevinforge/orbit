@@ -39,7 +39,7 @@ test("resolve returns workspace info from existing metadata file", () => {
 
   const workspace = store.resolve(cwd);
   assert.ok(workspace.id);
-  assert.equal(workspace.path, cwd);
+  assert.equal(workspace.path, path.resolve(cwd));
   assert.equal(workspace.name, "orbit");
   assert.ok(fs.existsSync(path.join(dir, "workspaces", workspace.id, "workspace.json")));
 });
@@ -54,7 +54,7 @@ test("resolve creates workspace directory and metadata on first call", () => {
   assert.ok(fs.existsSync(metadataPath));
   const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
   assert.equal(metadata.id, workspace.id);
-  assert.equal(metadata.path, "/home/user/projects/new-project");
+  assert.equal(metadata.path, path.resolve("/home/user/projects/new-project"));
   assert.equal(metadata.name, "new-project");
   assert.ok(metadata.createdAt, "metadata should include createdAt");
   assert.ok(new Date(metadata.createdAt).getTime() > 0, "createdAt should be a valid ISO date");
@@ -197,7 +197,7 @@ test("create creates a new workspace", () => {
 
   assert.ok(ws.id);
   assert.equal(ws.name, "My Project");
-  assert.equal(ws.path, "/projects/my-project");
+  assert.equal(ws.path, path.resolve("/projects/my-project"));
   assert.ok(ws.createdAt);
   assert.ok(ws.lastOpenedAt);
   assert.ok(store.get(ws.id));
@@ -269,4 +269,21 @@ test("touchLastOpened updates lastOpenedAt", () => {
 
   assert.equal(before.id, after.id);
   assert.notEqual(after.lastOpenedAt, before.lastOpenedAt);
+});
+
+test("create normalizes relative paths to absolute paths", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("Relative", "some/relative/path");
+
+  assert.ok(path.isAbsolute(ws.path), `path should be absolute, got: ${ws.path}`);
+  assert.ok(ws.path.includes("some" + path.sep + "relative" + path.sep + "path"));
+});
+
+test("resolve normalizes relative cwd to absolute path", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("some/relative/project");
+
+  assert.ok(path.isAbsolute(ws.path), `path should be absolute, got: ${ws.path}`);
 });
