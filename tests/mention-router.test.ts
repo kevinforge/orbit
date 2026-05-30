@@ -94,7 +94,7 @@ test("@all: from agent excludes self", () => {
   }
 });
 
-test("@all: with no other agents returns none", () => {
+test("@all: from sender excludes self, routes to remaining agents", () => {
   const result = routeMention("@all: help", agents, "agent1");
   // agent1 is the sender, only 2 agents total -> only agent2 left
   assert.equal(result.kind, "assignments");
@@ -164,6 +164,22 @@ test("empty_assignment: @agent1 colon alone is blocked", () => {
 
 test("empty_assignment: one empty assignment blocks the whole message", () => {
   const result = routeMention("@agent1: @agent2: implement code", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "agent1");
+  }
+});
+
+test("empty_assignment: duplicate same-agent marker with first empty blocks", () => {
+  const result = routeMention("@agent1: @agent1: do code", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "agent1");
+  }
+});
+
+test("empty_assignment: @all mixed with explicit empty assignment blocks", () => {
+  const result = routeMention("@all: review @agent1:", agents);
   assert.equal(result.kind, "empty_assignment");
   if (result.kind === "empty_assignment") {
     assert.equal(result.agentId, "agent1");

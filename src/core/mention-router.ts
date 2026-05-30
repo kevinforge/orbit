@@ -70,25 +70,19 @@ export function routeMention(
     };
   }
 
-  // Deduplicate by agentId while preserving order
-  const seen = new Set<AgentId>();
-  const dedupedAssignments = knownAssignments.filter((assignment) => {
-    if (seen.has(assignment.agentId)) return false;
-    seen.add(assignment.agentId);
-    return true;
-  });
-
-  // Check for empty assignments — only check non-@all markers for empty task text
-  // @all: markers are always considered to have content (they inherit the shared prompt)
-  for (const assignment of dedupedAssignments) {
+  // Check for empty assignments on raw known markers before dedup.
+  // This ensures duplicate markers like "@agent1: @agent1: task" correctly
+  // block on the first empty marker, and "@all: review @agent1:" blocks
+  // on the explicit empty @agent1:.
+  for (const assignment of knownAssignments) {
     // Skip empty-check for markers that originated from @all: expansion
     // (they all share the same start/end from the @all marker)
     if (hasAllMarker && rawAssignments.some((raw) => raw.agentName.toLowerCase() === "all" && raw.start === assignment.start)) {
       continue;
     }
 
-    const nextMarker = findNextMarker(assignment.end, dedupedAssignments);
-    const taskText = content.slice(assignment.end, nextMarker).trim();
+    const nextEnd = findNextMarkerEnd(assignment.end, knownAssignments);
+    const taskText = content.slice(assignment.end, nextEnd).trim();
     if (!taskText) {
       return {
         kind: "empty_assignment",
@@ -97,6 +91,14 @@ export function routeMention(
       };
     }
   }
+
+  // Deduplicate by agentId while preserving order
+  const seen = new Set<AgentId>();
+  const dedupedAssignments = knownAssignments.filter((assignment) => {
+    if (seen.has(assignment.agentId)) return false;
+    seen.add(assignment.agentId);
+    return true;
+  });
 
   return {
     kind: "assignments",
@@ -109,7 +111,7 @@ export function routeMention(
  * Find the start position of the next assignment marker after the given position,
  * or return the content length if there is no next marker.
  */
-function findNextMarker(afterEnd: number, assignments: Array<{ start: number }>): number {
+function findNextMarkerEnd(afterEnd: number, assignments: Array<{ start: number }>): number {
   let next = Infinity;
   for (const assignment of assignments) {
     if (assignment.start > afterEnd && assignment.start < next) {
