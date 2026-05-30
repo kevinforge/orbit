@@ -108,7 +108,10 @@ Each agent run receives a scoped history of channel messages since that agent's 
 
 - Scans messages from newest to oldest, starting after the agent's last `status: "done"` message
 - Skips system messages, messages still running, and routed source messages
-- Caps total history at 2000 characters, individual entries at 500 characters
+- Splits eligible messages into two groups: "older" and "recent" (last 6)
+- Recent entries are kept in full (no per-entry truncation)
+- Older entries are truncated to 500 characters with a `[truncated: original message was N chars]` marker
+- Caps total history at 12000 characters (`MAX_HISTORY_CHARS`)
 - Returns entries in chronological order
 
 The history is injected between `[Orbit Context]` and `[Full channel message]` in the prompt built by `channel-context-builder.ts`.
