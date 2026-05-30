@@ -185,3 +185,28 @@ test("empty_assignment: @all mixed with explicit empty assignment blocks", () =>
     assert.equal(result.agentId, "agent1");
   }
 });
+
+test("empty_assignment: @all: alone with no content blocks", () => {
+  const result = routeMention("@all:", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "all");
+    assert.ok(result.message.includes("@all"));
+  }
+});
+
+test("empty_assignment: @all: with only whitespace blocks", () => {
+  const result = routeMention("@all:   ", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "all");
+  }
+});
+
+test("empty_assignment: @all: with only unknown mentions blocks", () => {
+  const result = routeMention("@all: @unknown: @fake:", agents);
+  assert.equal(result.kind, "empty_assignment");
+  if (result.kind === "empty_assignment") {
+    assert.equal(result.agentId, "all");
+  }
+});

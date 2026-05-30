@@ -35,6 +35,20 @@ export function routeMention(
     };
   }
 
+  // Check @all: markers for empty task content before expansion
+  for (const assignment of rawAssignments) {
+    if (assignment.agentName.toLowerCase() !== "all") continue;
+    const nextRawEnd = findNextMarkerEnd(assignment.end, rawAssignments);
+    const taskText = content.slice(assignment.end, nextRawEnd).trim();
+    if (!taskText) {
+      return {
+        kind: "empty_assignment",
+        agentId: "all" as AgentId,
+        message: "Add task content after @all:.",
+      };
+    }
+  }
+
   // Expand @all: into individual agent assignments
   const expandedAssignments: AssignmentMarker[] = [];
   let hasAllMarker = false;
