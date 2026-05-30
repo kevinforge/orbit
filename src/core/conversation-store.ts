@@ -80,11 +80,10 @@ export class ConversationStore {
 
   ensureDefault(workspaceId: string): Conversation {
     const data = this.loadData(workspaceId);
-    if (data.conversations.length > 0) {
-      return data.conversations.reduce((a, b) =>
-        a.lastOpenedAt > b.lastOpenedAt ? a : b,
-      );
-    }
+    // If a "default" conversation already exists, return it
+    const existing = data.conversations.find((c) => c.id === "default");
+    if (existing) return existing;
+
     const now = new Date().toISOString();
     const defaultConv: Conversation = {
       id: "default",

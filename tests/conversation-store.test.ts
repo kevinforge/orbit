@@ -171,14 +171,26 @@ test("ensureDefault creates default conversation when none exist", () => {
   assert.equal(store.list("ws1").length, 1);
 });
 
-test("ensureDefault is a no-op when conversations already exist", () => {
+test("ensureDefault creates default even when other conversations exist", () => {
   const dir = tmpDir();
   const store = new ConversationStore(dir);
   store.create("ws1", "Existing");
 
   const conv = store.ensureDefault("ws1");
-  assert.equal(conv.name, "Existing");
-  assert.equal(store.list("ws1").length, 1, "should not create a second conversation");
+  assert.equal(conv.id, "default");
+  assert.equal(conv.name, "Default");
+  assert.equal(store.list("ws1").length, 2, "should have both existing and default");
+});
+
+test("ensureDefault returns existing default without creating duplicate", () => {
+  const dir = tmpDir();
+  const store = new ConversationStore(dir);
+  const first = store.ensureDefault("ws1");
+
+  const second = store.ensureDefault("ws1");
+  assert.equal(second.id, "default");
+  assert.equal(first.id, second.id);
+  assert.equal(store.list("ws1").length, 1, "should not create duplicate");
 });
 
 test("data persists across store instances", () => {
