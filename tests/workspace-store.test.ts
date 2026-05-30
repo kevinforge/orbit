@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { WorkspaceStore } from "../src/core/workspace-store.ts";
+import type { Workspace } from "../src/shared/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-workspace-test-"));
@@ -151,4 +152,121 @@ test("transcriptsDir defaults to 'default' for channel and conversation", () => 
   const ws = store.resolve("/tmp/project-defaults");
 
   assert.equal(store.transcriptsDir(ws.id), path.join(dir, "transcripts", ws.id, "default", "default"));
+});
+
+// --- New CRUD tests ---
+
+test("list returns all workspaces sorted by lastOpenedAt descending", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws1 = store.resolve("/projects/alpha");
+  const ws2 = store.resolve("/projects/beta");
+
+  // Re-resolve ws1 to update its lastOpenedAt
+  store.touchLastOpened(ws1.id);
+
+  const list = store.list();
+  assert.equal(list.length, 2);
+  assert.equal(list[0].id, ws1.id, "most recently opened should be first");
+  assert.equal(list[1].id, ws2.id);
+});
+
+test("get returns workspace by id", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("/projects/my-app");
+
+  const result = store.get(ws.id);
+  assert.ok(result);
+  assert.equal(result!.id, ws.id);
+  assert.equal(result!.name, ws.name);
+  assert.ok(result!.createdAt);
+  assert.ok(result!.lastOpenedAt);
+});
+
+test("get returns null for unknown id", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  assert.equal(store.get("nonexistent"), null);
+});
+
+test("create creates a new workspace", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("My Project", "/projects/my-project");
+
+  assert.ok(ws.id);
+  assert.equal(ws.name, "My Project");
+  assert.equal(ws.path, "/projects/my-project");
+  assert.ok(ws.createdAt);
+  assert.ok(ws.lastOpenedAt);
+  assert.ok(store.get(ws.id));
+});
+
+test("create throws if workspace already exists for path", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  store.create("First", "/projects/same-path");
+
+  assert.throws(() => store.create("Second", "/projects/same-path"), /already exists/);
+});
+
+test("update renames a workspace", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("Old Name", "/projects/rename-me");
+
+  const updated = store.update(ws.id, { name: "New Name" });
+  assert.equal(updated.name, "New Name");
+
+  const reloaded = store.get(ws.id);
+  assert.equal(reloaded!.name, "New Name");
+});
+
+test("update throws for unknown id", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  assert.throws(() => store.update("nonexistent", { name: "X" }), /not found/);
+});
+
+test("delete removes workspace and all related directories", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("ToDelete", "/projects/delete-me");
+
+  // Create some related directories
+  fs.mkdirSync(store.sessionsDir(ws.id), { recursive: true });
+  fs.mkdirSync(store.channelsDir(ws.id), { recursive: true });
+  fs.mkdirSync(store.transcriptsDir(ws.id), { recursive: true });
+
+  store.delete(ws.id);
+
+  assert.equal(store.get(ws.id), null);
+  assert.ok(!fs.existsSync(path.join(dir, "workspaces", ws.id)));
+  assert.ok(!fs.existsSync(store.sessionsDir(ws.id)));
+  assert.ok(!fs.existsSync(store.channelsDir(ws.id)));
+  assert.ok(!fs.existsSync(store.transcriptsDir(ws.id)));
+});
+
+test("delete throws for unknown id", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  assert.throws(() => store.delete("nonexistent"), /not found/);
+});
+
+test("touchLastOpened updates lastOpenedAt", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("Touch", "/projects/touch");
+
+  const before = store.get(ws.id)!;
+  // Small delay to ensure different timestamp
+  const start = Date.now();
+  while (Date.now() === start) { /* spin */ }
+
+  store.touchLastOpened(ws.id);
+  const after = store.get(ws.id)!;
+
+  assert.equal(before.id, after.id);
+  assert.notEqual(after.lastOpenedAt, before.lastOpenedAt);
 });

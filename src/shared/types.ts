@@ -100,7 +100,8 @@ export type RuntimeEvent =
   | { type: "terminal.chunk"; agentId: AgentId; runId?: string; text: string }
   | { type: "run.completed"; agentId: AgentId; runId: string; resultMessageId: string }
   | { type: "run.failed"; agentId: AgentId; runId: string; error: string }
-  | { type: "run.sessionId"; agentId: AgentId; runId: string; sessionId: string };
+  | { type: "run.sessionId"; agentId: AgentId; runId: string; sessionId: string }
+  | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
 
 export type TerminalState = Record<string, string>;
 
@@ -110,8 +111,25 @@ export type WorkspaceInfo = {
   path: string;
 };
 
+export type Workspace = WorkspaceInfo & {
+  createdAt: string;
+  lastOpenedAt: string;
+};
+
+export type ConversationInfo = {
+  id: string;
+  name: string;
+};
+
+export type Conversation = ConversationInfo & {
+  workspaceId: string;
+  createdAt: string;
+  lastOpenedAt: string;
+};
+
 export type AppState = {
   workspace: WorkspaceInfo;
+  conversation: ConversationInfo;
   messages: ChatMessage[];
   agents: AgentState[];
   terminal: TerminalState;

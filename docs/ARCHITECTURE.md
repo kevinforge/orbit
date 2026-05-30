@@ -41,12 +41,14 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
 | `src/core/channel-context-builder.ts` | Builds private context passed into each agent run |
 | `src/core/channel-history.ts` | Builds scoped channel history for each agent run |
+| `src/core/conversation-store.ts` | Conversation metadata persistence per workspace |
 | `src/core/message-store.ts` | Workspace-persisted channel messages |
 | `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
-| `src/core/workspace-store.ts` | Workspace isolation and user directory persistence |
+| `src/core/workspace-store.ts` | Workspace CRUD, isolation, and user directory persistence |
 | `src/core/terminal-transcript-store.ts` | Workspace-persisted runtime activity transcripts |
 | `src/core/claude-output-detector.ts` | Clean final answer validation and stream event mapping |
-| `src/ui/App.tsx` | Chat UI, agent buttons, composer, markdown, activity panel |
+| `src/server/conversation-context.ts` | Bundles per-conversation runtime state (stores, agents, router) |
+| `src/ui/App.tsx` | Chat UI, agent buttons, composer, workspace/conversation selectors |
 
 ## Agents
 
@@ -129,12 +131,23 @@ Each project directory gets its own isolated workspace via `src/core/workspace-s
 - **Workspace ID**: deterministic 12-char hex derived from the project's absolute cwd using SHA-256. On Windows the path is lowercased before hashing to handle case-insensitive filesystems; on Linux/macOS the original case is preserved.
 - **Data directory**: `~/.orbit/` organized by data type, with workspace as an isolation dimension:
   - `workspaces/<workspace-id>/workspace.json` — metadata (id, name, path, createdAt, lastOpenedAt)
+  - `workspaces/<workspace-id>/agents.json` — per-workspace agent configurations (`AgentConfigStore`)
   - `sessions/<workspace-id>/<runtime>/<channelId>/<conversationId>/<agentId>.json` — per-agent session records (`SessionStore`)
   - `channels/<workspace-id>/<channelId>/<conversationId>/messages.json` — persisted channel messages (`MessageStore`)
+  - `channels/<workspace-id>/<channelId>/conversations.json` — conversation metadata (`ConversationStore`)
   - `transcripts/<workspace-id>/<channelId>/<conversationId>/<agentId>.log` — per-agent terminal transcripts (`TerminalTranscriptStore`)
-- **Lifecycle**: on startup, the server calls `WorkspaceStore.resolve(cwd)` which creates the workspace directory and metadata on first run, or updates `lastOpenedAt` on subsequent runs.
+  - `last-active.json` — last active workspace and conversation for restart recovery
+- **Lifecycle**: on startup, the server checks `last-active.json` for the previously active workspace/conversation, falling back to `WorkspaceStore.resolve(cwd)` for first-run. Switching is blocked while agents are running.
 
-The current implementation does not migrate data from the legacy `.orbit/` directory inside the project. Old session data there is ignored once this version is active.
+## Workspace & Conversation Management
+
+The server maintains a single active context at a time, managed through `src/server/conversation-context.ts`:
+
+- **ConversationContext**: bundles per-conversation runtime state (MessageStore, TerminalTranscriptStore, AgentRegistry, RunManager, ChannelRouter). Created when switching workspace or conversation, disposed on the next switch.
+- **WorkspaceStore CRUD**: list, create, update, delete workspaces. Deleting a workspace removes all associated sessions, channels, and transcripts.
+- **ConversationStore**: manages conversation metadata per workspace stored in `channels/<workspaceId>/default/conversations.json`. Auto-migrates existing "default" conversations on first load.
+- **Switch protection**: switching workspace or conversation is blocked while any agent is running (409 response).
+- **Delete protection**: cannot delete the active workspace or conversation.
 
 Codex uses the user's normal Codex CLI home. Orbit does not create per-agent `CODEX_HOME` directories; agent-level continuity is handled by the session store above, which passes each agent's own saved session ID back to the runtime on the next run.
 

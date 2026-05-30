@@ -1,10 +1,11 @@
 import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
-import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, PermissionProfile, RuntimeEvent } from "../shared/types.ts";
+import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, Conversation, ConversationInfo, PermissionProfile, RuntimeEvent, Workspace } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "orbit", path: "" },
+  conversation: { id: "default", name: "Default" },
   agents: [
     { id: "pm", label: "Product Manager", runtime: "codex", status: "starting", selected: true },
     { id: "architect", label: "Architect", runtime: "codex", status: "starting", selected: false },
@@ -30,7 +31,25 @@ export function App() {
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [showNewMessageHint, setShowNewMessageHint] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false);
+  const [showConversationDropdown, setShowConversationDropdown] = useState(false);
+  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
+  const [showNewConversation, setShowNewConversation] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [newWorkspacePath, setNewWorkspacePath] = useState("");
+  const [newConversationName, setNewConversationName] = useState("");
   const isNearBottomRef = useRef(true);
+
+  const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
+
+  const refreshWorkspaces = () => {
+    fetch("/api/workspaces").then((r) => r.json()).then(setWorkspaces).catch(() => {});
+  };
+  const refreshConversations = () => {
+    fetch("/api/conversations").then((r) => r.json()).then(setConversations).catch(() => {});
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +78,16 @@ export function App() {
     events.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data) as RuntimeEvent;
+        if (event.type === "context.switched") {
+          // Full state re-fetch on context switch
+          fetch("/api/state")
+            .then((r) => r.json())
+            .then((nextState: AppState) => {
+              if (!cancelled) setState(normalizeState(nextState));
+            })
+            .catch(() => {});
+          return;
+        }
         setState((current) => applyEvent(current, event));
       } catch {
         setConnectionState("offline");
@@ -70,6 +99,12 @@ export function App() {
       events.close();
     };
   }, []);
+
+  // Load workspace and conversation lists
+  useEffect(() => {
+    refreshWorkspaces();
+    refreshConversations();
+  }, [state.workspace.id, state.conversation.id]);
 
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
@@ -248,16 +283,154 @@ export function App() {
 
       <section className="channel" aria-label="Chat channel">
         <header className="channelHeader">
-          <div>
+          <div className="channelHeaderLeft">
             <p className="eyebrow">workspace</p>
-            <h1>
+            <h1 className="workspaceTitle" onClick={() => { setShowWorkspaceDropdown(!showWorkspaceDropdown); setShowConversationDropdown(false); }}>
               <svg className="workspaceIcon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.672a.5.5 0 0 1 .39.188l1.633 2.041a.5.5 0 0 0 .39.188H12.5A1.5 1.5 0 0 1 14 6.916V11.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5V4.5Z" />
               </svg>
               {state.workspace.name || "Orbit"}
+              <span className="dropdownCaret">&#9662;</span>
             </h1>
             {state.workspace.path ? <p className="workspacePath">{state.workspace.path}</p> : null}
           </div>
+          <div className="channelHeaderRight">
+            <button
+              className="conversationSelector"
+              onClick={() => { setShowConversationDropdown(!showConversationDropdown); setShowWorkspaceDropdown(false); }}
+              title="Switch conversation"
+            >
+              {state.conversation.name}
+              <span className="dropdownCaret">&#9662;</span>
+            </button>
+          </div>
+
+          {showWorkspaceDropdown && (
+            <div className="contextDropdown workspaceDropdown">
+              {workspaces.map((ws) => (
+                <button
+                  key={ws.id}
+                  className={`contextItem ${ws.id === state.workspace.id ? "active" : ""}`}
+                  onClick={() => {
+                    if (ws.id !== state.workspace.id && !isAnyAgentRunning) {
+                      fetch(`/api/workspaces/${ws.id}/switch`, { method: "POST" }).then(() => {
+                        setShowWorkspaceDropdown(false);
+                        refreshWorkspaces();
+                      });
+                    }
+                  }}
+                  disabled={isAnyAgentRunning}
+                >
+                  <span className="contextItemName">{ws.name}</span>
+                  <span className="contextItemPath">{ws.path}</span>
+                  {ws.id !== state.workspace.id && (
+                    <span
+                      className="contextItemDelete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`Delete workspace "${ws.name}"?`)) {
+                          fetch(`/api/workspaces/${ws.id}`, { method: "DELETE" }).then(() => refreshWorkspaces());
+                        }
+                      }}
+                      title="Delete workspace"
+                    >&#10005;</span>
+                  )}
+                </button>
+              ))}
+              {!showNewWorkspace ? (
+                <button className="contextItem contextCreateBtn" onClick={() => setShowNewWorkspace(true)}>
+                  + New Workspace
+                </button>
+              ) : (
+                <form
+                  className="contextCreateForm"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!newWorkspaceName.trim() || !newWorkspacePath.trim()) return;
+                    fetch("/api/workspaces", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ name: newWorkspaceName, path: newWorkspacePath }),
+                    }).then(() => {
+                      setShowNewWorkspace(false);
+                      setNewWorkspaceName("");
+                      setNewWorkspacePath("");
+                      refreshWorkspaces();
+                    });
+                  }}
+                >
+                  <input placeholder="Name" value={newWorkspaceName} onChange={(e) => setNewWorkspaceName(e.target.value)} />
+                  <input placeholder="Path" value={newWorkspacePath} onChange={(e) => setNewWorkspacePath(e.target.value)} />
+                  <div className="contextCreateFormActions">
+                    <button type="submit">Create</button>
+                    <button type="button" onClick={() => setShowNewWorkspace(false)}>Cancel</button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {showConversationDropdown && (
+            <div className="contextDropdown conversationDropdown">
+              {conversations.map((conv) => (
+                <button
+                  key={conv.id}
+                  className={`contextItem ${conv.id === state.conversation.id ? "active" : ""}`}
+                  onClick={() => {
+                    if (conv.id !== state.conversation.id && !isAnyAgentRunning) {
+                      fetch(`/api/conversations/${conv.id}/switch`, { method: "POST" }).then(() => {
+                        setShowConversationDropdown(false);
+                        refreshConversations();
+                      });
+                    }
+                  }}
+                  disabled={isAnyAgentRunning}
+                >
+                  <span className="contextItemName">{conv.name}</span>
+                  {conv.id !== state.conversation.id && (
+                    <span
+                      className="contextItemDelete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`Delete conversation "${conv.name}"?`)) {
+                          fetch(`/api/conversations/${conv.id}`, { method: "DELETE" }).then(() => refreshConversations());
+                        }
+                      }}
+                      title="Delete conversation"
+                    >&#10005;</span>
+                  )}
+                </button>
+              ))}
+              {!showNewConversation ? (
+                <button className="contextItem contextCreateBtn" onClick={() => setShowNewConversation(true)}>
+                  + New Conversation
+                </button>
+              ) : (
+                <form
+                  className="contextCreateForm"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!newConversationName.trim()) return;
+                    fetch("/api/conversations", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ name: newConversationName }),
+                    }).then(() => {
+                      setShowNewConversation(false);
+                      setNewConversationName("");
+                      refreshConversations();
+                    });
+                  }}
+                >
+                  <input placeholder="Conversation name" value={newConversationName} onChange={(e) => setNewConversationName(e.target.value)} />
+                  <div className="contextCreateFormActions">
+                    <button type="submit">Create</button>
+                    <button type="button" onClick={() => setShowNewConversation(false)}>Cancel</button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
         </header>
 
         <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="Message list" onScroll={handleMessagesScroll}>
@@ -829,6 +1002,7 @@ function upsertMessage(state: AppState, nextMessage: ChatMessage): AppState {
 function normalizeState(nextState: AppState): AppState {
   return {
     workspace: nextState.workspace ?? initialState.workspace,
+    conversation: nextState.conversation ?? initialState.conversation,
     agents: nextState.agents?.length
       ? nextState.agents.map((agent) => ({ ...agent, runtime: agent.runtime ?? "claude-code" }))
       : initialState.agents,

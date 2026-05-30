@@ -2033,3 +2033,231 @@ button:active:not(:disabled) {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Workspace & Conversation Selectors ──────────────────── */
+
+.channelHeader {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.channelHeaderLeft {
+  min-width: 0;
+}
+
+.channelHeaderRight {
+  flex-shrink: 0;
+}
+
+.workspaceTitle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.workspaceTitle:hover {
+  color: var(--accent);
+}
+
+.dropdownCaret {
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.5;
+}
+
+.conversationSelector {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.conversationSelector:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.contextDropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  animation: dropdownIn 0.12s ease-out;
+}
+
+.workspaceDropdown {
+  left: 0;
+  right: auto;
+  min-width: 280px;
+}
+
+.conversationDropdown {
+  left: auto;
+  right: 0;
+  min-width: 220px;
+}
+
+@keyframes dropdownIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.contextItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.contextItem:hover:not(:disabled) {
+  background: var(--bg-base);
+}
+
+.contextItem.active {
+  background: var(--bg-base);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.contextItem:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.contextItemName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextItemPath {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextItemDelete {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s, background 0.1s, color 0.1s;
+}
+
+.contextItem:hover .contextItemDelete {
+  opacity: 1;
+}
+
+.contextItemDelete:hover {
+  background: var(--secondary);
+  color: white;
+  opacity: 1;
+}
+
+.contextCreateBtn {
+  color: var(--accent);
+  font-weight: 500;
+  justify-content: center;
+  border-top: 1px solid var(--border-light);
+  margin-top: 2px;
+  padding-top: 10px;
+  border-radius: 0 0 6px 6px;
+}
+
+.contextCreateForm {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border-light);
+  margin-top: 2px;
+}
+
+.contextCreateForm input {
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.contextCreateForm input:focus {
+  border-color: var(--accent);
+}
+
+.contextCreateFormActions {
+  display: flex;
+  gap: 6px;
+}
+
+.contextCreateFormActions button {
+  padding: 4px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.contextCreateFormActions button:first-child {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.contextCreateFormActions button:first-child:hover {
+  filter: brightness(1.1);
+}
+
+.contextCreateFormActions button:last-child {
+  background: var(--bg-base);
+  color: var(--text-secondary);
+}
+
+.contextCreateFormActions button:last-child:hover {
+  background: var(--border-light);
+}
