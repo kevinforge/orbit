@@ -28,14 +28,14 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
-  const [showWorkspaceConversations, setShowWorkspaceConversations] = useState(true);
   const [showAgentManager, setShowAgentManager] = useState(false);
-  const [newWorkspacePath, setNewWorkspacePath] = useState("");
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
   const [editingWorkspaceName, setEditingWorkspaceName] = useState("");
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingConversationName, setEditingConversationName] = useState("");
+  const [openWorkspaceMenuId, setOpenWorkspaceMenuId] = useState<string | null>(null);
+  const [openConversationMenuId, setOpenConversationMenuId] = useState<string | null>(null);
+  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -178,6 +178,32 @@ export function App() {
     setSelectedMentionIndex(0);
   }, [mentionDraft?.query]);
 
+  useEffect(() => {
+    if (!openWorkspaceMenuId && !openConversationMenuId) return;
+
+    function closeMenusOnOutsideClick(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".rowMenuWrap")) {
+        return;
+      }
+      setOpenWorkspaceMenuId(null);
+      setOpenConversationMenuId(null);
+    }
+
+    function closeMenusOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setOpenWorkspaceMenuId(null);
+      setOpenConversationMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", closeMenusOnOutsideClick);
+    document.addEventListener("keydown", closeMenusOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeMenusOnOutsideClick);
+      document.removeEventListener("keydown", closeMenusOnEscape);
+    };
+  }, [openWorkspaceMenuId, openConversationMenuId]);
+
   function handleMessagesScroll() {
     const el = messagesRef.current;
     if (!el) return;
@@ -260,29 +286,43 @@ export function App() {
     refreshState();
   }
 
-  async function createWorkspace(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!newWorkspacePath.trim()) return;
-    const response = await fetch("/api/workspaces", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: newWorkspacePath }),
-    });
-    if (!response.ok) return;
-    setShowNewWorkspace(false);
-    setNewWorkspacePath("");
-    refreshWorkspaces();
+  function handleWorkspaceClick(workspaceId: string) {
+    if (workspaceId === state.workspace.id) {
+      setCollapsedWorkspaceIds((ids) => {
+        const next = new Set(ids);
+        if (next.has(workspaceId)) {
+          next.delete(workspaceId);
+        } else {
+          next.add(workspaceId);
+        }
+        return next;
+      });
+      return;
+    }
+
+    switchWorkspace(workspaceId);
   }
 
-  async function pickWorkspaceDirectory() {
+  async function createWorkspaceFromDirectoryPicker() {
     setIsPickingDirectory(true);
     try {
-      const response = await fetch("/api/workspaces/pick-directory", { method: "POST" });
-      if (!response.ok) return;
-      const result = (await response.json()) as { path?: string };
-      if (result.path) {
-        setNewWorkspacePath(result.path);
+      const pickResponse = await fetch("/api/workspaces/pick-directory", { method: "POST" });
+      if (!pickResponse.ok) return;
+      const result = (await pickResponse.json()) as { path?: string };
+      const selectedPath = result.path?.trim();
+      if (!selectedPath) return;
+
+      const createResponse = await fetch("/api/workspaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: selectedPath }),
+      });
+      if (!createResponse.ok) return;
+      const workspace = (await createResponse.json()) as Workspace;
+      if (workspace.id) {
+        await switchWorkspace(workspace.id);
       }
+      refreshWorkspaces();
     } finally {
       setIsPickingDirectory(false);
     }
@@ -290,7 +330,11 @@ export function App() {
 
   async function renameWorkspace(workspaceId: string, name: string) {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setEditingWorkspaceId(null);
+      setEditingWorkspaceName("");
+      return;
+    }
     const response = await fetch(`/api/workspaces/${workspaceId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -304,11 +348,20 @@ export function App() {
   }
 
   async function deleteWorkspace(workspace: Workspace) {
-    if (workspace.id === state.workspace.id) return;
     if (!confirm(`Delete workspace "${workspace.name}"?`)) return;
     const response = await fetch(`/api/workspaces/${workspace.id}`, { method: "DELETE" });
-    if (response.ok) refreshWorkspaces();
-  }
+      if (response.ok) {
+        setOpenWorkspaceMenuId(null);
+        setCollapsedWorkspaceIds((ids) => {
+          const next = new Set(ids);
+          next.delete(workspace.id);
+          return next;
+        });
+        refreshWorkspaces();
+        refreshConversations();
+        refreshState();
+      }
+    }
 
   async function switchConversation(conversationId: string) {
     if (conversationId === state.conversation.id || isAnyAgentRunning) return;
@@ -320,6 +373,11 @@ export function App() {
 
   async function createConversation() {
     if (!state.workspace.id) return;
+    setCollapsedWorkspaceIds((ids) => {
+      const next = new Set(ids);
+      next.delete(state.workspace.id);
+      return next;
+    });
     const response = await fetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -332,7 +390,11 @@ export function App() {
 
   async function renameConversation(conversationId: string, name: string) {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setEditingConversationId(null);
+      setEditingConversationName("");
+      return;
+    }
     const response = await fetch(`/api/conversations/${conversationId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -346,10 +408,13 @@ export function App() {
   }
 
   async function deleteConversation(conversation: Conversation) {
-    if (conversation.id === state.conversation.id) return;
     if (!confirm(`Delete conversation "${conversation.name}"?`)) return;
     const response = await fetch(`/api/conversations/${conversation.id}`, { method: "DELETE" });
-    if (response.ok) refreshConversations();
+    if (response.ok) {
+      setOpenConversationMenuId(null);
+      refreshConversations();
+      refreshState();
+    }
   }
 
   function updateCursorFromInput() {
@@ -424,143 +489,146 @@ export function App() {
 
         <section className="navSection workspaceStack" aria-label="当前工作区和会话">
           <div className="navSectionHeader">
-            <span><NavIcon kind="workspace" />工作区</span>
-            <button type="button" onClick={() => setShowNewWorkspace((value) => !value)} title="新建工作区">+</button>
+            <span>工作区</span>
+            <button type="button" onClick={createWorkspaceFromDirectoryPicker} disabled={isPickingDirectory} title="新建工作区">+</button>
           </div>
-          <div className="workspaceCard">
-            <div className="navList workspaceList">
-              {workspaces.length === 0 ? (
-                <div className="emptyNavHint">还没有工作区</div>
-              ) : (
-                workspaces.map((ws) => (
-                  <div className={`navRow workspaceRow ${ws.id === state.workspace.id ? "active" : ""}`} key={ws.id}>
-                    {editingWorkspaceId === ws.id ? (
-                      <form
-                        className="rowRenameForm"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          renameWorkspace(ws.id, editingWorkspaceName);
-                        }}
-                      >
-                        <input
-                          value={editingWorkspaceName}
-                          onChange={(event) => setEditingWorkspaceName(event.target.value)}
-                          onBlur={() => renameWorkspace(ws.id, editingWorkspaceName)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              setEditingWorkspaceId(null);
-                              setEditingWorkspaceName("");
-                            }
+          <div className="workspaceTree">
+            {workspaces.length === 0 ? (
+              <div className="emptyNavHint">还没有工作区</div>
+            ) : (
+              workspaces.map((ws) => {
+                const isActiveWorkspace = ws.id === state.workspace.id;
+                const isWorkspaceConversationOpen = isActiveWorkspace && !collapsedWorkspaceIds.has(ws.id);
+                return (
+                  <div className="workspaceGroup" key={ws.id}>
+                    <div className={`workspaceTreeRow ${isActiveWorkspace ? "active" : ""}`}>
+                      {editingWorkspaceId === ws.id ? (
+                        <form
+                          className="rowRenameForm"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            renameWorkspace(ws.id, editingWorkspaceName);
                           }}
-                          autoFocus
-                        />
-                        <small title={ws.path}>{ws.path}</small>
-                      </form>
-                    ) : (
-                      <button type="button" onClick={() => switchWorkspace(ws.id)} disabled={isAnyAgentRunning}>
-                        <span>{ws.name}</span>
-                        <small title={ws.path}>{ws.path}</small>
-                      </button>
-                    )}
-                    {editingWorkspaceId !== ws.id ? (
-                      <button
-                        className="rowIconButton"
-                        type="button"
-                        onClick={() => {
-                          setEditingWorkspaceId(ws.id);
-                          setEditingWorkspaceName(ws.name);
-                        }}
-                        title="重命名工作区"
-                      >
-                        <NavIcon kind="edit" />
-                      </button>
-                    ) : null}
-                    {ws.id !== state.workspace.id && editingWorkspaceId !== ws.id ? (
-                      <button className="rowIconButton" type="button" onClick={() => deleteWorkspace(ws)} title="删除工作区">x</button>
+                        >
+                          <input
+                            value={editingWorkspaceName}
+                            onChange={(event) => setEditingWorkspaceName(event.target.value)}
+                            onBlur={() => renameWorkspace(ws.id, editingWorkspaceName)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                setEditingWorkspaceId(null);
+                                setEditingWorkspaceName("");
+                              }
+                            }}
+                            autoFocus
+                          />
+                        </form>
+                      ) : (
+                        <button className="workspaceNameButton" type="button" onClick={() => handleWorkspaceClick(ws.id)} disabled={isAnyAgentRunning && !isActiveWorkspace} title={ws.path}>
+                          <NavIcon kind="workspace" />
+                          <span>{ws.name}</span>
+                        </button>
+                      )}
+                      <div className="rowMenuWrap">
+                        <button
+                          className="rowIconButton persistent"
+                          type="button"
+                          onClick={() => {
+                            setOpenConversationMenuId(null);
+                            setOpenWorkspaceMenuId((id) => (id === ws.id ? null : ws.id));
+                          }}
+                          title="工作区操作"
+                        >
+                          ...
+                        </button>
+                        {openWorkspaceMenuId === ws.id ? (
+                          <div className="rowActionMenu">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenWorkspaceMenuId(null);
+                                setEditingWorkspaceId(ws.id);
+                                setEditingWorkspaceName(ws.name);
+                              }}
+                            >
+                              重命名工作区
+                            </button>
+                            <button type="button" onClick={() => deleteWorkspace(ws)}>删除工作区</button>
+                          </div>
+                        ) : null}
+                      </div>
+                      {isActiveWorkspace ? (
+                        <button className="rowIconButton persistent" type="button" onClick={createConversation} title="新建会话">
+                          <NavIcon kind="edit" />
+                        </button>
+                      ) : null}
+                    </div>
+                    {isWorkspaceConversationOpen ? (
+                      <div className="navList conversationList">
+                        {conversations.map((conv) => (
+                          <div className={`conversationRow ${conv.id === state.conversation.id ? "active" : ""}`} key={conv.id}>
+                            {editingConversationId === conv.id ? (
+                              <form
+                                className="rowRenameForm"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  renameConversation(conv.id, editingConversationName);
+                                }}
+                              >
+                                <input
+                                  value={editingConversationName}
+                                  onChange={(event) => setEditingConversationName(event.target.value)}
+                                  onBlur={() => renameConversation(conv.id, editingConversationName)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Escape") {
+                                      setEditingConversationId(null);
+                                      setEditingConversationName("");
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                              </form>
+                            ) : (
+                              <button type="button" onClick={() => switchConversation(conv.id)} disabled={isAnyAgentRunning} title={conv.name}>
+                                <span>{conv.name}</span>
+                              </button>
+                            )}
+                            <div className="rowMenuWrap">
+                              <button
+                                className="rowIconButton conversationMenuButton"
+                                type="button"
+                                onClick={() => {
+                                  setOpenWorkspaceMenuId(null);
+                                  setOpenConversationMenuId((id) => (id === conv.id ? null : conv.id));
+                                }}
+                                title="会话操作"
+                              >
+                                ...
+                              </button>
+                              {openConversationMenuId === conv.id ? (
+                                <div className="rowActionMenu">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenConversationMenuId(null);
+                                      setEditingConversationId(conv.id);
+                                      setEditingConversationName(conv.name);
+                                    }}
+                                  >
+                                    重命名会话
+                                  </button>
+                                  <button type="button" onClick={() => deleteConversation(conv)}>删除会话</button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     ) : null}
                   </div>
-                ))
-              )}
-            </div>
-          </div>
-          {showNewWorkspace ? (
-            <form className="inlineCreateForm" onSubmit={createWorkspace}>
-              <div className="pathPickerRow">
-                <input placeholder="选择本地目录" value={newWorkspacePath} onChange={(event) => setNewWorkspacePath(event.target.value)} />
-                <button type="button" onClick={pickWorkspaceDirectory} disabled={isPickingDirectory}>
-                  {isPickingDirectory ? "选择中" : "浏览"}
-                </button>
-              </div>
-              <div>
-                <button type="submit">创建</button>
-                <button type="button" onClick={() => setShowNewWorkspace(false)}>取消</button>
-              </div>
-            </form>
-          ) : null}
-
-          <div className="nestedConversations">
-            <div className="navSectionHeader nestedHeader">
-              <button
-                className="nestedToggle"
-                type="button"
-                onClick={() => setShowWorkspaceConversations((value) => !value)}
-                disabled={!state.workspace.id}
-                title={showWorkspaceConversations ? "收起会话" : "展开会话"}
-              >
-                <NavIcon kind={showWorkspaceConversations ? "collapse" : "expand"} />
-                <span><NavIcon kind="conversation" />{state.workspace.name ? `${state.workspace.name} 的会话` : "会话"}</span>
-              </button>
-              <button type="button" onClick={createConversation} disabled={!state.workspace.id} title="新建会话">+</button>
-            </div>
-            {showWorkspaceConversations ? (
-            <div className="navList conversationList">
-              {conversations.map((conv) => (
-                <div className={`navRow ${conv.id === state.conversation.id ? "active" : ""}`} key={conv.id}>
-                  {editingConversationId === conv.id ? (
-                    <form
-                      className="rowRenameForm"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        renameConversation(conv.id, editingConversationName);
-                      }}
-                    >
-                      <input
-                        value={editingConversationName}
-                        onChange={(event) => setEditingConversationName(event.target.value)}
-                        onBlur={() => renameConversation(conv.id, editingConversationName)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape") {
-                            setEditingConversationId(null);
-                            setEditingConversationName("");
-                          }
-                        }}
-                        autoFocus
-                      />
-                    </form>
-                  ) : (
-                    <button type="button" onClick={() => switchConversation(conv.id)} disabled={isAnyAgentRunning}>
-                      <span>{conv.name}</span>
-                    </button>
-                  )}
-                  {conv.id !== state.conversation.id ? (
-                    <button className="rowIconButton" type="button" onClick={() => deleteConversation(conv)} title="删除会话">x</button>
-                  ) : editingConversationId !== conv.id ? (
-                    <button
-                      className="rowIconButton"
-                      type="button"
-                      onClick={() => {
-                        setEditingConversationId(conv.id);
-                        setEditingConversationName(conv.name);
-                      }}
-                      title="重命名会话"
-                    >
-                      <NavIcon kind="edit" />
-                    </button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-            ) : null}
+                );
+              })
+            )}
           </div>
         </section>
 

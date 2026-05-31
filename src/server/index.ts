@@ -176,6 +176,28 @@ function publishContextSwitched(): void {
   });
 }
 
+function clearActiveContext(): void {
+  activeContext?.dispose();
+  activeContext = null;
+  activeWorkspaceId = "";
+  activeConversationId = "";
+  activeWorkspace = EMPTY_WORKSPACE;
+  activeConversation = EMPTY_CONVERSATION;
+  allConfigs = [];
+  sessionStore = null;
+  clearLastActive();
+  publishContextSwitched();
+}
+
+function clearActiveConversation(): void {
+  activeContext?.dispose();
+  activeContext = null;
+  activeConversationId = "";
+  activeConversation = EMPTY_CONVERSATION;
+  saveLastActive(activeWorkspaceId, activeConversationId);
+  publishContextSwitched();
+}
+
 function currentAgentStates() {
   if (activeContext) {
     return activeContext.agents.states();
@@ -300,12 +322,26 @@ const server = http.createServer(async (req, res) => {
       const parts = url.pathname.split("/");
       const wsId = parts[3];
       if (!wsId) { sendJson(res, 400, { ok: false, message: "Missing workspace id." }); return; }
-      if (wsId === activeWorkspaceId) {
-        sendJson(res, 400, { ok: false, message: "Cannot delete the active workspace. Switch to another first." });
+      if (wsId === activeWorkspaceId && activeContext?.hasRunningAgent()) {
+        sendJson(res, 409, { ok: false, message: "Cannot delete the active workspace while an agent is running." });
         return;
       }
       try {
+        const wasActiveWorkspace = wsId === activeWorkspaceId;
+        if (wasActiveWorkspace) {
+          activeContext?.dispose();
+          activeContext = null;
+        }
         workspaceStore.delete(wsId);
+        if (wasActiveWorkspace) {
+          const nextWorkspace = workspaceStore.list()[0];
+          if (nextWorkspace) {
+            activeWorkspaceId = "";
+            switchWorkspace(nextWorkspace.id);
+          } else {
+            clearActiveContext();
+          }
+        }
         sendJson(res, 200, { ok: true });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -373,12 +409,30 @@ const server = http.createServer(async (req, res) => {
       const parts = url.pathname.split("/");
       const convId = parts[3];
       if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
-      if (convId === activeConversationId) {
-        sendJson(res, 400, { ok: false, message: "Cannot delete the active conversation. Switch to another first." });
+      if (!activeWorkspaceId) {
+        sendJson(res, 409, { ok: false, message: "No active workspace." });
+        return;
+      }
+      if (convId === activeConversationId && activeContext?.hasRunningAgent()) {
+        sendJson(res, 409, { ok: false, message: "Cannot delete the active conversation while an agent is running." });
         return;
       }
       try {
+        const wasActiveConversation = convId === activeConversationId;
+        if (wasActiveConversation) {
+          activeContext?.dispose();
+          activeContext = null;
+        }
         conversationStore.delete(activeWorkspaceId, convId);
+        if (wasActiveConversation) {
+          const nextConversation = conversationStore.list(activeWorkspaceId)[0];
+          if (nextConversation) {
+            activateConversation(nextConversation);
+            publishContextSwitched();
+          } else {
+            clearActiveConversation();
+          }
+        }
         sendJson(res, 200, { ok: true });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -499,13 +553,22 @@ async function pickWindowsDirectory(): Promise<string> {
 
   const script = [
     "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -AssemblyName System.Drawing",
+    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+    "$owner = New-Object System.Windows.Forms.Form",
+    "$owner.TopMost = $true",
+    "$owner.ShowInTaskbar = $false",
+    "$owner.StartPosition = 'CenterScreen'",
+    "$owner.Width = 1",
+    "$owner.Height = 1",
     "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
-    "$dialog.Description = '选择工作区目录'",
+    "$dialog.Description = 'Select workspace folder'",
     "$dialog.ShowNewFolderButton = $true",
-    "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {",
-    "  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+    "$owner.Add_Shown({ $owner.Activate() })",
+    "if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {",
     "  Write-Output $dialog.SelectedPath",
     "}",
+    "$owner.Dispose()",
   ].join("; ");
   const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
     windowsHide: false,

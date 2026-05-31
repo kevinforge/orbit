@@ -59,7 +59,7 @@ export class WorkspaceStore {
           // skip malformed workspace directories
         }
       }
-      workspaces.sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt));
+      workspaces.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       return workspaces;
     } catch {
       return [];

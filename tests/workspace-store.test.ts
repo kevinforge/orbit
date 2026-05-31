@@ -156,18 +156,17 @@ test("transcriptsDir defaults to 'default' for channel and conversation", () => 
 
 // --- New CRUD tests ---
 
-test("list returns all workspaces sorted by lastOpenedAt descending", () => {
+test("list returns all workspaces in stable creation order", () => {
   const dir = tmpDir();
   const store = new WorkspaceStore(dir);
   const ws1 = store.resolve("/projects/alpha");
   const ws2 = store.resolve("/projects/beta");
 
-  // Re-resolve ws1 to update its lastOpenedAt
-  store.touchLastOpened(ws1.id);
+  store.touchLastOpened(ws2.id);
 
   const list = store.list();
   assert.equal(list.length, 2);
-  assert.equal(list[0].id, ws1.id, "most recently opened should be first");
+  assert.equal(list[0].id, ws1.id, "clicking/opening should not move a workspace");
   assert.equal(list[1].id, ws2.id);
 });
 
