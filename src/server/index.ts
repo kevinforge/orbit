@@ -458,7 +458,6 @@ const server = http.createServer(async (req, res) => {
         if (wasActiveWorkspace) {
           const nextWorkspace = workspaceStore.list()[0];
           if (nextWorkspace) {
-            activeWorkspaceId = "";
             switchWorkspace(nextWorkspace.id);
           } else {
             clearActiveContext();
