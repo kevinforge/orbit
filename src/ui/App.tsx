@@ -1,7 +1,7 @@
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
-import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, Conversation, ConversationInfo, PermissionProfile, RuntimeEvent, Workspace } from "../shared/types.ts";
+import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, Conversation, ConversationInfo, PermissionProfile, RunningSummary, RuntimeEvent, Workspace } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
@@ -9,6 +9,7 @@ const initialState: AppState = {
   agents: [],
   messages: [],
   terminal: {},
+  runningSummaries: [],
 };
 
 export function App() {
@@ -278,7 +279,7 @@ export function App() {
   }
 
   async function switchWorkspace(workspaceId: string) {
-    if (workspaceId === state.workspace.id || isAnyAgentRunning) return;
+    if (workspaceId === state.workspace.id) return;
     const response = await fetch(`/api/workspaces/${workspaceId}/switch`, { method: "POST" });
     if (!response.ok) return;
     refreshWorkspaces();
@@ -364,7 +365,7 @@ export function App() {
     }
 
   async function switchConversation(conversationId: string) {
-    if (conversationId === state.conversation.id || isAnyAgentRunning) return;
+    if (conversationId === state.conversation.id) return;
     const response = await fetch(`/api/conversations/${conversationId}/switch`, { method: "POST" });
     if (!response.ok) return;
     refreshConversations();
@@ -524,7 +525,7 @@ export function App() {
                           />
                         </form>
                       ) : (
-                        <button className="workspaceNameButton" type="button" onClick={() => handleWorkspaceClick(ws.id)} disabled={isAnyAgentRunning && !isActiveWorkspace} title={ws.path}>
+                        <button className="workspaceNameButton" type="button" onClick={() => handleWorkspaceClick(ws.id)} title={ws.path}>
                           <NavIcon kind="workspace" />
                           <span>{ws.name}</span>
                         </button>
@@ -589,9 +590,14 @@ export function App() {
                                 />
                               </form>
                             ) : (
-                              <button type="button" onClick={() => switchConversation(conv.id)} disabled={isAnyAgentRunning} title={conv.name}>
-                                <span>{conv.name}</span>
-                              </button>
+                              <>
+                                <button type="button" onClick={() => switchConversation(conv.id)} title={conv.name}>
+                                  <span>{conv.name}</span>
+                                </button>
+                                {isConversationRunning(state.runningSummaries, ws.id, conv.id) && (
+                                  <span className="conversationRunningDot" title="Agent running" />
+                                )}
+                              </>
                             )}
                             <div className="rowMenuWrap">
                               <button
@@ -1311,6 +1317,15 @@ function PlainText({ content }: { content: string }) {
 }
 
 function applyEvent(state: AppState, event: RuntimeEvent): AppState {
+  if (event.type === "running.updated") {
+    return { ...state, runningSummaries: event.summaries };
+  }
+
+  // For conversation-scoped events, only process if they match the active conversation
+  if ("conversationId" in event && event.conversationId !== state.conversation.id) {
+    return state;
+  }
+
   if (event.type === "message.created") {
     return upsertMessage(state, event.message);
   }
@@ -1368,6 +1383,7 @@ function normalizeState(nextState: AppState): AppState {
     terminal: {
       ...(nextState.terminal ?? {}),
     },
+    runningSummaries: nextState.runningSummaries ?? [],
   };
 }
 
@@ -1414,6 +1430,16 @@ function connectionLabel(state: "connecting" | "live" | "offline"): string {
 const SIDEBAR_MIN_WIDTH = 280;
 const SIDEBAR_MAX_WIDTH = 460;
 const SIDEBAR_DEFAULT_WIDTH = 336;
+
+function isConversationRunning(
+  summaries: RunningSummary[],
+  workspaceId: string,
+  conversationId: string,
+): boolean {
+  return summaries.some(
+    (r) => r.workspaceId === workspaceId && r.conversationId === conversationId,
+  );
+}
 
 function loadSidebarWidth(): number {
   if (typeof window === "undefined") {

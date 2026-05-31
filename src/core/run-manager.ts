@@ -31,6 +31,7 @@ export type ManagedRun = {
 };
 
 export type RunManagerOptions = {
+  conversationId: string;
   agents: AgentRunner;
   messages: MessageStore;
   eventBus: EventBus;
@@ -74,7 +75,7 @@ export class RunManager {
       routeDepth,
       activity,
     } satisfies NewChatMessage);
-    this.options.eventBus.publish({ type: "message.created", message: agentMessage });
+    this.options.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
 
     const run: ManagedRun = {
       id: runId,
@@ -136,9 +137,10 @@ export class RunManager {
       sessionId: runResult.sessionId,
       runIndex: runResult.runIndex,
     });
-    this.options.eventBus.publish({ type: "message.updated", message: updated });
+    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
     this.options.eventBus.publish({
       type: "run.completed",
+      conversationId: this.options.conversationId,
       agentId: run.agentId,
       runId: run.id,
       resultMessageId: updated.id,
@@ -163,8 +165,8 @@ export class RunManager {
       completedAt: run.completedAt,
       startedAt: run.startedAt,
     });
-    this.options.eventBus.publish({ type: "message.updated", message: updated });
-    this.options.eventBus.publish({ type: "run.failed", agentId: run.agentId, runId: run.id, error: errorSummary });
+    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary });
     this.startNext(run.agentId);
   }
 
@@ -181,7 +183,7 @@ export class RunManager {
       activity: next.activity,
       startedAt,
     });
-    this.options.eventBus.publish({ type: "message.updated", message: updated });
+    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
     this.start(next);
   }
 
@@ -195,17 +197,20 @@ export class RunManager {
     this.options.messages.update(run.resultMessageId, {
       activity: run.activity,
     });
-    this.options.eventBus.publish({ type: "run.activity", agentId: run.agentId, runId: run.id, activity: run.activity[run.activity.length - 1]! });
+    this.options.eventBus.publish({ type: "run.activity", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, activity: run.activity[run.activity.length - 1]! });
   }
 
   private handleRuntimeEvent(event: RuntimeEvent): void {
+    // Only process events for our own conversation
+    if ("conversationId" in event && event.conversationId !== this.options.conversationId) return;
+
     if (event.type === "run.sessionId" && event.runId) {
       const run = this.runs.get(event.runId);
       if (run && run.status === "running") {
         const updated = this.options.messages.update(run.resultMessageId, {
           sessionId: event.sessionId,
         });
-        this.options.eventBus.publish({ type: "message.updated", message: updated });
+        this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
       }
       return;
     }

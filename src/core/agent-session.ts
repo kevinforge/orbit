@@ -120,6 +120,7 @@ export class AgentSession {
       onOutput: (text) => {
         this.options.eventBus.publish({
           type: "terminal.chunk",
+          conversationId: this.options.conversationId,
           agentId: this.id,
           runId,
           text,
@@ -132,6 +133,7 @@ export class AgentSession {
       if (sessionId && this.activeRun?.runId === runId) {
         this.options.eventBus.publish({
           type: "run.sessionId",
+          conversationId: this.options.conversationId,
           agentId: this.id,
           runId,
           sessionId,
@@ -183,6 +185,7 @@ export class AgentSession {
     this.status = status;
     this.options.eventBus.publish({
       type: "agent.status",
+      conversationId: this.options.conversationId,
       agentId: this.id,
       status,
     });

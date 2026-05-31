@@ -1765,6 +1765,22 @@ button:active:not(:disabled) {
   opacity: 0;
 }
 
+.conversationRunningDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: auto;
+  flex-shrink: 0;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 .conversationRow:hover .conversationMenuButton,
 .conversationMenuButton:focus,
 .rowMenuWrap:focus-within .conversationMenuButton {

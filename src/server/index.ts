@@ -10,10 +10,9 @@ import { AgentConfigStore, validateAgentConfigs } from "../core/agent-config-sto
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
-import { MessageStore } from "../core/message-store.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
-import type { Conversation, ConversationInfo, WorkspaceInfo } from "../shared/types.ts";
+import type { ConversationInfo, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
@@ -29,6 +28,26 @@ const eventBus = new EventBus();
 const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const configStore = new AgentConfigStore();
+
+// Forward all events to SSE clients (single global subscriber)
+eventBus.subscribe((event) => {
+  sseHub.publish(event);
+  // After agent.status events, push running.updated if summaries changed
+  if (event.type === "agent.status") {
+    pushRunningSummaries();
+  }
+});
+
+let lastRunningSummariesJson = "";
+
+function pushRunningSummaries(): void {
+  const summaries = buildRunningSummaries();
+  const json = JSON.stringify(summaries);
+  if (json !== lastRunningSummariesJson) {
+    lastRunningSummariesJson = json;
+    sseHub.publish({ type: "running.updated", summaries });
+  }
+}
 
 // --- Last-active persistence ---
 type LastActive = { workspaceId: string; conversationId: string };
@@ -63,10 +82,121 @@ let activeWorkspaceId = "";
 let activeConversationId = "";
 let activeWorkspace: WorkspaceInfo = EMPTY_WORKSPACE;
 let activeConversation: ConversationInfo = EMPTY_CONVERSATION;
-let activeContext: ConversationContext | null = null;
 let allConfigs: AgentConfig[] = [];
 let conversationStore: ConversationStore;
 let sessionStore: SessionStore | null = null;
+
+// --- Context map (multi-conversation parallel support) ---
+const MAX_ACTIVE_CONTEXTS = 10;
+const contextMap = new Map<string, ConversationContext>();
+const contextLru: string[] = [];
+
+function contextKey(workspaceId: string, conversationId: string): string {
+  return `${workspaceId}:${conversationId}`;
+}
+
+function getOrCreateContext(workspaceId: string, conversationId: string): ConversationContext {
+  const key = contextKey(workspaceId, conversationId);
+  const existing = contextMap.get(key);
+  if (existing) {
+    touchLru(key);
+    return existing;
+  }
+  evictIfNeeded();
+  const ctx = createContext(workspaceId, conversationId);
+  contextMap.set(key, ctx);
+  touchLru(key);
+  return ctx;
+}
+
+function touchLru(key: string): void {
+  const idx = contextLru.indexOf(key);
+  if (idx !== -1) contextLru.splice(idx, 1);
+  contextLru.push(key);
+}
+
+function evictIfNeeded(): void {
+  while (contextMap.size >= MAX_ACTIVE_CONTEXTS) {
+    let evicted = false;
+    for (const key of contextLru) {
+      const ctx = contextMap.get(key);
+      if (ctx && !ctx.hasRunningAgent()) {
+        ctx.dispose();
+        contextMap.delete(key);
+        const idx = contextLru.indexOf(key);
+        if (idx !== -1) contextLru.splice(idx, 1);
+        evicted = true;
+        break;
+      }
+    }
+    if (!evicted) break; // all contexts have running agents
+  }
+}
+
+function disposeContext(workspaceId: string, conversationId: string): void {
+  const key = contextKey(workspaceId, conversationId);
+  const ctx = contextMap.get(key);
+  if (ctx) {
+    ctx.dispose();
+    contextMap.delete(key);
+    const idx = contextLru.indexOf(key);
+    if (idx !== -1) contextLru.splice(idx, 1);
+  }
+}
+
+function disposeWorkspaceContexts(workspaceId: string): void {
+  const keysToRemove: string[] = [];
+  for (const key of contextMap.keys()) {
+    if (key.startsWith(`${workspaceId}:`)) {
+      keysToRemove.push(key);
+    }
+  }
+  for (const key of keysToRemove) {
+    contextMap.get(key)?.dispose();
+    contextMap.delete(key);
+    const idx = contextLru.indexOf(key);
+    if (idx !== -1) contextLru.splice(idx, 1);
+  }
+}
+
+function createContext(workspaceId: string, conversationId: string): ConversationContext {
+  const configs = workspaceId === activeWorkspaceId
+    ? allConfigs
+    : configStore.load(workspaceId);
+  const enabledConfigs = configs.filter((c) => c.enabled);
+  const ws = workspaceStore.get(workspaceId);
+  const profiles = configsToProfiles(enabledConfigs, ws!.path);
+  const sessStore = new SessionStore(workspaceStore.sessionsDir(workspaceId));
+  return new ConversationContext({
+    workspaceId,
+    conversationId,
+    profiles,
+    eventBus,
+    sessionStore: sessStore,
+    workspaceStore,
+  });
+}
+
+function getActiveContext(): ConversationContext | null {
+  if (!activeWorkspaceId || !activeConversationId) return null;
+  return contextMap.get(contextKey(activeWorkspaceId, activeConversationId)) ?? null;
+}
+
+function buildRunningSummaries(): RunningSummary[] {
+  const summaries: RunningSummary[] = [];
+  for (const [key, ctx] of contextMap) {
+    const running = ctx.agents.states().filter((s) => s.status === "running").map((s) => s.id);
+    if (running.length > 0) {
+      const separatorIdx = key.indexOf(":");
+      const wsId = key.slice(0, separatorIdx);
+      const convId = key.slice(separatorIdx + 1);
+      summaries.push({ workspaceId: wsId, conversationId: convId, runningAgentIds: running });
+    }
+  }
+  return summaries;
+}
+
+// --- Context lifecycle ---
 
 function initActiveContext(): void {
   conversationStore = new ConversationStore();
@@ -98,39 +228,22 @@ function initActiveContext(): void {
   }
 }
 
-function activateConversation(conversation: Conversation): void {
-  activeContext?.dispose();
-  if (!sessionStore) {
-    sessionStore = new SessionStore(workspaceStore.sessionsDir(activeWorkspaceId));
-  }
+function activateConversation(conversation: { id: string; name: string }): void {
+  // No dispose of old context — it stays alive in the map for parallel execution
   activeConversationId = conversation.id;
   activeConversation = { id: conversation.id, name: conversation.name };
   conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
-  const enabledConfigs = allConfigs.filter((c) => c.enabled);
-  const profiles = configsToProfiles(enabledConfigs, activeWorkspace.path);
-  activeContext = new ConversationContext({
-    workspaceId: activeWorkspaceId,
-    conversationId: activeConversationId,
-    profiles,
-    eventBus,
-    sessionStore,
-    workspaceStore,
-    sseHub,
-  });
   saveLastActive(activeWorkspaceId, activeConversationId);
+  // Ensure context exists in map (creates lazily if needed)
+  getOrCreateContext(activeWorkspaceId, activeConversationId);
 }
 
 function switchWorkspace(workspaceId: string): void {
   if (workspaceId === activeWorkspaceId) return;
-  if (activeContext?.hasRunningAgent()) {
-    throw new Error("Cannot switch workspace while an agent is running.");
-  }
+  // No running-agent check — agents continue in background
 
   const ws = workspaceStore.get(workspaceId);
   if (!ws) throw new Error(`Workspace not found: ${workspaceId}`);
-
-  activeContext?.dispose();
-  activeContext = null;
 
   activeWorkspaceId = workspaceId;
   activeWorkspace = { id: ws.id, name: ws.name, path: ws.path };
@@ -150,9 +263,7 @@ function switchWorkspace(workspaceId: string): void {
 function switchConversation(conversationId: string): void {
   if (conversationId === activeConversationId) return;
   if (!activeWorkspaceId) throw new Error("No active workspace.");
-  if (activeContext?.hasRunningAgent()) {
-    throw new Error("Cannot switch conversation while an agent is running.");
-  }
+  // No running-agent check
 
   const conv = conversationStore.get(activeWorkspaceId, conversationId);
   if (!conv) throw new Error(`Conversation not found: ${conversationId}`);
@@ -162,10 +273,12 @@ function switchConversation(conversationId: string): void {
 }
 
 function refreshEnabledAgents(): void {
-  if (!activeContext || !activeWorkspaceId) return;
+  if (!activeWorkspaceId || !activeConversationId) return;
+  const ctx = getActiveContext();
+  if (!ctx) return;
   const enabledConfigs = allConfigs.filter((c) => c.enabled);
   const profiles = configsToProfiles(enabledConfigs, activeWorkspace.path);
-  activeContext.refreshProfiles(profiles);
+  ctx.refreshProfiles(profiles);
 }
 
 function publishContextSwitched(): void {
@@ -177,8 +290,7 @@ function publishContextSwitched(): void {
 }
 
 function clearActiveContext(): void {
-  activeContext?.dispose();
-  activeContext = null;
+  disposeWorkspaceContexts(activeWorkspaceId);
   activeWorkspaceId = "";
   activeConversationId = "";
   activeWorkspace = EMPTY_WORKSPACE;
@@ -190,8 +302,7 @@ function clearActiveContext(): void {
 }
 
 function clearActiveConversation(): void {
-  activeContext?.dispose();
-  activeContext = null;
+  // Don't dispose — just clear the active pointer
   activeConversationId = "";
   activeConversation = EMPTY_CONVERSATION;
   saveLastActive(activeWorkspaceId, activeConversationId);
@@ -199,8 +310,9 @@ function clearActiveConversation(): void {
 }
 
 function currentAgentStates() {
-  if (activeContext) {
-    return activeContext.agents.states();
+  const ctx = getActiveContext();
+  if (ctx) {
+    return ctx.agents.states();
   }
   return allConfigs
     .filter((config) => config.enabled)
@@ -229,12 +341,14 @@ const server = http.createServer(async (req, res) => {
 
     // State
     if (req.method === "GET" && url.pathname === "/api/state") {
+      const ctx = getActiveContext();
       sendJson(res, 200, {
         workspace: activeWorkspace,
         conversation: activeConversation,
         agents: currentAgentStates(),
-        messages: activeContext?.messages.list() ?? [],
-        terminal: activeContext?.transcripts.all() ?? {},
+        messages: ctx?.messages.list() ?? [],
+        terminal: ctx?.transcripts.all() ?? {},
+        runningSummaries: buildRunningSummaries(),
       });
       return;
     }
@@ -261,7 +375,8 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before resetting agents." });
         return;
       }
-      if (activeContext?.hasRunningAgent()) {
+      const ctx = getActiveContext();
+      if (ctx?.hasRunningAgent()) {
         sendJson(res, 409, { ok: false, message: "Cannot reset while an agent is running. Wait for it to finish." });
         return;
       }
@@ -322,16 +437,21 @@ const server = http.createServer(async (req, res) => {
       const parts = url.pathname.split("/");
       const wsId = parts[3];
       if (!wsId) { sendJson(res, 400, { ok: false, message: "Missing workspace id." }); return; }
-      if (wsId === activeWorkspaceId && activeContext?.hasRunningAgent()) {
-        sendJson(res, 409, { ok: false, message: "Cannot delete the active workspace while an agent is running." });
+      // Check if ANY context for this workspace has running agents
+      let hasRunning = false;
+      for (const [key, ctx] of contextMap) {
+        if (key.startsWith(`${wsId}:`) && ctx.hasRunningAgent()) {
+          hasRunning = true;
+          break;
+        }
+      }
+      if (hasRunning) {
+        sendJson(res, 409, { ok: false, message: "Cannot delete workspace with running agents." });
         return;
       }
       try {
         const wasActiveWorkspace = wsId === activeWorkspaceId;
-        if (wasActiveWorkspace) {
-          activeContext?.dispose();
-          activeContext = null;
-        }
+        disposeWorkspaceContexts(wsId);
         workspaceStore.delete(wsId);
         if (wasActiveWorkspace) {
           const nextWorkspace = workspaceStore.list()[0];
@@ -413,16 +533,14 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 409, { ok: false, message: "No active workspace." });
         return;
       }
-      if (convId === activeConversationId && activeContext?.hasRunningAgent()) {
-        sendJson(res, 409, { ok: false, message: "Cannot delete the active conversation while an agent is running." });
+      const targetCtx = contextMap.get(contextKey(activeWorkspaceId, convId));
+      if (targetCtx?.hasRunningAgent()) {
+        sendJson(res, 409, { ok: false, message: "Cannot delete a conversation with running agents." });
         return;
       }
       try {
         const wasActiveConversation = convId === activeConversationId;
-        if (wasActiveConversation) {
-          activeContext?.dispose();
-          activeContext = null;
-        }
+        disposeContext(activeWorkspaceId, convId);
         conversationStore.delete(activeWorkspaceId, convId);
         if (wasActiveConversation) {
           const nextConversation = conversationStore.list(activeWorkspaceId)[0];
@@ -487,9 +605,15 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  if (!activeContext) {
+  let context = getActiveContext();
+
+  if (!context) {
     const conversation = conversationStore.create(activeWorkspaceId, conversationTitle(content));
-    activateConversation(conversation);
+    activeConversationId = conversation.id;
+    activeConversation = { id: conversation.id, name: conversation.name };
+    conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
+    context = getOrCreateContext(activeWorkspaceId, activeConversationId);
+    saveLastActive(activeWorkspaceId, activeConversationId);
     publishContextSwitched();
   } else if (activeConversation.name === UNTITLED_CONVERSATION_NAME) {
     const renamed = conversationStore.update(activeWorkspaceId, activeConversationId, { name: conversationTitle(content) });
@@ -497,14 +621,13 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     publishContextSwitched();
   }
 
-  const context = activeContext;
   if (!context) {
     sendJson(res, 500, { ok: false, message: "Conversation context was not initialized." });
     return;
   }
 
   const userMessage = context.messages.add({ kind: "user", content, status: "sent" });
-  eventBus.publish({ type: "message.created", message: userMessage });
+  eventBus.publish({ type: "message.created", conversationId: activeConversationId, message: userMessage });
   context.channelRouter.process(userMessage);
 
   sendJson(res, 200, { ok: true, messageId: userMessage.id });
@@ -581,7 +704,8 @@ async function handlePutAgents(req: http.IncomingMessage, res: http.ServerRespon
     sendJson(res, 409, { ok: false, message: "Create or select a workspace before saving agents." });
     return;
   }
-  if (activeContext?.hasRunningAgent()) {
+  const ctx = getActiveContext();
+  if (ctx?.hasRunningAgent()) {
     sendJson(res, 409, { ok: false, message: "Cannot save while an agent is running. Wait for it to finish." });
     return;
   }
@@ -605,7 +729,11 @@ async function handlePutAgents(req: http.IncomingMessage, res: http.ServerRespon
 }
 
 function shutdown(): void {
-  activeContext?.dispose();
+  for (const ctx of contextMap.values()) {
+    ctx.dispose();
+  }
+  contextMap.clear();
+  contextLru.length = 0;
   server.close(() => {
     process.exit(0);
   });

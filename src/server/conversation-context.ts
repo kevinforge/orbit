@@ -10,7 +10,7 @@ import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { ChannelRouter } from "../core/channel-router.ts";
-import type { AgentId, AgentProfile, RuntimeEvent } from "../shared/types.ts";
+import type { AgentId, AgentProfile } from "../shared/types.ts";
 
 const MAX_ROUTE_DEPTH = 5;
 const CHANNEL_ID = "default";
@@ -22,7 +22,6 @@ export type ConversationContextOptions = {
   eventBus: EventBus;
   sessionStore: SessionStore;
   workspaceStore: WorkspaceStore;
-  sseHub: { publish: (event: RuntimeEvent) => void };
 };
 
 export class ConversationContext {
@@ -34,14 +33,12 @@ export class ConversationContext {
 
   private _profiles: readonly AgentProfile[];
   private readonly eventBus: EventBus;
-  private readonly sseHub: { publish: (event: RuntimeEvent) => void };
   private readonly unsubscribe: () => void;
 
   constructor(private readonly options: ConversationContextOptions) {
-    const { workspaceId, conversationId, profiles, eventBus, sessionStore, workspaceStore, sseHub } = options;
+    const { workspaceId, conversationId, profiles, eventBus, sessionStore, workspaceStore } = options;
     this._profiles = profiles;
     this.eventBus = eventBus;
-    this.sseHub = sseHub;
 
     const messagesPath = path.join(
       workspaceStore.channelsDir(workspaceId, CHANNEL_ID, conversationId),
@@ -53,11 +50,12 @@ export class ConversationContext {
     this.transcripts = new TerminalTranscriptStore(transcriptsDir);
 
     this.unsubscribe = eventBus.subscribe((event) => {
+      // Only process events belonging to this conversation
+      if ("conversationId" in event && event.conversationId !== conversationId) return;
       if ((event as { type: string }).type === "terminal.chunk") {
         const e = event as { agentId: string; text: string };
         this.transcripts.append(e.agentId, e.text);
       }
-      sseHub.publish(event);
     });
 
     this.agents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, conversationId);
@@ -66,6 +64,7 @@ export class ConversationContext {
     const agentIds = this.agents.ids();
 
     this.runManager = new RunManager({
+      conversationId,
       agents: this.agents,
       messages: this.messages,
       eventBus,
@@ -83,7 +82,7 @@ export class ConversationContext {
       maxRouteDepth: MAX_ROUTE_DEPTH,
       createSystemMessage: (content, parentMessageId) => {
         const msg = this.messages.add({ kind: "system", content, status: "done", parentMessageId });
-        eventBus.publish({ type: "message.created", message: msg });
+        eventBus.publish({ type: "message.created", conversationId, message: msg });
         return msg;
       },
       startAgentRun: (agentId, prompt, sourceMessage) => {
@@ -114,6 +113,7 @@ export class ConversationContext {
     const self = this;
 
     const newRunManager = new RunManager({
+      conversationId,
       agents: newAgents,
       messages: this.messages,
       eventBus,
@@ -131,7 +131,7 @@ export class ConversationContext {
       maxRouteDepth: MAX_ROUTE_DEPTH,
       createSystemMessage: (content, parentMessageId) => {
         const msg = self.messages.add({ kind: "system", content, status: "done", parentMessageId });
-        eventBus.publish({ type: "message.created", message: msg });
+        eventBus.publish({ type: "message.created", conversationId, message: msg });
         return msg;
       },
       startAgentRun: (agentId, prompt, sourceMessage) => {
