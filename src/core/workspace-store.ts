@@ -26,7 +26,13 @@ export class WorkspaceStore {
   static deriveId(cwd: string): string {
     const resolved = path.resolve(cwd);
     const normalized = process.platform === "win32" ? resolved.toLowerCase() : resolved;
-    return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 12);
+    const hash = crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 6);
+    const sanitized = normalized
+      .replace(/[^a-zA-Z0-9]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+/, "")
+      .replace(/-+$/, "");
+    return `${sanitized}_${hash}`;
   }
 
   resolve(cwd: string): WorkspaceInfo {

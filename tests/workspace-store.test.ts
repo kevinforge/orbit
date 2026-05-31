@@ -13,7 +13,7 @@ function tmpDir(): string {
 
 test("deriveId returns deterministic short hash from cwd", () => {
   const id = WorkspaceStore.deriveId("/home/user/projects/my-app");
-  assert.match(id, /^[0-9a-f]{12}$/);
+  assert.match(id, /^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*_[a-f0-9]{6}$/);
   assert.equal(id, WorkspaceStore.deriveId("/home/user/projects/my-app"));
 });
 
