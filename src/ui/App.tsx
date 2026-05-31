@@ -128,6 +128,17 @@ export function App() {
     refreshWorkspaces();
   }, [state.workspace.id, state.conversation.id]);
 
+  // Auto-expand the active workspace on initial load
+  useEffect(() => {
+    if (state.workspace.id && !expandedWorkspaceIds.has(state.workspace.id)) {
+      setExpandedWorkspaceIds((ids) => {
+        const next = new Set(ids);
+        next.add(state.workspace.id);
+        return next;
+      });
+    }
+  }, [state.workspace.id]);
+
   // Refresh conversations when workspaces list changes
   useEffect(() => {
     if (workspaces.length === 0 && !state.workspace.id) return;
@@ -308,7 +319,6 @@ export function App() {
   }
 
   function handleWorkspaceClick(workspaceId: string) {
-    if (workspaceId === state.workspace.id) return; // active workspace is always expanded
     setExpandedWorkspaceIds((ids) => {
       const next = new Set(ids);
       if (next.has(workspaceId)) {
@@ -520,7 +530,7 @@ export function App() {
             ) : (
               workspaces.map((ws) => {
                 const isActiveWorkspace = ws.id === state.workspace.id;
-                const isWorkspaceConversationOpen = isActiveWorkspace || expandedWorkspaceIds.has(ws.id);
+                const isWorkspaceConversationOpen = expandedWorkspaceIds.has(ws.id);
                 return (
                   <div className="workspaceGroup" key={ws.id}>
                     <div className={`workspaceTreeRow ${isActiveWorkspace ? "active" : ""}`}>
