@@ -505,6 +505,46 @@ button:active:not(:disabled) {
   z-index: 1;
 }
 
+.conversationHeader.collapsed {
+  padding: 8px 24px;
+}
+
+.conversationHeader.collapsed h1 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.conversationHeader.collapsed .eyebrow,
+.conversationHeader.collapsed .workspacePath,
+.conversationHeader.collapsed .headerMeta {
+  display: none;
+}
+
+.headerCollapseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s var(--ease-out), transform 0.25s var(--ease-out), background 0.15s var(--ease-out);
+  flex-shrink: 0;
+}
+
+.headerCollapseBtn:hover {
+  color: var(--text-primary);
+  background: var(--bg-base);
+}
+
+.conversationHeader.collapsed .headerCollapseBtn {
+  transform: rotate(180deg);
+}
+
 .conversationHeader h1,
 .eyebrow {
   margin: 0;

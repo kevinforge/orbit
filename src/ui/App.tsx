@@ -41,6 +41,7 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const isNearBottomRef = useRef(true);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
@@ -730,14 +731,26 @@ export function App() {
       />
 
       <section className="conversation" aria-label="Chat conversation">
-        <header className="conversationHeader">
-          <div className="conversationHeaderLeft">
-            <p className="eyebrow">{state.workspace.name || "工作区"}</p>
+        <header className={`conversationHeader ${headerCollapsed ? "collapsed" : ""}`}>
+          {headerCollapsed ? (
             <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
-            {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
-          </div>
+          ) : (
+            <div className="conversationHeaderLeft">
+              <p className="eyebrow">{state.workspace.name || "工作区"}</p>
+              <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
+              {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
+            </div>
+          )}
           <div className="conversationHeaderRight">
-            <span className="headerMeta">{state.messages.length} 条消息</span>
+            {!headerCollapsed && <span className="headerMeta">{state.messages.length} 条消息</span>}
+            <button
+              className="headerCollapseBtn"
+              type="button"
+              onClick={() => setHeaderCollapsed((c) => !c)}
+              title={headerCollapsed ? "展开头部" : "折叠头部"}
+            >
+              <NavIcon kind="collapse" />
+            </button>
           </div>
         </header>
 
