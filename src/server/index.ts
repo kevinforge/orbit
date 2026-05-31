@@ -130,7 +130,10 @@ function evictIfNeeded(): void {
         break;
       }
     }
-    if (!evicted) break; // all contexts have running agents
+    if (!evicted) {
+      console.warn("[orbit] LRU eviction skipped: all active contexts have running agents");
+      break;
+    }
   }
 }
 
