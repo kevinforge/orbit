@@ -543,19 +543,21 @@ const server = http.createServer(async (req, res) => {
       const parts = url.pathname.split("/");
       const convId = parts[3];
       if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
-      if (!activeWorkspaceId) {
+      const wsId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!wsId) {
         sendJson(res, 409, { ok: false, message: "No active workspace." });
         return;
       }
-      const targetCtx = contextMap.get(contextKey(activeWorkspaceId, convId));
+      const targetCtx = contextMap.get(contextKey(wsId, convId));
       if (targetCtx?.hasRunningAgent()) {
         sendJson(res, 409, { ok: false, message: "Cannot delete a conversation with running agents." });
         return;
       }
       try {
-        const wasActiveConversation = convId === activeConversationId;
-        disposeContext(activeWorkspaceId, convId);
-        conversationStore.delete(activeWorkspaceId, convId);
+        const wasActiveConversation = wsId === activeWorkspaceId && convId === activeConversationId;
+        disposeContext(wsId, convId);
+        const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
+        store.delete(wsId, convId);
         if (wasActiveConversation) {
           const nextConversation = conversationStore.list(activeWorkspaceId)[0];
           if (nextConversation) {

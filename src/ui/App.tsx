@@ -446,7 +446,7 @@ export function App() {
 
   async function deleteConversation(conversation: Conversation) {
     if (!confirm(`Delete conversation "${conversation.name}"?`)) return;
-    const response = await fetch(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+    const response = await fetch(`/api/conversations/${conversation.id}?workspaceId=${conversation.workspaceId}`, { method: "DELETE" });
     if (response.ok) {
       setOpenConversationMenuId(null);
       refreshConversations();
