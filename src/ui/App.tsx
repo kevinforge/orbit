@@ -36,7 +36,7 @@ export function App() {
   const [editingConversationName, setEditingConversationName] = useState("");
   const [openWorkspaceMenuId, setOpenWorkspaceMenuId] = useState<string | null>(null);
   const [openConversationMenuId, setOpenConversationMenuId] = useState<string | null>(null);
-  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set());  // non-active workspaces only; active workspace is always expanded
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -308,20 +308,25 @@ export function App() {
   }
 
   function handleWorkspaceClick(workspaceId: string) {
-    if (workspaceId === state.workspace.id) {
-      setCollapsedWorkspaceIds((ids) => {
-        const next = new Set(ids);
-        if (next.has(workspaceId)) {
-          next.delete(workspaceId);
-        } else {
-          next.add(workspaceId);
-        }
-        return next;
-      });
-      return;
+    if (workspaceId === state.workspace.id) return; // active workspace is always expanded
+    setExpandedWorkspaceIds((ids) => {
+      const next = new Set(ids);
+      if (next.has(workspaceId)) {
+        next.delete(workspaceId);
+      } else {
+        next.add(workspaceId);
+      }
+      return next;
+    });
+    // Eagerly load conversations for this workspace
+    if (!conversationsByWorkspace[workspaceId]) {
+      fetch(`/api/workspaces/${workspaceId}/conversations`)
+        .then((r) => r.json())
+        .then((convs: Conversation[]) => {
+          setConversationsByWorkspace((prev) => ({ ...prev, [workspaceId]: convs }));
+        })
+        .catch(() => {});
     }
-
-    switchWorkspace(workspaceId);
   }
 
   async function createWorkspaceFromDirectoryPicker() {
@@ -373,7 +378,7 @@ export function App() {
     const response = await fetch(`/api/workspaces/${workspace.id}`, { method: "DELETE" });
       if (response.ok) {
         setOpenWorkspaceMenuId(null);
-        setCollapsedWorkspaceIds((ids) => {
+        setExpandedWorkspaceIds((ids) => {
           const next = new Set(ids);
           next.delete(workspace.id);
           return next;
@@ -394,11 +399,7 @@ export function App() {
 
   async function createConversation() {
     if (!state.workspace.id) return;
-    setCollapsedWorkspaceIds((ids) => {
-      const next = new Set(ids);
-      next.delete(state.workspace.id);
-      return next;
-    });
+    // Active workspace is always expanded, no need to track in expandedWorkspaceIds
     const response = await fetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -519,7 +520,7 @@ export function App() {
             ) : (
               workspaces.map((ws) => {
                 const isActiveWorkspace = ws.id === state.workspace.id;
-                const isWorkspaceConversationOpen = !collapsedWorkspaceIds.has(ws.id);
+                const isWorkspaceConversationOpen = isActiveWorkspace || expandedWorkspaceIds.has(ws.id);
                 return (
                   <div className="workspaceGroup" key={ws.id}>
                     <div className={`workspaceTreeRow ${isActiveWorkspace ? "active" : ""}`}>
