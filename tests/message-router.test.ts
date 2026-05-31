@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ChannelRouter } from "../src/core/channel-router.ts";
+import { MessageRouter } from "../src/core/message-router.ts";
 import type { AgentId, ChatMessage, MessageRouteState } from "../src/shared/types.ts";
 
 const agents: readonly AgentId[] = ["agent1", "agent2"];
@@ -34,7 +34,7 @@ function createRouter(options?: Partial<{ availableAgents: readonly AgentId[]; m
   const agentRuns: Array<{ agentId: AgentId; prompt: string; source: ChatMessage }> = [];
   const routeStates: Array<{ id: string; state: MessageRouteState }> = [];
 
-  const router = new ChannelRouter({
+  const router = new MessageRouter({
     availableAgents: options?.availableAgents ?? agents,
     maxRouteDepth: options?.maxRouteDepth ?? 5,
     createSystemMessage(content: string, parentMessageId?: string) {
@@ -52,7 +52,7 @@ function createRouter(options?: Partial<{ availableAgents: readonly AgentId[]; m
   return { router, systemMessages, agentRuns, routeStates };
 }
 
-test("user assignment triggers agent run with full channel message", () => {
+test("user assignment triggers agent run with full message", () => {
   const { router, agentRuns, routeStates } = createRouter();
   const content = "@agent1: do something";
   router.process(createUserMessage(content));
@@ -64,7 +64,7 @@ test("user assignment triggers agent run with full channel message", () => {
   assert.equal(routeStates[0]?.state, "routed");
 });
 
-test("multi-agent assignment starts one run per assigned agent with the full channel message", () => {
+test("multi-agent assignment starts one run per assigned agent with the full message", () => {
   const { router, agentRuns, routeStates } = createRouter();
   const content = "@agent1: design requirements; @agent2: implement code based on @agent1 output";
   router.process(createUserMessage(content));

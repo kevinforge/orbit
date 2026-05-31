@@ -48,7 +48,6 @@ test("creates sessions with the runtime selected by each profile", async () => {
     new EventBus(),
     createTempSessionStore(),
     "default",
-    "default",
     new Map([
       ["claude-code", claudeRuntime],
       ["codex", codexRuntime],
@@ -85,7 +84,6 @@ test("states include each agent runtime", () => {
     profiles,
     new EventBus(),
     createTempSessionStore(),
-    "default",
     "default",
     new Map([
       ["claude-code", runtime],

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { WorkspaceStore } from "../src/core/workspace-store.ts";
+import type { Workspace } from "../src/shared/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-workspace-test-"));
@@ -12,7 +13,7 @@ function tmpDir(): string {
 
 test("deriveId returns deterministic short hash from cwd", () => {
   const id = WorkspaceStore.deriveId("/home/user/projects/my-app");
-  assert.match(id, /^[0-9a-f]{12}$/);
+  assert.match(id, /^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*_[a-f0-9]{6}$/);
   assert.equal(id, WorkspaceStore.deriveId("/home/user/projects/my-app"));
 });
 
@@ -38,7 +39,7 @@ test("resolve returns workspace info from existing metadata file", () => {
 
   const workspace = store.resolve(cwd);
   assert.ok(workspace.id);
-  assert.equal(workspace.path, cwd);
+  assert.equal(workspace.path, path.resolve(cwd));
   assert.equal(workspace.name, "orbit");
   assert.ok(fs.existsSync(path.join(dir, "workspaces", workspace.id, "workspace.json")));
 });
@@ -53,7 +54,7 @@ test("resolve creates workspace directory and metadata on first call", () => {
   assert.ok(fs.existsSync(metadataPath));
   const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
   assert.equal(metadata.id, workspace.id);
-  assert.equal(metadata.path, "/home/user/projects/new-project");
+  assert.equal(metadata.path, path.resolve("/home/user/projects/new-project"));
   assert.equal(metadata.name, "new-project");
   assert.ok(metadata.createdAt, "metadata should include createdAt");
   assert.ok(new Date(metadata.createdAt).getTime() > 0, "createdAt should be a valid ISO date");
@@ -115,40 +116,157 @@ test("dataDir returns workspace data path", () => {
   assert.equal(dataDir, path.join(dir, "data", ws.id));
 });
 
-test("channelsDir returns path with workspace, channel and conversation", () => {
+test("channelsDir returns path with workspace and conversation", () => {
   const dir = tmpDir();
   const store = new WorkspaceStore(dir);
   const ws = store.resolve("/tmp/project-channels");
 
   assert.equal(
-    store.channelsDir(ws.id, "general", "conv-1"),
-    path.join(dir, "channels", ws.id, "general", "conv-1"),
+    store.channelsDir(ws.id, "conv-1"),
+    path.join(dir, "conversations", ws.id, "conv-1"),
   );
 });
 
-test("channelsDir defaults to 'default' for channel and conversation", () => {
-  const dir = tmpDir();
-  const store = new WorkspaceStore(dir);
-  const ws = store.resolve("/tmp/project-defaults");
-
-  assert.equal(store.channelsDir(ws.id), path.join(dir, "channels", ws.id, "default", "default"));
-});
-
-test("transcriptsDir returns path with workspace, channel and conversation", () => {
+test("transcriptsDir returns path with workspace and conversation", () => {
   const dir = tmpDir();
   const store = new WorkspaceStore(dir);
   const ws = store.resolve("/tmp/project-transcripts");
 
   assert.equal(
-    store.transcriptsDir(ws.id, "general", "conv-1"),
-    path.join(dir, "transcripts", ws.id, "general", "conv-1"),
+    store.transcriptsDir(ws.id, "conv-1"),
+    path.join(dir, "transcripts", ws.id, "conv-1"),
   );
 });
 
-test("transcriptsDir defaults to 'default' for channel and conversation", () => {
+// --- New CRUD tests ---
+
+test("list returns all workspaces in stable creation order", () => {
   const dir = tmpDir();
   const store = new WorkspaceStore(dir);
-  const ws = store.resolve("/tmp/project-defaults");
+  const ws1 = store.resolve("/projects/alpha");
+  const ws2 = store.resolve("/projects/beta");
 
-  assert.equal(store.transcriptsDir(ws.id), path.join(dir, "transcripts", ws.id, "default", "default"));
+  store.touchLastOpened(ws2.id);
+
+  const list = store.list();
+  assert.equal(list.length, 2);
+  assert.equal(list[0].id, ws1.id, "clicking/opening should not move a workspace");
+  assert.equal(list[1].id, ws2.id);
+});
+
+test("get returns workspace by id", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("/projects/my-app");
+
+  const result = store.get(ws.id);
+  assert.ok(result);
+  assert.equal(result!.id, ws.id);
+  assert.equal(result!.name, ws.name);
+  assert.ok(result!.createdAt);
+  assert.ok(result!.lastOpenedAt);
+});
+
+test("get returns null for unknown id", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  assert.equal(store.get("nonexistent"), null);
+});
+
+test("create creates a new workspace", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("My Project", "/projects/my-project");
+
+  assert.ok(ws.id);
+  assert.equal(ws.name, "My Project");
+  assert.equal(ws.path, path.resolve("/projects/my-project"));
+  assert.ok(ws.createdAt);
+  assert.ok(ws.lastOpenedAt);
+  assert.ok(store.get(ws.id));
+});
+
+test("create throws if workspace already exists for path", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  store.create("First", "/projects/same-path");
+
+  assert.throws(() => store.create("Second", "/projects/same-path"), /already exists/);
+});
+
+test("update renames a workspace", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("Old Name", "/projects/rename-me");
+
+  const updated = store.update(ws.id, { name: "New Name" });
+  assert.equal(updated.name, "New Name");
+
+  const reloaded = store.get(ws.id);
+  assert.equal(reloaded!.name, "New Name");
+});
+
+test("update throws for unknown id", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  assert.throws(() => store.update("nonexistent", { name: "X" }), /not found/);
+});
+
+test("delete removes workspace and all related directories", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("ToDelete", "/projects/delete-me");
+
+  // Create some related directories
+  fs.mkdirSync(store.sessionsDir(ws.id), { recursive: true });
+  fs.mkdirSync(path.join(dir, "conversations", ws.id), { recursive: true });
+  fs.mkdirSync(path.join(dir, "transcripts", ws.id), { recursive: true });
+
+  store.delete(ws.id);
+
+  assert.equal(store.get(ws.id), null);
+  assert.ok(!fs.existsSync(path.join(dir, "workspaces", ws.id)));
+  assert.ok(!fs.existsSync(store.sessionsDir(ws.id)));
+  assert.ok(!fs.existsSync(path.join(dir, "conversations", ws.id)));
+  assert.ok(!fs.existsSync(path.join(dir, "transcripts", ws.id)));
+});
+
+test("delete throws for unknown id", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  assert.throws(() => store.delete("nonexistent"), /not found/);
+});
+
+test("touchLastOpened updates lastOpenedAt", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("Touch", "/projects/touch");
+
+  const before = store.get(ws.id)!;
+  // Small delay to ensure different timestamp
+  const start = Date.now();
+  while (Date.now() === start) { /* spin */ }
+
+  store.touchLastOpened(ws.id);
+  const after = store.get(ws.id)!;
+
+  assert.equal(before.id, after.id);
+  assert.notEqual(after.lastOpenedAt, before.lastOpenedAt);
+});
+
+test("create normalizes relative paths to absolute paths", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.create("Relative", "some/relative/path");
+
+  assert.ok(path.isAbsolute(ws.path), `path should be absolute, got: ${ws.path}`);
+  assert.ok(ws.path.includes("some" + path.sep + "relative" + path.sep + "path"));
+});
+
+test("resolve normalizes relative cwd to absolute path", () => {
+  const dir = tmpDir();
+  const store = new WorkspaceStore(dir);
+  const ws = store.resolve("some/relative/project");
+
+  assert.ok(path.isAbsolute(ws.path), `path should be absolute, got: ${ws.path}`);
 });

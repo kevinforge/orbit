@@ -6,7 +6,6 @@ import type { AgentRuntimeKind } from "../shared/types.ts";
 
 export type SessionRecord = {
   agentId: string;
-  channelId: string;
   runtime: AgentRuntimeKind;
   sessionId: string;
   lastRunAt: string;
@@ -20,8 +19,8 @@ export class SessionStore {
     this.baseDir = baseDir ?? path.join(process.cwd(), ".orbit", "sessions");
   }
 
-  load(runtime: AgentRuntimeKind, channelId: string, conversationId: string, agentId: string): SessionRecord | null {
-    const filePath = this.filePath(runtime, channelId, conversationId, agentId);
+  load(runtime: AgentRuntimeKind, conversationId: string, agentId: string): SessionRecord | null {
+    const filePath = this.filePath(runtime, conversationId, agentId);
     try {
       const data = fs.readFileSync(filePath, "utf8");
       return JSON.parse(data) as SessionRecord;
@@ -30,8 +29,8 @@ export class SessionStore {
     }
   }
 
-  save(runtime: AgentRuntimeKind, channelId: string, conversationId: string, agentId: string, record: SessionRecord): void {
-    const filePath = this.filePath(runtime, channelId, conversationId, agentId);
+  save(runtime: AgentRuntimeKind, conversationId: string, agentId: string, record: SessionRecord): void {
+    const filePath = this.filePath(runtime, conversationId, agentId);
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
 
@@ -40,8 +39,8 @@ export class SessionStore {
     fs.renameSync(tmpFile, filePath);
   }
 
-  clear(runtime: AgentRuntimeKind, channelId: string, conversationId: string, agentId: string): void {
-    const filePath = this.filePath(runtime, channelId, conversationId, agentId);
+  clear(runtime: AgentRuntimeKind, conversationId: string, agentId: string): void {
+    const filePath = this.filePath(runtime, conversationId, agentId);
     try {
       fs.unlinkSync(filePath);
     } catch {
@@ -49,7 +48,7 @@ export class SessionStore {
     }
   }
 
-  private filePath(runtime: AgentRuntimeKind, channelId: string, conversationId: string, agentId: string): string {
-    return path.join(this.baseDir, runtime, channelId, conversationId, `${agentId}.json`);
+  private filePath(runtime: AgentRuntimeKind, conversationId: string, agentId: string): string {
+    return path.join(this.baseDir, runtime, conversationId, `${agentId}.json`);
   }
 }

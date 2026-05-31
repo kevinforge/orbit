@@ -2,32 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createDefaultAgentProfiles } from "../src/core/agent-profiles.ts";
-import { buildChannelContext } from "../src/core/channel-context-builder.ts";
+import { buildAgentContext } from "../src/core/agent-context-builder.ts";
 
 test("builds structured context for current agent", () => {
   const profiles = createDefaultAgentProfiles("D:/project");
-  const context = buildChannelContext({
+  const context = buildAgentContext({
     agentId: "developer",
     profiles,
-    channelMessage: "@developer: implement queue @tester: verify it",
+    agentMessage: "@developer: implement queue @tester: verify it",
   });
 
   assert.ok(context.includes("[Orbit Context]"));
   assert.ok(context.includes("Current agent: Developer (@developer)"));
   assert.ok(context.includes("@tester: Tester — Validates behavior, runs tests, reports risks."));
-  assert.ok(context.includes("[Full channel message]"));
+  assert.ok(context.includes("[Current task]"));
   assert.ok(context.includes("@developer: implement queue @tester: verify it"));
   assert.ok(context.includes("Permission profile:"));
   assert.ok(context.includes("Orbit has already scheduled the other agents"));
-  assert.ok(context.includes("Do not start by repeating the full channel message"));
+  assert.ok(context.includes("Do not start by repeating the conversation"));
 });
 
 test("includes description in available agents list", () => {
   const profiles = createDefaultAgentProfiles("D:/project");
-  const context = buildChannelContext({
+  const context = buildAgentContext({
     agentId: "developer",
     profiles,
-    channelMessage: "@developer: test",
+    agentMessage: "@developer: test",
   });
 
   assert.ok(context.includes("@pm: Product Manager — Clarifies requirements, defines scope and acceptance criteria."));
@@ -73,10 +73,10 @@ test("available agents omits description when empty without extra formatting", (
     },
   ];
 
-  const context = buildChannelContext({
+  const context = buildAgentContext({
     agentId: "dev",
     profiles,
-    channelMessage: "@dev: test",
+    agentMessage: "@dev: test",
   });
 
   assert.ok(context.includes("@pm: PM\n"), "should not have trailing dash for empty description");
@@ -86,10 +86,10 @@ test("available agents omits description when empty without extra formatting", (
 
 test("includes few-shot collaboration examples in context", () => {
   const profiles = createDefaultAgentProfiles("D:/project");
-  const context = buildChannelContext({
+  const context = buildAgentContext({
     agentId: "developer",
     profiles,
-    channelMessage: "@developer: test",
+    agentMessage: "@developer: test",
   });
 
   // Should contain the collaboration examples section
@@ -104,10 +104,10 @@ test("plain mention in agent reply does not trigger routing", () => {
   // This is a documentation/context test: the collaboration rules and examples
   // should make it clear that @agent (no colon) is only a reference.
   const profiles = createDefaultAgentProfiles("D:/project");
-  const context = buildChannelContext({
+  const context = buildAgentContext({
     agentId: "developer",
     profiles,
-    channelMessage: "@developer: implement feature",
+    agentMessage: "@developer: implement feature",
   });
 
   assert.ok(context.includes("Plain @agent mentions without a colon are references only"), "rules must mention plain mentions are references");

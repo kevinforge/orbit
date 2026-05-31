@@ -14,7 +14,6 @@ export type AgentSessionOptions = {
   eventBus: EventBus;
   quietWindowMs?: number;
   sessionStore: SessionStore;
-  channelId: string;
   conversationId: string;
 };
 
@@ -58,14 +57,14 @@ export class AgentSession {
     this.setStatus("running");
 
     const existingSession = this.options.sessionStore.load(
-      this.options.runtime.kind, this.options.channelId, this.options.conversationId, this.id,
+      this.options.runtime.kind, this.options.conversationId, this.id,
     );
 
     return this.executeRun(runId, prompt, runIndex, existingSession?.sessionId ?? undefined)
       .catch((error: unknown) => {
         if (this.isResumeFailure(error, existingSession)) {
           this.options.sessionStore.clear(
-            this.options.runtime.kind, this.options.channelId, this.options.conversationId, this.id,
+            this.options.runtime.kind, this.options.conversationId, this.id,
           );
           return this.executeRun(runId, prompt, runIndex, undefined);
         }
@@ -120,6 +119,7 @@ export class AgentSession {
       onOutput: (text) => {
         this.options.eventBus.publish({
           type: "terminal.chunk",
+          conversationId: this.options.conversationId,
           agentId: this.id,
           runId,
           text,
@@ -132,6 +132,7 @@ export class AgentSession {
       if (sessionId && this.activeRun?.runId === runId) {
         this.options.eventBus.publish({
           type: "run.sessionId",
+          conversationId: this.options.conversationId,
           agentId: this.id,
           runId,
           sessionId,
@@ -163,11 +164,10 @@ export class AgentSession {
 
   private persistSession(sessionId: string): void {
     const prev = this.options.sessionStore.load(
-      this.options.runtime.kind, this.options.channelId, this.options.conversationId, this.id,
+      this.options.runtime.kind, this.options.conversationId, this.id,
     );
-    this.options.sessionStore.save(this.options.runtime.kind, this.options.channelId, this.options.conversationId, this.id, {
+    this.options.sessionStore.save(this.options.runtime.kind, this.options.conversationId, this.id, {
       agentId: this.id,
-      channelId: this.options.channelId,
       runtime: this.options.runtime.kind,
       sessionId,
       lastRunAt: new Date().toISOString(),
@@ -183,6 +183,7 @@ export class AgentSession {
     this.status = status;
     this.options.eventBus.publish({
       type: "agent.status",
+      conversationId: this.options.conversationId,
       agentId: this.id,
       status,
     });

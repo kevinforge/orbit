@@ -92,15 +92,23 @@ export type NewChatMessage = Omit<ChatMessage, "id" | "createdAt"> & {
   createdAt?: never;
 };
 
+export type RunningSummary = {
+  workspaceId: string;
+  conversationId: string;
+  runningAgentIds: AgentId[];
+};
+
 export type RuntimeEvent =
-  | { type: "message.created"; message: ChatMessage }
-  | { type: "message.updated"; message: ChatMessage }
-  | { type: "agent.status"; agentId: AgentId; status: AgentStatus }
-  | { type: "run.activity"; agentId: AgentId; runId: string; activity: AgentActivityEvent }
-  | { type: "terminal.chunk"; agentId: AgentId; runId?: string; text: string }
-  | { type: "run.completed"; agentId: AgentId; runId: string; resultMessageId: string }
-  | { type: "run.failed"; agentId: AgentId; runId: string; error: string }
-  | { type: "run.sessionId"; agentId: AgentId; runId: string; sessionId: string };
+  | { type: "message.created"; conversationId: string; message: ChatMessage }
+  | { type: "message.updated"; conversationId: string; message: ChatMessage }
+  | { type: "agent.status"; conversationId: string; agentId: AgentId; status: AgentStatus }
+  | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
+  | { type: "terminal.chunk"; conversationId: string; agentId: AgentId; runId?: string; text: string }
+  | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
+  | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string }
+  | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
+  | { type: "running.updated"; summaries: RunningSummary[] }
+  | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
 
 export type TerminalState = Record<string, string>;
 
@@ -110,9 +118,27 @@ export type WorkspaceInfo = {
   path: string;
 };
 
+export type Workspace = WorkspaceInfo & {
+  createdAt: string;
+  lastOpenedAt: string;
+};
+
+export type ConversationInfo = {
+  id: string;
+  name: string;
+};
+
+export type Conversation = ConversationInfo & {
+  workspaceId: string;
+  createdAt: string;
+  lastOpenedAt: string;
+};
+
 export type AppState = {
   workspace: WorkspaceInfo;
+  conversation: ConversationInfo;
   messages: ChatMessage[];
   agents: AgentState[];
   terminal: TerminalState;
+  runningSummaries: RunningSummary[];
 };

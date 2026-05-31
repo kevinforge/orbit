@@ -20,7 +20,6 @@ export class AgentRegistry {
     private readonly profiles: readonly AgentProfile[],
     eventBus: EventBus,
     sessionStore: SessionStore,
-    channelId: string,
     conversationId: string,
     runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_RUNTIMES,
   ) {
@@ -40,7 +39,6 @@ export class AgentRegistry {
           runtime,
           eventBus,
           sessionStore,
-          channelId,
           conversationId,
         }),
       );

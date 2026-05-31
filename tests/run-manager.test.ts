@@ -41,6 +41,7 @@ test("queues a second run for the same agent until the first completes", async (
   const pending = [first, second];
 
   const manager = new RunManager({
+    conversationId: "test-conv",
     messages,
     eventBus,
     agents: {
@@ -86,6 +87,7 @@ test("terminal chunks append visible activity to the running message", async () 
   let activeRunId = "";
 
   const manager = new RunManager({
+    conversationId: "test-conv",
     messages,
     eventBus,
     agents: {
@@ -108,7 +110,7 @@ test("terminal chunks append visible activity to the running message", async () 
   const source = createSourceMessage();
   const run = manager.enqueue("developer", "first", source);
 
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: "Running Bash(command)" });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: "Running Bash(command)" });
   const runningMessage = messages.get(run.resultMessageId);
   assert.ok(runningMessage?.activity?.some((activity) => activity.type === "tool.started" && activity.name === "Bash"));
 
@@ -328,6 +330,7 @@ test("split Claude tool_use across two terminal chunks still produces tool.start
   let activeRunId = "";
 
   const manager = new RunManager({
+    conversationId: "test-conv",
     messages,
     eventBus,
     agents: {
@@ -353,8 +356,8 @@ test("split Claude tool_use across two terminal chunks still produces tool.start
     message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "src/main.ts" } }] },
   });
   const mid = Math.floor(fullJson.length / 2);
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: fullJson.slice(0, mid) });
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: fullJson.slice(mid) });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: fullJson.slice(0, mid) });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: fullJson.slice(mid) });
 
   const msg = messages.get(run.resultMessageId);
   const toolStarted = msg?.activity?.find((a) => a.type === "tool.started");
@@ -375,6 +378,7 @@ test("split Claude tool_use_result across chunks still produces tool.completed w
   let activeRunId = "";
 
   const manager = new RunManager({
+    conversationId: "test-conv",
     messages,
     eventBus,
     agents: {
@@ -399,15 +403,15 @@ test("split Claude tool_use_result across chunks still produces tool.completed w
     type: "assistant",
     message: { content: [{ type: "tool_use", name: "Bash", input: { command: "ls" } }] },
   });
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: `${started}\n` });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: `${started}\n` });
 
   const resultJson = JSON.stringify({
     type: "user",
     tool_use_result: { stdout: "file1.ts\nfile2.ts", stderr: "", is_error: false },
   });
   const mid = Math.floor(resultJson.length / 2);
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: resultJson.slice(0, mid) });
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: resultJson.slice(mid) });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: resultJson.slice(0, mid) });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: resultJson.slice(mid) });
 
   const msg = messages.get(run.resultMessageId);
   const toolCompleted = msg?.activity?.find((a) => a.type === "tool.completed");
@@ -428,6 +432,7 @@ test("split Claude tool_use_result error across chunks still produces tool.faile
   let activeRunId = "";
 
   const manager = new RunManager({
+    conversationId: "test-conv",
     messages,
     eventBus,
     agents: {
@@ -452,15 +457,15 @@ test("split Claude tool_use_result error across chunks still produces tool.faile
     type: "assistant",
     message: { content: [{ type: "tool_use", name: "Bash", input: { command: "bad" } }] },
   });
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: `${started}\n` });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: `${started}\n` });
 
   const failedJson = JSON.stringify({
     type: "user",
     tool_use_result: { stdout: "", stderr: "command not found", is_error: true },
   });
   const mid = Math.floor(failedJson.length / 2);
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: failedJson.slice(0, mid) });
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: failedJson.slice(mid) });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: failedJson.slice(0, mid) });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: failedJson.slice(mid) });
 
   const msg = messages.get(run.resultMessageId);
   const toolFailed = msg?.activity?.find((a) => a.type === "tool.failed");
@@ -481,6 +486,7 @@ test("split Codex command_execution completion across chunks still produces tool
   let activeRunId = "";
 
   const manager = new RunManager({
+    conversationId: "test-conv",
     messages,
     eventBus,
     agents: {
@@ -505,15 +511,15 @@ test("split Codex command_execution completion across chunks still produces tool
     type: "item.started",
     item: { id: "item_1", type: "command_execution", command: "git status", status: "in_progress" },
   });
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: `${started}\n` });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: `${started}\n` });
 
   const completedJson = JSON.stringify({
     type: "item.completed",
     item: { id: "item_1", type: "command_execution", command: "git status", aggregated_output: "On branch main", exit_code: 0, status: "completed" },
   });
   const mid = Math.floor(completedJson.length / 2);
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: completedJson.slice(0, mid) });
-  eventBus.publish({ type: "terminal.chunk", agentId: "developer", runId: activeRunId, text: completedJson.slice(mid) });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: completedJson.slice(0, mid) });
+  eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: completedJson.slice(mid) });
 
   const msg = messages.get(run.resultMessageId);
   const toolCompleted = msg?.activity?.find((a) => a.type === "tool.completed");
@@ -533,6 +539,7 @@ test("run failures store a concise error instead of raw stream output", async ()
   const failure = deferred();
 
   const manager = new RunManager({
+    conversationId: "test-conv",
     messages,
     eventBus,
     agents: {
