@@ -496,9 +496,9 @@ button:active:not(:disabled) {
   background: var(--error);
 }
 
-/* ── Channel ───────────────────────────────────────────────── */
+/* ── Conversation ──────────────────────────────────────────── */
 
-.channel {
+.conversation {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
@@ -506,7 +506,7 @@ button:active:not(:disabled) {
   background: var(--bg-base);
 }
 
-.channelHeader {
+.conversationHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -520,12 +520,12 @@ button:active:not(:disabled) {
   z-index: 1;
 }
 
-.channelHeader h1,
+.conversationHeaderh1,
 .eyebrow {
   margin: 0;
 }
 
-.channelHeader h1 {
+.conversationHeaderh1 {
   overflow: hidden;
   color: var(--text-primary);
   font-size: 22px;
@@ -919,7 +919,7 @@ button:active:not(:disabled) {
   box-shadow: var(--shadow-xs);
 }
 
-.sidebarCollapsed .channelHeader {
+.sidebarCollapsed .conversationHeader {
   padding-left: 82px;
 }
 
@@ -2680,7 +2680,7 @@ button:active:not(:disabled) {
 }
 
 @media (max-width: 620px) {
-  .channelHeader {
+  .conversationHeader {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -2696,7 +2696,7 @@ button:active:not(:disabled) {
 
 /* ── Workspace & Conversation Selectors ──────────────────── */
 
-.channelHeader {
+.conversationHeader {
   position: relative;
   display: flex;
   align-items: flex-start;
@@ -2704,11 +2704,11 @@ button:active:not(:disabled) {
   gap: 8px;
 }
 
-.channelHeaderLeft {
+.conversationHeaderLeft {
   min-width: 0;
 }
 
-.channelHeaderRight {
+.conversationHeaderRight {
   flex-shrink: 0;
 }
 

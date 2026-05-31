@@ -728,14 +728,14 @@ export function App() {
         }}
       />
 
-      <section className="channel" aria-label="Chat channel">
-        <header className="channelHeader">
-          <div className="channelHeaderLeft">
+      <section className="conversation" aria-label="Chat conversation">
+        <header className="conversationHeader">
+          <div className="conversationHeaderLeft">
             <p className="eyebrow">{state.workspace.name || "工作区"}</p>
             <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
             {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
           </div>
-          <div className="channelHeaderRight">
+          <div className="conversationHeaderRight">
             <span className="headerMeta">{state.messages.length} 条消息</span>
           </div>
         </header>
