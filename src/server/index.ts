@@ -543,6 +543,10 @@ const server = http.createServer(async (req, res) => {
       try {
         const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
         const conv = store.update(wsId, convId, { name });
+        if (convId === activeConversationId && wsId === activeWorkspaceId) {
+          activeConversation = { id: conv.id, name: conv.name };
+          publishContextSwitched();
+        }
         sendJson(res, 200, conv);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

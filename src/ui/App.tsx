@@ -689,13 +689,12 @@ export function App() {
                 <span>点击右上角 +，启用默认模板或添加自定义智能体。</span>
               </div>
             ) : (
-              agentIds.map((agentId, index) => (
+              agentIds.map((agentId) => (
                 <AgentButton
                   key={agentId}
                   agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", status: "idle" }}
                   selected={selectedAgent === agentId}
                   onClick={() => chooseAgent(agentId)}
-                  isFirst={index === 0}
                 />
               ))
             )}
@@ -959,16 +958,15 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
   );
 }
 
-function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void; isFirst?: boolean }) {
+function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void }) {
   const isRunning = props.agent.status === "running" || props.agent.status === "starting";
-  const showRunning = !props.isFirst && isRunning;
   return (
-    <button className={`agentButton ${props.selected ? "selected" : ""} ${showRunning ? "agentRunning" : ""}`} onClick={props.onClick} type="button">
+    <button className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""}`} onClick={props.onClick} type="button">
       <span className={`statusDot ${props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
         <strong>
           {props.agent.label}
-          {showRunning && <span className="agentRunningLabel">Running</span>}
+          {isRunning && <span className="agentRunningLabel">Running</span>}
           <RuntimeBadge runtime={props.agent.runtime} />
         </strong>
         <small>{props.agent.id}</small>
