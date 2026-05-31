@@ -1194,12 +1194,11 @@ function AgentManagerPanel({ onClose, onSaved }: { onClose: () => void; onSaved:
   }
 
   function addConfig() {
-    const newIndex = configs.length;
     setConfigs((prev) => [
-      ...prev,
       { id: `agent-${Date.now()}`, name: "", role: "general", runtime: "claude-code", systemPrompt: "", enabled: true },
+      ...prev,
     ]);
-    setExpandedIndex(newIndex);
+    setExpandedIndex(0);
   }
 
   function removeConfig(index: number) {
