@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -14,8 +15,18 @@ const CONTENT_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+// Resolve dist/ui/ relative to the package root, not CWD.
+// import.meta.url → src/server/static-server.ts → two levels up → dist/ui/
+const DIST_UI_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "dist",
+  "ui",
+);
+
 export function serveStatic(urlPath: string, res: ServerResponse): boolean {
-  const root = path.resolve(process.cwd(), "dist/ui");
+  const root = DIST_UI_ROOT;
   const pathname = decodeURIComponent(urlPath);
   const requested = pathname === "/" ? "/index.html" : pathname;
   const filePath = path.resolve(root, `.${requested}`);
