@@ -688,12 +688,13 @@ export function App() {
                 <span>点击右上角 +，启用默认模板或添加自定义智能体。</span>
               </div>
             ) : (
-              agentIds.map((agentId) => (
+              agentIds.map((agentId, index) => (
                 <AgentButton
                   key={agentId}
                   agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", status: "idle" }}
                   selected={selectedAgent === agentId}
                   onClick={() => chooseAgent(agentId)}
+                  isFirst={index === 0}
                 />
               ))
             )}
@@ -945,11 +946,11 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
   );
 }
 
-function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void }) {
+function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void; isFirst?: boolean }) {
   const isRunning = props.agent.status === "running" || props.agent.status === "starting";
+  const showRunning = !props.isFirst && isRunning;
   return (
-    <button className={`agentButton ${props.selected ? "selected" : ""} ${isRunning ? "agentRunning" : ""}`} onClick={props.onClick} type="button">
-      {isRunning ? <span className="agentProgressBar" aria-hidden="true" /> : null}
+    <button className={`agentButton ${props.selected ? "selected" : ""} ${showRunning ? "agentRunning" : ""}`} onClick={props.onClick} type="button">
       <span className={`statusDot ${props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
         <strong>

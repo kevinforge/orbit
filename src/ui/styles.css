@@ -333,26 +333,11 @@ button:active:not(:disabled) {
   box-shadow: var(--shadow-xs);
 }
 
-/* Running progress bar */
+/* Running agent highlight */
 .agentRunning {
-  overflow: hidden;
-}
-
-.agentProgressBar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--success), var(--accent));
-  background-size: 200% 100%;
-  animation: progressFlow 2s linear infinite;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-}
-
-@keyframes progressFlow {
-  from { background-position: 200% 0; }
-  to { background-position: 0 0; }
+  background: rgba(15, 118, 110, 0.06);
+  border-left: 3px solid var(--accent);
+  transition: background 0.25s var(--ease-out), border-left-color 0.25s var(--ease-out);
 }
 
 .sidebarFooter {
@@ -520,12 +505,12 @@ button:active:not(:disabled) {
   z-index: 1;
 }
 
-.conversationHeaderh1,
+.conversationHeader h1,
 .eyebrow {
   margin: 0;
 }
 
-.conversationHeaderh1 {
+.conversationHeader h1 {
   overflow: hidden;
   color: var(--text-primary);
   font-size: 22px;
@@ -2670,8 +2655,7 @@ button:active:not(:disabled) {
     border-left-width: 3px;
   }
 
-  .agentStatusPill,
-  .agentProgressBar {
+  .agentStatusPill {
     display: none;
   }
 
