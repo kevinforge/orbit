@@ -315,8 +315,7 @@ button:active:not(:disabled) {
   background: transparent;
   text-align: left;
   box-shadow: none;
-  transition: all var(--transition-base);
-  position: relative;
+  transition: border-color var(--transition-base), background var(--transition-base);
 }
 
 .agentButton:hover {
@@ -331,6 +330,16 @@ button:active:not(:disabled) {
   border-left-color: var(--accent);
   background: var(--bg-surface);
   box-shadow: var(--shadow-xs);
+}
+
+.agentRunningLabel {
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 600;
+  background: rgba(15, 118, 110, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  vertical-align: middle;
 }
 
 /* Running agent highlight */

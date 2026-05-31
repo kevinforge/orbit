@@ -968,6 +968,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
       <span className="agentText">
         <strong>
           {props.agent.label}
+          {showRunning && <span className="agentRunningLabel">Running</span>}
           <RuntimeBadge runtime={props.agent.runtime} />
         </strong>
         <small>{props.agent.id}</small>
