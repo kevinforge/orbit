@@ -498,7 +498,7 @@ export function App() {
             ) : (
               workspaces.map((ws) => {
                 const isActiveWorkspace = ws.id === state.workspace.id;
-                const isWorkspaceConversationOpen = isActiveWorkspace && !collapsedWorkspaceIds.has(ws.id);
+                const isWorkspaceConversationOpen = !collapsedWorkspaceIds.has(ws.id);
                 return (
                   <div className="workspaceGroup" key={ws.id}>
                     <div className={`workspaceTreeRow ${isActiveWorkspace ? "active" : ""}`}>
