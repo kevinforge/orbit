@@ -26,9 +26,9 @@ export type ConversationContextOptions = {
 export class ConversationContext {
   readonly messages: MessageStore;
   readonly transcripts: TerminalTranscriptStore;
-  readonly agents: AgentRegistry;
-  readonly runManager: RunManager;
-  readonly messageRouter: MessageRouter;
+  agents: AgentRegistry;
+  runManager: RunManager;
+  messageRouter: MessageRouter;
 
   private _profiles: readonly AgentProfile[];
   private readonly eventBus: EventBus;
