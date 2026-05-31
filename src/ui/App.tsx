@@ -628,14 +628,14 @@ export function App() {
                                 />
                               </form>
                             ) : (
-                              <>
+                              <div className="conversationRowName">
                                 <button type="button" onClick={() => switchConversation(conv.id, ws.id)} title={conv.name}>
                                   <span>{conv.name}</span>
                                 </button>
                                 {isConversationRunning(state.runningSummaries, ws.id, conv.id) && (
                                   <span className="conversationRunningDot" title="Agent running" />
                                 )}
-                              </>
+                              </div>
                             )}
                             <div className="rowMenuWrap">
                               <button

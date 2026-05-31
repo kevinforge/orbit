@@ -1719,7 +1719,13 @@ button:active:not(:disabled) {
   margin-left: 30px;
 }
 
-.conversationRow > button:first-child {
+.conversationRowName {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.conversationRowName > button {
   display: block;
   min-width: 0;
   width: 100%;
@@ -1733,18 +1739,18 @@ button:active:not(:disabled) {
   font-size: 15px;
 }
 
-.conversationRow > button:first-child span {
+.conversationRowName > button span {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.conversationRow:hover > button:first-child {
+.conversationRow:hover .conversationRowName > button {
   background: transparent;
 }
 
-.conversationRow.active > button:first-child {
+.conversationRow.active .conversationRowName > button {
   color: var(--text-primary);
   background: transparent;
   font-weight: 700;
