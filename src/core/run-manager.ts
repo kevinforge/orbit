@@ -6,6 +6,7 @@ import type {
   RunResult,
   RuntimeEvent,
 } from "../shared/types.ts";
+import { randomBytes } from "node:crypto";
 import type { EventBus } from "./event-bus.ts";
 import type { MessageStore } from "./message-store.ts";
 
@@ -318,7 +319,7 @@ export class RunManager {
 }
 
 function createRunId(agentId: AgentId): string {
-  return `run_${agentId}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  return `run_${agentId}_${Date.now()}_${randomBytes(8).toString("hex")}`;
 }
 
 function createActivity(text: string): AgentActivityEvent {
