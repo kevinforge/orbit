@@ -510,12 +510,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/conversations") {
-      if (!activeWorkspaceId) {
+      const wsId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!wsId) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before creating a conversation." });
         return;
       }
       const input = (await readJson(req)) as { name?: unknown };
       const name = conversationTitle(typeof input.name === "string" ? input.name : "");
+      // Switch workspace if creating in a different one
+      if (wsId !== activeWorkspaceId) {
+        switchWorkspace(wsId);
+      }
       const conv = conversationStore.create(activeWorkspaceId, name);
       activateConversation(conv);
       publishContextSwitched();
@@ -527,10 +532,13 @@ const server = http.createServer(async (req, res) => {
       const parts = url.pathname.split("/");
       const convId = parts[3];
       if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
+      const wsId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!wsId) { sendJson(res, 409, { ok: false, message: "No active workspace." }); return; }
       const input = (await readJson(req)) as { name?: unknown };
       const name = typeof input.name === "string" ? input.name.trim() : undefined;
       try {
-        const conv = conversationStore.update(activeWorkspaceId, convId, { name });
+        const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
+        const conv = store.update(wsId, convId, { name });
         sendJson(res, 200, conv);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -580,6 +588,10 @@ const server = http.createServer(async (req, res) => {
       const convId = parts[3];
       if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
       try {
+        const wsId = url.searchParams.get("workspaceId");
+        if (wsId && wsId !== activeWorkspaceId) {
+          switchWorkspace(wsId);
+        }
         switchConversation(convId);
         sendJson(res, 200, { ok: true, workspace: activeWorkspace, conversation: activeConversation });
       } catch (error) {

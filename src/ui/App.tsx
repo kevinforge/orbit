@@ -401,38 +401,40 @@ export function App() {
 
   async function switchConversation(conversationId: string, targetWorkspaceId?: string) {
     if (conversationId === state.conversation.id) return;
-    // If the conversation belongs to a different workspace, switch workspace first
-    if (targetWorkspaceId && targetWorkspaceId !== state.workspace.id) {
-      const wsResponse = await fetch(`/api/workspaces/${targetWorkspaceId}/switch`, { method: "POST" });
-      if (!wsResponse.ok) return;
-    }
-    const response = await fetch(`/api/conversations/${conversationId}/switch`, { method: "POST" });
+    const wsParam = targetWorkspaceId && targetWorkspaceId !== state.workspace.id ? `?workspaceId=${targetWorkspaceId}` : "";
+    const response = await fetch(`/api/conversations/${conversationId}/switch${wsParam}`, { method: "POST" });
     if (!response.ok) return;
     refreshConversations();
     refreshState();
   }
 
-  async function createConversation() {
-    if (!state.workspace.id) return;
-    // Active workspace is always expanded, no need to track in expandedWorkspaceIds
-    const response = await fetch("/api/conversations", {
+  async function createConversation(workspaceId: string) {
+    const wsParam = workspaceId !== state.workspace.id ? `?workspaceId=${workspaceId}` : "";
+    const response = await fetch(`/api/conversations${wsParam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
     if (!response.ok) return;
+    // Expand the workspace so user sees the new conversation
+    setExpandedWorkspaceIds((ids) => {
+      const next = new Set(ids);
+      next.add(workspaceId);
+      return next;
+    });
     refreshConversations();
     refreshState();
   }
 
-  async function renameConversation(conversationId: string, name: string) {
+  async function renameConversation(conversationId: string, name: string, workspaceId?: string) {
     const trimmed = name.trim();
     if (!trimmed) {
       setEditingConversationId(null);
       setEditingConversationName("");
       return;
     }
-    const response = await fetch(`/api/conversations/${conversationId}`, {
+    const wsParam = workspaceId && workspaceId !== state.workspace.id ? `?workspaceId=${workspaceId}` : "";
+    const response = await fetch(`/api/conversations/${conversationId}${wsParam}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: trimmed }),
@@ -594,8 +596,8 @@ export function App() {
                           </div>
                         ) : null}
                       </div>
-                      {isActiveWorkspace ? (
-                        <button className="rowIconButton persistent" type="button" onClick={createConversation} title="新建会话">
+                      {isWorkspaceConversationOpen ? (
+                        <button className="rowIconButton persistent" type="button" onClick={() => createConversation(ws.id)} title="新建会话">
                           <NavIcon kind="edit" />
                         </button>
                       ) : null}
@@ -609,13 +611,13 @@ export function App() {
                                 className="rowRenameForm"
                                 onSubmit={(event) => {
                                   event.preventDefault();
-                                  renameConversation(conv.id, editingConversationName);
+                                  renameConversation(conv.id, editingConversationName, ws.id);
                                 }}
                               >
                                 <input
                                   value={editingConversationName}
                                   onChange={(event) => setEditingConversationName(event.target.value)}
-                                  onBlur={() => renameConversation(conv.id, editingConversationName)}
+                                  onBlur={() => renameConversation(conv.id, editingConversationName, ws.id)}
                                   onKeyDown={(event) => {
                                     if (event.key === "Escape") {
                                       setEditingConversationId(null);
