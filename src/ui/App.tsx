@@ -28,7 +28,7 @@ export function App() {
   const [showNewMessageHint, setShowNewMessageHint] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, Conversation[]>>({});
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
   const [editingWorkspaceName, setEditingWorkspaceName] = useState("");
@@ -50,7 +50,22 @@ export function App() {
     fetch("/api/workspaces").then((r) => r.json()).then(setWorkspaces).catch(() => {});
   };
   const refreshConversations = () => {
-    fetch("/api/conversations").then((r) => r.json()).then(setConversations).catch(() => {});
+    // Load conversations for all workspaces
+    const pending = workspaces.length > 0 ? workspaces : (state.workspace.id ? [{ id: state.workspace.id }] as Workspace[] : []);
+    Promise.all(
+      pending.map((ws) =>
+        fetch(`/api/workspaces/${ws.id}/conversations`)
+          .then((r) => r.json())
+          .then((convs: Conversation[]) => ({ wsId: ws.id, convs }))
+          .catch(() => ({ wsId: ws.id, convs: [] as Conversation[] })),
+      ),
+    ).then((results) => {
+      const byWs: Record<string, Conversation[]> = {};
+      for (const { wsId, convs } of results) {
+        byWs[wsId] = convs;
+      }
+      setConversationsByWorkspace((prev) => ({ ...prev, ...byWs }));
+    });
   };
   const refreshState = () => {
     fetch("/api/state")
@@ -111,8 +126,13 @@ export function App() {
   // Load workspace and conversation lists
   useEffect(() => {
     refreshWorkspaces();
-    refreshConversations();
   }, [state.workspace.id, state.conversation.id]);
+
+  // Refresh conversations when workspaces list changes
+  useEffect(() => {
+    if (workspaces.length === 0 && !state.workspace.id) return;
+    refreshConversations();
+  }, [workspaces, state.workspace.id]);
 
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
@@ -566,7 +586,7 @@ export function App() {
                     </div>
                     {isWorkspaceConversationOpen ? (
                       <div className="navList conversationList">
-                        {conversations.map((conv) => (
+                        {(conversationsByWorkspace[ws.id] ?? []).map((conv) => (
                           <div className={`conversationRow ${conv.id === state.conversation.id ? "active" : ""}`} key={conv.id}>
                             {editingConversationId === conv.id ? (
                               <form

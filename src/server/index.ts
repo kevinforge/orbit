@@ -495,6 +495,20 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname.match(/^\/api\/workspaces\/[^/]+\/conversations$/)) {
+      const parts = url.pathname.split("/");
+      const wsId = parts[3];
+      if (!wsId) { sendJson(res, 400, { ok: false, message: "Missing workspace id." }); return; }
+      try {
+        const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
+        sendJson(res, 200, store.list(wsId));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        sendJson(res, 404, { ok: false, message: msg });
+      }
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/conversations") {
       if (!activeWorkspaceId) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before creating a conversation." });
