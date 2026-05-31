@@ -399,8 +399,13 @@ export function App() {
       }
     }
 
-  async function switchConversation(conversationId: string) {
+  async function switchConversation(conversationId: string, targetWorkspaceId?: string) {
     if (conversationId === state.conversation.id) return;
+    // If the conversation belongs to a different workspace, switch workspace first
+    if (targetWorkspaceId && targetWorkspaceId !== state.workspace.id) {
+      const wsResponse = await fetch(`/api/workspaces/${targetWorkspaceId}/switch`, { method: "POST" });
+      if (!wsResponse.ok) return;
+    }
     const response = await fetch(`/api/conversations/${conversationId}/switch`, { method: "POST" });
     if (!response.ok) return;
     refreshConversations();
@@ -622,7 +627,7 @@ export function App() {
                               </form>
                             ) : (
                               <>
-                                <button type="button" onClick={() => switchConversation(conv.id)} title={conv.name}>
+                                <button type="button" onClick={() => switchConversation(conv.id, ws.id)} title={conv.name}>
                                   <span>{conv.name}</span>
                                 </button>
                                 {isConversationRunning(state.runningSummaries, ws.id, conv.id) && (
