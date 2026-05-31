@@ -1,25 +1,25 @@
 import type { AgentId, AgentProfile } from "../shared/types.ts";
 
-export type ChannelHistoryEntry = {
+export type AgentHistoryEntry = {
   sender: string;
   content: string;
 };
 
-export type ChannelContextInput = {
+export type AgentContextInput = {
   agentId: AgentId;
   profiles: readonly AgentProfile[];
-  channelMessage: string;
-  history?: ChannelHistoryEntry[];
+  agentMessage: string;
+  history?: AgentHistoryEntry[];
 };
 
-function renderHistory(entries: ChannelHistoryEntry[]): string[] {
+function renderHistory(entries: AgentHistoryEntry[]): string[] {
   return [
-    "[Channel history]",
+    "[Conversation history]",
     ...entries.map((entry) => `[${entry.sender}]: ${entry.content}`),
   ];
 }
 
-export function buildChannelContext(input: ChannelContextInput): string {
+export function buildAgentContext(input: AgentContextInput): string {
   const profile = input.profiles.find((agent) => agent.id === input.agentId);
   const availableAgents = input.profiles.map((agent) => {
     const desc = agent.description ? ` — ${agent.description}` : "";
@@ -49,10 +49,10 @@ export function buildChannelContext(input: ChannelContextInput): string {
     "",
     "Collaboration rules:",
     "- Execute only the assignment addressed to your own @agent: marker.",
-    "- The full channel message may contain assignments for multiple agents. Orbit has already scheduled the other agents.",
-    "- Use other agents' assignments as shared context, not as your own work, and do not repeat or forward assignments that already exist in the same channel message.",
+    "- The conversation may contain assignments for multiple agents. Orbit has already scheduled the other agents.",
+    "- Use other agents' assignments as shared context, not as your own work, and do not repeat or forward assignments that already exist in the same conversation.",
     "- Plain @agent mentions without a colon are references only.",
-    "- Only create a new @agent: assignment when it is genuinely new follow-up work that is not already present in the full channel message.",
+    "- Only create a new @agent: assignment when it is genuinely new follow-up work that is not already present in the conversation.",
     "- If you need another agent to continue, use that agent's @agent: assignment marker with a clear task.",
     "",
     "Collaboration examples:",
@@ -76,13 +76,13 @@ export function buildChannelContext(input: ChannelContextInput): string {
     "",
     "Final answer rules:",
     "- Return only your useful result, question, or concise status.",
-    "- Do not start by repeating the full channel message, the private context, or your own @agent: assignment marker.",
+    "- Do not start by repeating the conversation, the private context, or your own @agent: assignment marker.",
     "- Do not include terminal UI noise, hook output, API errors, or thinking/status text.",
     "- If the task is complete, provide a concise final answer and stop.",
     "",
     ...(input.history?.length ? [...renderHistory(input.history), ""] : []),
-    "[Full channel message]",
-    input.channelMessage,
+    "[Current task]",
+    input.agentMessage,
   ]
     .filter((line) => line !== "")
     .join("\n");

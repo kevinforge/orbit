@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildHistoryForAgent, MAX_HISTORY_CHARS, RECENT_UNTRUNCATED_COUNT } from "../src/core/channel-history.ts";
+import { buildHistoryForAgent, MAX_HISTORY_CHARS, RECENT_UNTRUNCATED_COUNT } from "../src/core/agent-history-builder.ts";
 import type { ChatMessage } from "../src/shared/types.ts";
 
 function msg(overrides: Partial<ChatMessage> & { kind: ChatMessage["kind"]; content: string }): ChatMessage {

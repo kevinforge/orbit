@@ -12,6 +12,7 @@ import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
+import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import type { ConversationInfo, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { serveStatic } from "./static-server.ts";
@@ -326,6 +327,7 @@ function currentAgentStates() {
 }
 
 // --- Initialize ---
+migrateChannelLayer();
 initActiveContext();
 
 // --- HTTP Server ---
@@ -656,7 +658,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
 
   const userMessage = context.messages.add({ kind: "user", content, status: "sent" });
   eventBus.publish({ type: "message.created", conversationId: activeConversationId, message: userMessage });
-  context.channelRouter.process(userMessage);
+  context.messageRouter.process(userMessage);
 
   sendJson(res, 200, { ok: true, messageId: userMessage.id });
 }

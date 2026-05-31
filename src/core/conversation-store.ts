@@ -79,24 +79,24 @@ export class ConversationStore {
   }
 
   private filePath(workspaceId: string): string {
-    return path.join(this.baseDir, "channels", workspaceId, "default", "conversations.json");
+    return path.join(this.baseDir, "conversations", workspaceId, "conversations.json");
   }
 
   private cleanupConversationData(workspaceId: string, conversationId: string): void {
     // Remove channels data (messages)
-    const channelsDir = path.join(this.baseDir, "channels", workspaceId, "default", conversationId);
+    const channelsDir = path.join(this.baseDir, "conversations", workspaceId, conversationId);
     this.rmDir(channelsDir);
 
     // Remove transcripts
-    const transcriptsDir = path.join(this.baseDir, "transcripts", workspaceId, "default", conversationId);
+    const transcriptsDir = path.join(this.baseDir, "transcripts", workspaceId, conversationId);
     this.rmDir(transcriptsDir);
 
-    // Remove sessions for all runtimes under this workspace/channel/conversation
+    // Remove sessions for all runtimes under this workspace/conversation
     const sessionsBase = path.join(this.baseDir, "sessions", workspaceId);
     try {
       const runtimeDirs = fs.readdirSync(sessionsBase);
       for (const runtime of runtimeDirs) {
-        const convSessionsDir = path.join(sessionsBase, runtime, "default", conversationId);
+        const convSessionsDir = path.join(sessionsBase, runtime, conversationId);
         this.rmDir(convSessionsDir);
       }
     } catch {

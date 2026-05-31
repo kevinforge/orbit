@@ -1,19 +1,18 @@
 import path from "node:path";
 
 import { AgentRegistry } from "../core/agent-registry.ts";
-import { buildChannelContext } from "../core/channel-context-builder.ts";
-import { buildHistoryForAgent } from "../core/channel-history.ts";
+import { buildAgentContext } from "../core/agent-context-builder.ts";
+import { buildHistoryForAgent } from "../core/agent-history-builder.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { MessageStore } from "../core/message-store.ts";
 import { RunManager } from "../core/run-manager.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
-import { ChannelRouter } from "../core/channel-router.ts";
+import { MessageRouter } from "../core/message-router.ts";
 import type { AgentId, AgentProfile } from "../shared/types.ts";
 
 const MAX_ROUTE_DEPTH = 5;
-const CHANNEL_ID = "default";
 
 export type ConversationContextOptions = {
   workspaceId: string;
@@ -29,7 +28,7 @@ export class ConversationContext {
   readonly transcripts: TerminalTranscriptStore;
   readonly agents: AgentRegistry;
   readonly runManager: RunManager;
-  readonly channelRouter: ChannelRouter;
+  readonly messageRouter: MessageRouter;
 
   private _profiles: readonly AgentProfile[];
   private readonly eventBus: EventBus;
@@ -41,10 +40,10 @@ export class ConversationContext {
     this.eventBus = eventBus;
 
     const messagesPath = path.join(
-      workspaceStore.channelsDir(workspaceId, CHANNEL_ID, conversationId),
+      workspaceStore.channelsDir(workspaceId, conversationId),
       "messages.json",
     );
-    const transcriptsDir = workspaceStore.transcriptsDir(workspaceId, CHANNEL_ID, conversationId);
+    const transcriptsDir = workspaceStore.transcriptsDir(workspaceId, conversationId);
 
     this.messages = new MessageStore(messagesPath);
     this.transcripts = new TerminalTranscriptStore(transcriptsDir);
@@ -58,7 +57,7 @@ export class ConversationContext {
       }
     });
 
-    this.agents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, conversationId);
+    this.agents = new AgentRegistry(profiles, eventBus, sessionStore, conversationId);
     this.agents.startAll();
 
     const agentIds = this.agents.ids();
@@ -70,14 +69,14 @@ export class ConversationContext {
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string) => {
         const history = buildHistoryForAgent(agentId, this.messages.list());
-        return buildChannelContext({ agentId, profiles, channelMessage: prompt, history });
+        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history });
       },
       onRunCompleted: (message) => {
-        this.channelRouter.process(message);
+        this.messageRouter.process(message);
       },
     });
 
-    this.channelRouter = new ChannelRouter({
+    this.messageRouter = new MessageRouter({
       availableAgents: agentIds,
       maxRouteDepth: MAX_ROUTE_DEPTH,
       createSystemMessage: (content, parentMessageId) => {
@@ -103,7 +102,7 @@ export class ConversationContext {
     this.runManager.dispose();
 
     const { workspaceId, conversationId, eventBus, sessionStore } = this.options;
-    const newAgents = new AgentRegistry(profiles, eventBus, sessionStore, CHANNEL_ID, conversationId);
+    const newAgents = new AgentRegistry(profiles, eventBus, sessionStore, conversationId);
     newAgents.startAll();
 
     this._profiles = profiles;
@@ -119,14 +118,14 @@ export class ConversationContext {
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string) => {
         const history = buildHistoryForAgent(agentId, self.messages.list());
-        return buildChannelContext({ agentId, profiles, channelMessage: prompt, history });
+        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history });
       },
       onRunCompleted: (message) => {
-        self.channelRouter.process(message);
+        self.messageRouter.process(message);
       },
     });
 
-    const newChannelRouter = new ChannelRouter({
+    const newMessageRouter = new MessageRouter({
       availableAgents: agentIds,
       maxRouteDepth: MAX_ROUTE_DEPTH,
       createSystemMessage: (content, parentMessageId) => {
@@ -143,7 +142,7 @@ export class ConversationContext {
     });
 
     // Replace readonly fields via Object.assign (intentional hot-swap)
-    Object.assign(this, { agents: newAgents, runManager: newRunManager, channelRouter: newChannelRouter });
+    Object.assign(this, { agents: newAgents, runManager: newRunManager, messageRouter: newMessageRouter });
   }
 
   dispose(): void {

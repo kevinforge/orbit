@@ -109,7 +109,7 @@ export class WorkspaceStore {
     const dirs = [
       path.join(this.baseDir, "workspaces", id),
       path.join(this.baseDir, "sessions", id),
-      path.join(this.baseDir, "channels", id),
+      path.join(this.baseDir, "conversations", id),
       path.join(this.baseDir, "transcripts", id),
     ];
     for (const dir of dirs) {
@@ -136,12 +136,12 @@ export class WorkspaceStore {
     return path.join(this.baseDir, "data", workspaceId);
   }
 
-  channelsDir(workspaceId: string, channelId = "default", conversationId = "default"): string {
-    return path.join(this.baseDir, "channels", workspaceId, channelId, conversationId);
+  channelsDir(workspaceId: string, conversationId: string): string {
+    return path.join(this.baseDir, "conversations", workspaceId, conversationId);
   }
 
-  transcriptsDir(workspaceId: string, channelId = "default", conversationId = "default"): string {
-    return path.join(this.baseDir, "transcripts", workspaceId, channelId, conversationId);
+  transcriptsDir(workspaceId: string, conversationId: string): string {
+    return path.join(this.baseDir, "transcripts", workspaceId, conversationId);
   }
 
   private metadataPath(id: string): string {

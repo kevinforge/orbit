@@ -1,5 +1,5 @@
 import type { AgentId, ChatMessage } from "../shared/types.ts";
-import type { ChannelHistoryEntry } from "./channel-context-builder.ts";
+import type { AgentHistoryEntry } from "./agent-context-builder.ts";
 
 const MAX_HISTORY_CHARS = 12000;
 const RECENT_UNTRUNCATED_COUNT = 6;
@@ -7,7 +7,7 @@ const OLDER_ENTRY_MAX_CHARS = 500;
 
 export { MAX_HISTORY_CHARS, OLDER_ENTRY_MAX_CHARS, RECENT_UNTRUNCATED_COUNT };
 
-export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[]): ChannelHistoryEntry[] {
+export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[]): AgentHistoryEntry[] {
   let cutoffIndex = -1;
   for (let i = allMessages.length - 1; i >= 0; i--) {
     const msg = allMessages[i];
@@ -36,7 +36,7 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
 
   // Phase 1: Reserve budget for recent entries (newest → oldest within recent)
   // These are the most critical — user assignments, latest agent feedback.
-  const recentEntries: ChannelHistoryEntry[] = [];
+  const recentEntries: AgentHistoryEntry[] = [];
   let recentChars = 0;
   for (let i = recent.length - 1; i >= 0; i--) {
     const msg = recent[i];
@@ -48,7 +48,7 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
 
   // Phase 2: Fill remaining budget with older entries (newest → oldest)
   const remainingBudget = MAX_HISTORY_CHARS - recentChars;
-  const olderEntries: ChannelHistoryEntry[] = [];
+  const olderEntries: AgentHistoryEntry[] = [];
   let olderChars = 0;
   for (let i = older.length - 1; i >= 0; i--) {
     const msg = older[i];

@@ -107,9 +107,9 @@ test("delete cleans up channels, transcripts and sessions directories for the co
   const other = store.create("ws1", "Keep Me");
 
   // Create directories that should be removed
-  const channelsDir = path.join(dir, "channels", "ws1", "default", conv.id);
-  const transcriptsDir = path.join(dir, "transcripts", "ws1", "default", conv.id);
-  const sessionsDir = path.join(dir, "sessions", "ws1", "claude-code", "default", conv.id);
+  const channelsDir = path.join(dir, "conversations", "ws1", conv.id);
+  const transcriptsDir = path.join(dir, "transcripts", "ws1", conv.id);
+  const sessionsDir = path.join(dir, "sessions", "ws1", "claude-code", conv.id);
 
   fs.mkdirSync(channelsDir, { recursive: true });
   fs.mkdirSync(transcriptsDir, { recursive: true });
@@ -121,8 +121,8 @@ test("delete cleans up channels, transcripts and sessions directories for the co
   fs.writeFileSync(path.join(sessionsDir, "developer.json"), '{"sessionId":"abc"}');
 
   // Create directories for the other conversation that should NOT be removed
-  const otherChannelsDir = path.join(dir, "channels", "ws1", "default", other.id);
-  const otherTranscriptsDir = path.join(dir, "transcripts", "ws1", "default", other.id);
+  const otherChannelsDir = path.join(dir, "conversations", "ws1", other.id);
+  const otherTranscriptsDir = path.join(dir, "transcripts", "ws1", other.id);
   fs.mkdirSync(otherChannelsDir, { recursive: true });
   fs.writeFileSync(path.join(otherChannelsDir, "messages.json"), '{"messages":[],"nextId":1}');
 

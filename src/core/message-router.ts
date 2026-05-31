@@ -1,7 +1,7 @@
 import type { AgentId, ChatMessage, MessageRouteState } from "../shared/types.ts";
 import { routeMention } from "./mention-router.ts";
 
-export type ChannelRouterOptions = {
+export type MessageRouterOptions = {
   availableAgents: readonly AgentId[];
   maxRouteDepth: number;
   createSystemMessage: (content: string, parentMessageId?: string) => ChatMessage;
@@ -9,10 +9,10 @@ export type ChannelRouterOptions = {
   markMessageRouted: (messageId: string, routeState: MessageRouteState) => void;
 };
 
-export class ChannelRouter {
+export class MessageRouter {
   private processedIds = new Set<string>();
 
-  constructor(private options: ChannelRouterOptions) {}
+  constructor(private options: MessageRouterOptions) {}
 
   process(message: ChatMessage): void {
     if (this.processedIds.has(message.id)) {

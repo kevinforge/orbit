@@ -116,42 +116,26 @@ test("dataDir returns workspace data path", () => {
   assert.equal(dataDir, path.join(dir, "data", ws.id));
 });
 
-test("channelsDir returns path with workspace, channel and conversation", () => {
+test("channelsDir returns path with workspace and conversation", () => {
   const dir = tmpDir();
   const store = new WorkspaceStore(dir);
   const ws = store.resolve("/tmp/project-channels");
 
   assert.equal(
-    store.channelsDir(ws.id, "general", "conv-1"),
-    path.join(dir, "channels", ws.id, "general", "conv-1"),
+    store.channelsDir(ws.id, "conv-1"),
+    path.join(dir, "conversations", ws.id, "conv-1"),
   );
 });
 
-test("channelsDir defaults to 'default' for channel and conversation", () => {
-  const dir = tmpDir();
-  const store = new WorkspaceStore(dir);
-  const ws = store.resolve("/tmp/project-defaults");
-
-  assert.equal(store.channelsDir(ws.id), path.join(dir, "channels", ws.id, "default", "default"));
-});
-
-test("transcriptsDir returns path with workspace, channel and conversation", () => {
+test("transcriptsDir returns path with workspace and conversation", () => {
   const dir = tmpDir();
   const store = new WorkspaceStore(dir);
   const ws = store.resolve("/tmp/project-transcripts");
 
   assert.equal(
-    store.transcriptsDir(ws.id, "general", "conv-1"),
-    path.join(dir, "transcripts", ws.id, "general", "conv-1"),
+    store.transcriptsDir(ws.id, "conv-1"),
+    path.join(dir, "transcripts", ws.id, "conv-1"),
   );
-});
-
-test("transcriptsDir defaults to 'default' for channel and conversation", () => {
-  const dir = tmpDir();
-  const store = new WorkspaceStore(dir);
-  const ws = store.resolve("/tmp/project-defaults");
-
-  assert.equal(store.transcriptsDir(ws.id), path.join(dir, "transcripts", ws.id, "default", "default"));
 });
 
 // --- New CRUD tests ---
@@ -235,16 +219,16 @@ test("delete removes workspace and all related directories", () => {
 
   // Create some related directories
   fs.mkdirSync(store.sessionsDir(ws.id), { recursive: true });
-  fs.mkdirSync(store.channelsDir(ws.id), { recursive: true });
-  fs.mkdirSync(store.transcriptsDir(ws.id), { recursive: true });
+  fs.mkdirSync(path.join(dir, "conversations", ws.id), { recursive: true });
+  fs.mkdirSync(path.join(dir, "transcripts", ws.id), { recursive: true });
 
   store.delete(ws.id);
 
   assert.equal(store.get(ws.id), null);
   assert.ok(!fs.existsSync(path.join(dir, "workspaces", ws.id)));
   assert.ok(!fs.existsSync(store.sessionsDir(ws.id)));
-  assert.ok(!fs.existsSync(store.channelsDir(ws.id)));
-  assert.ok(!fs.existsSync(store.transcriptsDir(ws.id)));
+  assert.ok(!fs.existsSync(path.join(dir, "conversations", ws.id)));
+  assert.ok(!fs.existsSync(path.join(dir, "transcripts", ws.id)));
 });
 
 test("delete throws for unknown id", () => {
