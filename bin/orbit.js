@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Orbit — local-first chat control surface for Claude Code agents.
+// Orbit - local-first chat control surface for coding agents.
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
