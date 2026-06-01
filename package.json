@@ -1,13 +1,26 @@
 {
   "name": "orbit",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.9.0",
+  "private": false,
   "description": "Local-first chat control surface for coordinating Claude Code agents.",
   "type": "module",
+  "bin": {
+    "orbit": "./bin/orbit.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "bin/",
+    "dist/"
+  ],
   "scripts": {
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run test && npm run build && npm run pack:check",
     "dev": "tsx src/server/index.ts",
-    "build": "tsc --noEmit && vite build",
-    "test": "node --test --import tsx tests/mention-router.test.ts tests/message-store.test.ts tests/message-router.test.ts tests/ansi-text-extractor.test.ts tests/terminal-transcript-store.test.ts tests/claude-output-detector.test.ts tests/claude-cli-runtime.test.ts tests/codex-cli-runtime.test.ts tests/codebuddy-cli-runtime.test.ts tests/agent-profiles.test.ts tests/agent-registry.test.ts tests/agent-context-builder.test.ts tests/agent-history-builder.test.ts tests/run-manager.test.ts tests/session-store.test.ts tests/agent-session.test.ts tests/workspace-store.test.ts tests/conversation-store.test.ts tests/markdown-renderer.test.ts tests/agent-config-store.test.ts",
+    "build": "tsc --noEmit && vite build && node scripts/build-server.mjs",
+    "pack:check": "node scripts/check-package.mjs",
+    "test": "node --test --import tsx tests/mention-router.test.ts tests/message-store.test.ts tests/message-router.test.ts tests/ansi-text-extractor.test.ts tests/terminal-transcript-store.test.ts tests/claude-output-detector.test.ts tests/claude-cli-runtime.test.ts tests/codex-cli-runtime.test.ts tests/codebuddy-cli-runtime.test.ts tests/agent-profiles.test.ts tests/agent-registry.test.ts tests/agent-context-builder.test.ts tests/agent-history-builder.test.ts tests/run-manager.test.ts tests/session-store.test.ts tests/agent-session.test.ts tests/workspace-store.test.ts tests/conversation-store.test.ts tests/markdown-renderer.test.ts tests/agent-config-store.test.ts tests/package-manifest.test.ts",
     "test:glob": "node --test --import tsx tests/*.test.ts"
   },
   "dependencies": {
@@ -20,6 +33,7 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "esbuild": "^0.28.0",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.13"

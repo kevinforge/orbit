@@ -87,7 +87,7 @@ save is blocked with a 409 response until the run completes.
 To restart the local service on Windows PowerShell and clear the default port first:
 
 ```powershell
-cd D:\projects\claude-code-study\orbit; $p = Get-NetTCPConnection -LocalPort 4317 -State Listen -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p.OwningProcess -Force }; npm run dev
+cd <project-dir>; $p = Get-NetTCPConnection -LocalPort 4317 -State Listen -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p.OwningProcess -Force }; npm run dev
 ```
 
 ## Verify
@@ -95,6 +95,44 @@ cd D:\projects\claude-code-study\orbit; $p = Get-NetTCPConnection -LocalPort 431
 ```powershell
 npm run test
 npm run build
+npm run pack:check
+```
+
+`npm run pack:check` validates the npm package boundary. The published package
+is intentionally limited to the CLI launcher in `bin/` and built artifacts in
+`dist/`; source files, tests, docs, sourcemaps, screenshots, local `.orbit`
+state, and packaging scripts must not be included.
+
+## Local Package Smoke Test
+
+Use this flow to test the same package shape that users will install from npm:
+
+```powershell
+# In the orbit project directory:
+
+npm install
+npm run test
+npm run build
+npm run pack:check
+
+npm pack
+npm install -g .\orbit-0.9.0.tgz
+
+orbit
+```
+
+Open `http://localhost:4317` after `orbit` starts.
+
+To inspect the package contents without creating a tarball:
+
+```powershell
+npm pack --dry-run --json --ignore-scripts
+```
+
+To remove the local global install after testing:
+
+```powershell
+npm uninstall -g orbit
 ```
 
 ## Repository Layout

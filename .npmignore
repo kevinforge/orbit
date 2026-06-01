@@ -1,0 +1,2 @@
+# .npmignore overrides .gitignore for npm pack.
+# The "files" field in package.json is the sole include filter.

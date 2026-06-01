@@ -17,3 +17,6 @@ Thumbs.db
 
 # Local screenshots (not for repo)
 orbit-ui-*.png
+
+# npm pack output
+*.tgz

@@ -49,7 +49,7 @@ Orbit is a local-first chat control surface that coordinates multiple Claude Cod
 - React 19 + Vite 8 (UI in a single `App.tsx`, no router or state library)
 - Raw `node:http` server (no Express/Koa)
 - Node.js built-in test runner (`node --test`)
-- Claude Code CLI spawned as child process in non-interactive `stream-json` mode
+- Codex, Claude Code, and CodeBuddy CLI spawned as child processes in non-interactive mode
 
 ### Core Data Flow
 
