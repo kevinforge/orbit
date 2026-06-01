@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import os from "node:os";
 import path from "node:path";
-import { probeRuntime, probeAllRuntimes, type RuntimeProbeResult } from "../src/core/runtime-probe.ts";
+import { probeRuntime, probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../src/core/runtime-probe.ts";
 
 test("probeRuntime finds node on PATH", async () => {
   const result = await probeRuntime("node");
@@ -41,4 +41,22 @@ test("probeRuntime handles special characters in command name", async () => {
   const result = await probeRuntime("");
   assert.equal(result.available, false);
   assert.ok(result.error);
+});
+
+// --- runtimeKindToCliKey mapping ---
+
+test("runtimeKindToCliKey maps claude-code to claude CLI key", () => {
+  assert.equal(runtimeKindToCliKey("claude-code"), "claude");
+});
+
+test("runtimeKindToCliKey passes through codex unchanged", () => {
+  assert.equal(runtimeKindToCliKey("codex"), "codex");
+});
+
+test("runtimeKindToCliKey passes through codebuddy unchanged", () => {
+  assert.equal(runtimeKindToCliKey("codebuddy"), "codebuddy");
+});
+
+test("runtimeKindToCliKey handles unknown runtime types gracefully", () => {
+  assert.equal(runtimeKindToCliKey("unknown-runtime"), "unknown-runtime");
 });

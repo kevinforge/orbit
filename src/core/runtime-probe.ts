@@ -52,6 +52,11 @@ export async function probeRuntime(command: string): Promise<RuntimeProbeResult>
 
 export type RuntimeAvailabilityMap = Record<string, RuntimeProbeResult>;
 
+/** Map AgentRuntimeKind to CLI probe key: claude-code → claude */
+export function runtimeKindToCliKey(runtime: string): string {
+  return runtime === "claude-code" ? "claude" : runtime;
+}
+
 export async function probeAllRuntimes(): Promise<RuntimeProbeResult[]> {
   return Promise.all([
     probeRuntime("claude"),

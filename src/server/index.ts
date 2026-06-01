@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 import { configsToProfiles } from "../core/agent-profiles.ts";
 import { AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
-import { probeAllRuntimes, type RuntimeProbeResult } from "../core/runtime-probe.ts";
+import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
@@ -48,7 +48,7 @@ async function probeRuntimesOnStartup(): Promise<void> {
 }
 
 function runtimeAvailable(runtime: string): boolean {
-  const result = runtimeAvailability.get(runtime);
+  const result = runtimeAvailability.get(runtimeKindToCliKey(runtime));
   return result?.available ?? false;
 }
 
