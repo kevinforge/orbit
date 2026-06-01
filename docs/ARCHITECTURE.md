@@ -8,7 +8,7 @@ Orbit is a local-first agent collaboration app. The current implementation runs 
 React UI
   -> POST /api/messages
   -> MessageStore
-  -> ChannelRouter
+  -> MessageRouter
   -> RunManager
   -> AgentRegistry / AgentSession
   -> Runtime adapter
@@ -37,10 +37,10 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/codex-cli-runtime.ts` | Spawns Codex CLI and parses JSONL output |
 | `src/core/codebuddy-cli-runtime.ts` | Spawns CodeBuddy CLI and parses stream JSON output |
 | `src/core/run-manager.ts` | Per-agent run queue and lifecycle events |
-| `src/core/channel-router.ts` | Routes user and agent messages containing explicit assignments |
+| `src/core/message-router.ts` | Routes user and agent messages containing explicit assignments |
 | `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
-| `src/core/channel-context-builder.ts` | Builds private context passed into each agent run |
-| `src/core/channel-history.ts` | Builds scoped channel history for each agent run |
+| `src/core/agent-context-builder.ts` | Builds private context passed into each agent run |
+| `src/core/agent-history-builder.ts` | Builds scoped channel history for each agent run |
 | `src/core/conversation-store.ts` | Conversation metadata persistence per workspace |
 | `src/core/message-store.ts` | Workspace-persisted channel messages |
 | `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
@@ -85,7 +85,7 @@ When config is saved or reset, the server calls `refreshEnabledAgents()` which:
 2. Stops all current agent sessions
 3. Creates a new `AgentRegistry` and starts fresh sessions
 4. Disposes the old `RunManager` (unsubscribes from EventBus)
-5. Creates a new `RunManager` and `ChannelRouter` with the updated agent set
+5. Creates a new `RunManager` and `MessageRouter` with the updated agent set
 
 This ensures routing and run dispatch use the current agent configuration. A 409 response is returned if any agent is currently running.
 
@@ -106,7 +106,7 @@ This is not a general workflow engine. It is a lightweight team-channel routing 
 
 Each agent run receives a scoped history of channel messages since that agent's last completed run. This lets agents see what other agents (and the user) said while they were idle, complementing the `--resume` flag which preserves each agent's own CLI session.
 
-`buildHistoryForAgent` in `src/core/channel-history.ts` builds the history:
+`buildHistoryForAgent` in `src/core/agent-history-builder.ts` builds the history:
 
 - Scans messages from newest to oldest, starting after the agent's last `status: "done"` message
 - Skips system messages, messages still running, and routed source messages
@@ -116,7 +116,7 @@ Each agent run receives a scoped history of channel messages since that agent's 
 - Caps total history at 12000 characters (`MAX_HISTORY_CHARS`)
 - Returns entries in chronological order
 
-The history is injected between `[Orbit Context]` and `[Full channel message]` in the prompt built by `channel-context-builder.ts`.
+The history is injected between `[Orbit Context]` and `[Full channel message]` in the prompt built by `agent-context-builder.ts`.
 
 ## Session Persistence
 
@@ -143,7 +143,7 @@ Each project directory gets its own isolated workspace via `src/core/workspace-s
 
 The server maintains a single active context at a time, managed through `src/server/conversation-context.ts`:
 
-- **ConversationContext**: bundles per-conversation runtime state (MessageStore, TerminalTranscriptStore, AgentRegistry, RunManager, ChannelRouter). Created when switching workspace or conversation, disposed on the next switch.
+- **ConversationContext**: bundles per-conversation runtime state (MessageStore, TerminalTranscriptStore, AgentRegistry, RunManager, MessageRouter). Created when switching workspace or conversation, disposed on the next switch.
 - **WorkspaceStore CRUD**: list, create, update, delete workspaces. Deleting a workspace removes all associated sessions, channels, and transcripts.
 - **ConversationStore**: manages conversation metadata per workspace stored in `channels/<workspaceId>/default/conversations.json`. Auto-migrates existing "default" conversations on first load.
 - **Switch protection**: switching workspace or conversation is blocked while any agent is running (409 response).

@@ -22,6 +22,7 @@ git checkout -b feature/short-description
 ```powershell
 npm run test
 npm run build
+npm run pack:check
 ```
 
 6. Commit with a concise imperative message.
