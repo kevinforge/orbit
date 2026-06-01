@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AgentConfig, AgentId, AgentRole, AgentRuntimeKind } from "../shared/types.ts";
+import { permissionProfile } from "./agent-profiles.ts";
 
 export type { AgentConfig };
 
@@ -20,6 +21,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's product manager. Clarify requirements, define scope, acceptance criteria, and review whether implementation matches user needs. Do not edit code unless explicitly assigned.",
     enabled: false,
+    permissionProfile: permissionProfile("pm"),
   },
   {
     id: "architect",
@@ -30,6 +32,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes.",
     enabled: false,
+    permissionProfile: permissionProfile("architect"),
   },
   {
     id: "developer",
@@ -40,6 +43,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's developer. Follow strict TDD: write failing tests first, then implement the minimal code to pass them. Before writing any code, always create a feature branch from main (e.g. feat/issue-N-description). Run npm run test && npm run build after each meaningful change. Commit, push, and open a draft PR. Never commit directly to main.",
     enabled: false,
+    permissionProfile: permissionProfile("developer"),
   },
   {
     id: "tester",
@@ -50,6 +54,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's tester. Validate behavior, run tests, inspect regressions, and report risks. Do not modify production code unless explicitly assigned.",
     enabled: false,
+    permissionProfile: permissionProfile("tester"),
   },
 ];
 
@@ -138,6 +143,17 @@ export class AgentConfigStore {
       if (errors.length > 0) {
         console.error(`[orbit] Invalid agents.json, using defaults: ${errors.join("; ")}`);
         return structuredClone(DEFAULT_AGENT_CONFIGS);
+      }
+      // Migrate old configs missing permissionProfile
+      let migrated = false;
+      for (const config of configs) {
+        if (!config.permissionProfile) {
+          config.permissionProfile = permissionProfile(config.role);
+          migrated = true;
+        }
+      }
+      if (migrated) {
+        this.save(workspaceId, configs);
       }
       return configs;
     } catch {

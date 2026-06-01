@@ -48,6 +48,7 @@ export type AgentState = {
   runtime: AgentRuntimeKind;
   status: AgentStatus;
   selected?: boolean;
+  runtimeAvailable?: boolean;
 };
 
 export type ChatMessageKind = "user" | "agent" | "system";

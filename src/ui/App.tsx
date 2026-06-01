@@ -960,18 +960,26 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
 
 function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void }) {
   const isRunning = props.agent.status === "running" || props.agent.status === "starting";
+  const isRuntimeMissing = props.agent.runtimeAvailable === false;
   return (
-    <button className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""}`} onClick={props.onClick} type="button">
-      <span className={`statusDot ${props.agent.status}`} aria-hidden="true" />
+    <button
+      className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""}`}
+      onClick={props.onClick}
+      type="button"
+      title={isRuntimeMissing ? `${props.agent.runtime} not found on PATH — agent cannot run` : undefined}
+    >
+      <span className={`statusDot ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
         <strong>
           {props.agent.label}
           {isRunning && <span className="agentRunningLabel">Running</span>}
           <RuntimeBadge runtime={props.agent.runtime} />
         </strong>
-        <small>{props.agent.id}</small>
+        <small>{props.agent.id}{isRuntimeMissing ? " · unavailable" : ""}</small>
       </span>
-      <span className={`agentStatusPill ${props.agent.status}`}>{props.agent.status}</span>
+      <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
+        {isRuntimeMissing ? "missing" : props.agent.status}
+      </span>
     </button>
   );
 }

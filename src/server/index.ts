@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { configsToProfiles } from "../core/agent-profiles.ts";
 import { AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
+import { probeAllRuntimes, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
@@ -29,6 +30,27 @@ const eventBus = new EventBus();
 const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const configStore = new AgentConfigStore();
+
+// --- Runtime availability cache ---
+let runtimeAvailability: Map<string, RuntimeProbeResult> = new Map();
+
+async function probeRuntimesOnStartup(): Promise<void> {
+  const results = await probeAllRuntimes();
+  for (const result of results) {
+    runtimeAvailability.set(result.runtime, result);
+  }
+  // Map CLI names to AgentRuntimeKind for agent state lookup
+  // claude -> claude-code, codex -> codex, codebuddy -> codebuddy
+  console.log(
+    "[orbit] runtime availability: " +
+    results.map((r) => `${r.runtime}=${r.available ? "found" : "missing"}`).join(", "),
+  );
+}
+
+function runtimeAvailable(runtime: string): boolean {
+  const result = runtimeAvailability.get(runtime);
+  return result?.available ?? false;
+}
 
 // Forward all events to SSE clients (single global subscriber)
 eventBus.subscribe((event) => {
@@ -316,7 +338,10 @@ function clearActiveConversation(): void {
 function currentAgentStates() {
   const ctx = getActiveContext();
   if (ctx) {
-    return ctx.agents.states();
+    return ctx.agents.states().map((s) => ({
+      ...s,
+      runtimeAvailable: runtimeAvailable(s.runtime),
+    }));
   }
   return allConfigs
     .filter((config) => config.enabled)
@@ -326,12 +351,16 @@ function currentAgentStates() {
       runtime: config.runtime,
       status: "idle" as const,
       selected: index === 0,
+      runtimeAvailable: runtimeAvailable(config.runtime),
     }));
 }
 
 // --- Initialize ---
 migrateChannelLayer();
 initActiveContext();
+probeRuntimesOnStartup().catch((err) => {
+  console.warn("[orbit] runtime probe failed:", err instanceof Error ? err.message : String(err));
+});
 
 // --- HTTP Server ---
 const server = http.createServer(async (req, res) => {
