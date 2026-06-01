@@ -87,7 +87,7 @@ save is blocked with a 409 response until the run completes.
 To restart the local service on Windows PowerShell and clear the default port first:
 
 ```powershell
-cd D:\projects\claude-code-study\orbit; $p = Get-NetTCPConnection -LocalPort 4317 -State Listen -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p.OwningProcess -Force }; npm run dev
+cd <project-dir>; $p = Get-NetTCPConnection -LocalPort 4317 -State Listen -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p.OwningProcess -Force }; npm run dev
 ```
 
 ## Verify
@@ -108,7 +108,7 @@ state, and packaging scripts must not be included.
 Use this flow to test the same package shape that users will install from npm:
 
 ```powershell
-cd D:\projects\claude-code-study\orbit
+# In the orbit project directory:
 
 npm install
 npm run test
