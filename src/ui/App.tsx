@@ -10,6 +10,7 @@ const initialState: AppState = {
   messages: [],
   terminal: {},
   runningSummaries: [],
+  runtimeAvailability: [],
 };
 
 export function App() {
@@ -864,6 +865,7 @@ export function App() {
         <AgentManagerPanel
           onClose={() => setShowAgentManager(false)}
           onSaved={() => { setShowAgentManager(false); window.location.reload(); }}
+          runtimeAvailability={state.runtimeAvailability}
         />
       ) : null}
     </main>
@@ -1182,12 +1184,27 @@ function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AgentManagerPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose: () => void; onSaved: () => void; runtimeAvailability: AppState["runtimeAvailability"] }) {
   const [configs, setConfigs] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+
+  const availByRuntime = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const a of runtimeAvailability) {
+      map.set(a.runtime, a.available);
+    }
+    return map;
+  }, [runtimeAvailability]);
+
+  const firstAvailableRuntime = useMemo((): AgentRuntimeKind => {
+    for (const rt of RUNTIMES) {
+      if (availByRuntime.get(rt) !== false) return rt; // prefer available or unprobed
+    }
+    return "claude-code";
+  }, [availByRuntime]);
 
   useEffect(() => {
     fetch("/api/agents")
@@ -1202,7 +1219,7 @@ function AgentManagerPanel({ onClose, onSaved }: { onClose: () => void; onSaved:
 
   function addConfig() {
     setConfigs((prev) => [
-      { id: `agent-${Date.now()}`, name: "", role: "general", runtime: "claude-code", systemPrompt: "", enabled: true },
+      { id: `agent-${Date.now()}`, name: "", role: "general", runtime: firstAvailableRuntime, systemPrompt: "", enabled: true },
       ...prev,
     ]);
     setExpandedIndex(0);
@@ -1318,9 +1335,26 @@ function AgentManagerPanel({ onClose, onSaved }: { onClose: () => void; onSaved:
                         <div className="pillGroup">
                           <span className="pillLabel">Runtime <span className="fieldHint" title="驱动该智能体的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
                           <div className="pillOptions">
-                            {RUNTIMES.map((r) => (
-                              <button key={r} type="button" className={`pillBtn ${config.runtime === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { runtime: r })}>{r}</button>
-                            ))}
+                            {RUNTIMES.map((r) => {
+                              const isAvailable = availByRuntime.get(r);
+                              const isMissing = isAvailable === false;
+                              const installUrl = r === "claude-code" ? "https://docs.anthropic.com/en/docs/claude-code/overview" :
+                                r === "codex" ? "https://github.com/openai/codex" : "https://www.codebuddy.ai/cli";
+                              return (
+                                <button
+                                  key={r}
+                                  type="button"
+                                  className={`pillBtn ${config.runtime === r ? "pillActive" : ""} ${isMissing ? "pillMissing" : ""}`}
+                                  onClick={() => updateConfig(i, { runtime: r })}
+                                  title={isMissing ? `${r} 未安装 — 点击查看安装说明` : isAvailable === true ? `${r} 已就绪` : `${r} 检测中...`}
+                                >
+                                  {r}
+                                  {isMissing ? (
+                                    <a href={installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallLink" onClick={(e) => e.stopPropagation()} title="安装说明">↗</a>
+                                  ) : isAvailable === true ? <span className="pillCheck"> ✓</span> : <span className="pillUnknown"> ?</span>}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                         <div className="fieldWithHint fieldFullWidth">
@@ -1377,6 +1411,10 @@ function PlainText({ content }: { content: string }) {
 function applyEvent(state: AppState, event: RuntimeEvent): AppState {
   if (event.type === "running.updated") {
     return { ...state, runningSummaries: event.summaries };
+  }
+
+  if (event.type === "runtime.availability.updated") {
+    return { ...state, runtimeAvailability: event.availability };
   }
 
   // For conversation-scoped events, only process if they match the active conversation
@@ -1442,6 +1480,7 @@ function normalizeState(nextState: AppState): AppState {
       ...(nextState.terminal ?? {}),
     },
     runningSummaries: nextState.runningSummaries ?? [],
+    runtimeAvailability: nextState.runtimeAvailability ?? [],
   };
 }
 

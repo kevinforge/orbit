@@ -109,6 +109,7 @@ export type RuntimeEvent =
   | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string }
   | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
   | { type: "running.updated"; summaries: RunningSummary[] }
+  | { type: "runtime.availability.updated"; availability: RuntimeAvailability[] }
   | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
 
 export type TerminalState = Record<string, string>;
@@ -135,6 +136,14 @@ export type Conversation = ConversationInfo & {
   lastOpenedAt: string;
 };
 
+export type RuntimeAvailability = {
+  runtime: string;
+  available: boolean;
+  path: string | null;
+  error?: string;
+  checkedAt: string;
+};
+
 export type AppState = {
   workspace: WorkspaceInfo;
   conversation: ConversationInfo;
@@ -142,4 +151,5 @@ export type AppState = {
   agents: AgentState[];
   terminal: TerminalState;
   runningSummaries: RunningSummary[];
+  runtimeAvailability: RuntimeAvailability[];
 };

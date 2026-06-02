@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { promisify } from "node:util";
 import { resolveCodexCommand } from "./codex-cli-runtime.ts";
 
@@ -10,6 +11,7 @@ export type RuntimeProbeResult = {
   available: boolean;
   path: string | null;
   error?: string;
+  checkedAt: string;
 };
 
 const TIMEOUT_MS = 5000;
@@ -37,18 +39,19 @@ async function resolveCommand(command: string): Promise<{ available: boolean; pa
 }
 
 export async function probeRuntime(command: string): Promise<RuntimeProbeResult> {
+  const checkedAt = new Date().toISOString();
   if (!command || !command.trim()) {
-    return { runtime: command, available: false, path: null, error: "Empty command name" };
+    return { runtime: command, available: false, path: null, error: "Empty command name", checkedAt };
   }
   try {
     const result = await resolveCommand(command);
     if (result.available) {
-      return { runtime: command, available: true, path: result.path };
+      return { runtime: command, available: true, path: result.path, checkedAt };
     }
-    return { runtime: command, available: false, path: null, error: `Command not found: ${command}` };
+    return { runtime: command, available: false, path: null, error: `Command not found: ${command}`, checkedAt };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { runtime: command, available: false, path: null, error: message };
+    return { runtime: command, available: false, path: null, error: message, checkedAt };
   }
 }
 
@@ -68,15 +71,21 @@ export async function probeAllRuntimes(): Promise<RuntimeProbeResult[]> {
 }
 
 async function probeCodexRuntime(): Promise<RuntimeProbeResult> {
+  const checkedAt = new Date().toISOString();
   // Use the same resolver as the actual Codex CLI runtime
   const resolved = resolveCodexCommand();
-  // If the resolver returned an absolute path, check it exists on disk
-  if (resolved !== "codex") {
-    // Not the bare fallback — the resolver found a specific installation
-    return fs.existsSync(resolved)
-      ? { runtime: "codex", available: true, path: resolved }
-      : { runtime: "codex", available: false, path: null, error: `Configured path not found: ${resolved}` };
+  if (resolved === "codex") {
+    // Bare fallback — use PATH probe
+    return probeRuntime("codex");
   }
-  // Bare "codex" — fall back to PATH probe
-  return probeRuntime("codex");
+  // Resolver found a non-default command (env var, install dir, etc.)
+  if (path.isAbsolute(resolved)) {
+    // Absolute path — verify on disk
+    return fs.existsSync(resolved)
+      ? { runtime: "codex", available: true, path: resolved, checkedAt }
+      : { runtime: "codex", available: false, path: null, error: `Configured path not found: ${resolved}`, checkedAt };
+  }
+  // Non-absolute command name (e.g. "custom-codex" from CODEX_CLI_PATH) —
+  // resolve via PATH just like the actual runtime does with spawn
+  return probeRuntime(resolved);
 }
