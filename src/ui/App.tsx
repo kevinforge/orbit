@@ -860,6 +860,7 @@ export function App() {
       {showSettings ? (
         <SystemSettingsPanel
           onClose={() => setShowSettings(false)}
+          hasWorkspace={hasWorkspace}
         />
       ) : null}
       {showAgentManager ? (
@@ -1163,22 +1164,142 @@ function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange:
   );
 }
 
-function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
+function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; hasWorkspace: boolean }) {
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [rules, setRules] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState("");
+
+  useEffect(() => {
+    if (!hasWorkspace) {
+      setLoading(false);
+      return;
+    }
+    fetch("/api/workspace-config")
+      .then((r) => r.json())
+      .then((cfg: { systemPrompt?: string; rules?: string[] }) => {
+        setSystemPrompt(cfg.systemPrompt ?? "");
+        setRules(cfg.rules ?? []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [hasWorkspace]);
+
+  function addRule() {
+    setRules((prev) => [...prev, ""]);
+  }
+
+  function updateRule(index: number, value: string) {
+    setRules((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  }
+
+  function removeRule(index: number) {
+    setRules((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function save() {
+    if (!hasWorkspace) return;
+    setSaving(true);
+    setSavedMsg("");
+    fetch("/api/workspace-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ systemPrompt: systemPrompt.trim(), rules: rules.map((r) => r.trim()).filter(Boolean) }),
+    })
+      .then((r) => {
+        if (!r.ok) return r.json().then((err) => Promise.reject(err));
+        return r.json();
+      })
+      .then(() => {
+        setSaving(false);
+        setSavedMsg("已保存");
+        setTimeout(() => setSavedMsg(""), 3000);
+      })
+      .catch((err) => {
+        setSaving(false);
+        setSavedMsg(err?.message ?? "保存失败");
+      });
+  }
+
+  const hasChanges = true; // Allow saving always
+
   return (
     <div className="modalOverlay" onClick={onClose}>
-      <div className="modalPanel settingsPlaceholderPanel" onClick={(e) => e.stopPropagation()}>
+      <div className="modalPanel workspaceConfigPanel" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader">
-          <h2>系统设置</h2>
+          <h2>工作区设置</h2>
           <button type="button" onClick={onClose}>&times;</button>
         </div>
         <div className="settingsBody">
-          <div className="settingsPlaceholder">
-            <strong>暂时没有系统设置项</strong>
-            <span>智能体管理已经移动到左侧“智能体”标题右侧的 +。</span>
-          </div>
+          {!hasWorkspace ? (
+            <div className="settingsPlaceholder">
+              <strong>请先选择或创建工作区</strong>
+              <span>工作区设置作用于当前工作区下的所有会话。</span>
+            </div>
+          ) : loading ? (
+            <div className="settingsPlaceholder">
+              <span>加载中...</span>
+            </div>
+          ) : (
+            <>
+              <div className="settingsSection">
+                <label className="settingsLabel">工作区提示词</label>
+                <span className="fieldHint">对所有会话生效的系统提示词。留空则不注入。</span>
+                <textarea
+                  className="workspaceConfigTextarea"
+                  placeholder="例如：本项目使用 TypeScript + React，所有代码需严格类型检查。"
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  rows={5}
+                />
+              </div>
+              <div className="settingsSection">
+                <label className="settingsLabel">
+                  工作区规则
+                  <button type="button" className="settingsAddBtn" onClick={addRule} title="添加规则">+</button>
+                </label>
+                <span className="fieldHint">对所有会话生效的行为规则。留空则不注入。</span>
+                {rules.length === 0 ? (
+                  <div className="rulesEmptyHint">暂无规则。点击 + 添加一条。</div>
+                ) : (
+                  <div className="rulesList">
+                    {rules.map((rule, i) => (
+                      <div key={i} className="rulesRow">
+                        <span className="rulesIndex">{i + 1}.</span>
+                        <input
+                          className="rulesInput"
+                          value={rule}
+                          onChange={(e) => updateRule(i, e.target.value)}
+                          placeholder={`规则 ${i + 1}`}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              addRule();
+                            }
+                          }}
+                        />
+                        <button type="button" className="rulesRemoveBtn" onClick={() => removeRule(i)} title="删除规则">&times;</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
         <div className="modalFooter">
+          {savedMsg ? <span className="settingsSavedMsg">{savedMsg}</span> : null}
           <button type="button" onClick={onClose}>关闭</button>
+          {hasWorkspace ? (
+            <button type="button" className="primaryBtn" onClick={save} disabled={saving}>
+              {saving ? "保存中..." : "保存"}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

@@ -9,6 +9,8 @@ import { configsToProfiles } from "../core/agent-profiles.ts";
 import { AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
 import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
+import { WorkspaceConfigStore } from "../core/workspace-config-store.ts";
+import type { WorkspaceConfig } from "../core/workspace-config-store.ts";
 import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { SessionStore } from "../core/session-store.ts";
@@ -30,6 +32,7 @@ const eventBus = new EventBus();
 const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const configStore = new AgentConfigStore();
+const workspaceConfigStore = new WorkspaceConfigStore();
 
 // --- Runtime availability ---
 const PROBE_INTERVAL_MS = Number(process.env.ORBIT_RUNTIME_PROBE_INTERVAL_MS ?? 60000);
@@ -225,6 +228,7 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
   const ws = workspaceStore.get(workspaceId);
   const profiles = configsToProfiles(enabledConfigs, ws!.path);
   const sessStore = new SessionStore(workspaceStore.sessionsDir(workspaceId));
+  const workspaceConfig = workspaceConfigStore.load(workspaceId);
   return new ConversationContext({
     workspaceId,
     conversationId,
@@ -232,6 +236,7 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
     eventBus,
     sessionStore: sessStore,
     workspaceStore,
+    workspaceConfig,
   });
 }
 
@@ -447,6 +452,50 @@ const server = http.createServer(async (req, res) => {
       allConfigs = configStore.reset(activeWorkspaceId);
       refreshEnabledAgents();
       sendJson(res, 200, allConfigs);
+      return;
+    }
+
+    // --- Workspace config ---
+
+    if (req.method === "GET" && url.pathname === "/api/workspace-config") {
+      if (!activeWorkspaceId) {
+        sendJson(res, 200, { systemPrompt: "", rules: [] });
+        return;
+      }
+      sendJson(res, 200, workspaceConfigStore.load(activeWorkspaceId));
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/workspace-config") {
+      if (!activeWorkspaceId) {
+        sendJson(res, 409, { ok: false, message: "Create or select a workspace before saving workspace config." });
+        return;
+      }
+      const input = (await readJson(req)) as WorkspaceConfig;
+      if (!input || typeof input !== "object" || Array.isArray(input)) {
+        sendJson(res, 400, { ok: false, message: "Request body must be a JSON object." });
+        return;
+      }
+      if (input.rules !== undefined) {
+        if (!Array.isArray(input.rules) || input.rules.some((r) => typeof r !== "string")) {
+          sendJson(res, 400, { ok: false, message: "rules must be an array of strings." });
+          return;
+        }
+      }
+      if (input.systemPrompt !== undefined && typeof input.systemPrompt !== "string") {
+        sendJson(res, 400, { ok: false, message: "systemPrompt must be a string." });
+        return;
+      }
+      workspaceConfigStore.save(activeWorkspaceId, input);
+      const resolved = workspaceConfigStore.load(activeWorkspaceId);
+      // Update all active contexts for this workspace so the next agent run
+      // immediately uses the new config.
+      for (const [key, ctx] of contextMap) {
+        if (key.startsWith(`${activeWorkspaceId}:`)) {
+          ctx.updateWorkspaceConfig(resolved);
+        }
+      }
+      sendJson(res, 200, resolved);
       return;
     }
 

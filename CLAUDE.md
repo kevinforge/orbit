@@ -92,6 +92,7 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/ansi-text-extractor.ts`** — Strips ANSI codes and extracts readable text
 - **`src/core/agent-prompt.ts`** — Prompt templates for agent role instructions
 - **`src/core/migrate-channel-layer.ts`** — One-time migration for flattening legacy directory structure
+- **`src/core/workspace-config-store.ts`** — Workspace-level system prompt and rules persistence
 
 ### UI Module
 
@@ -119,6 +120,8 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 | GET | `/api/agents` | List agent configurations |
 | PUT | `/api/agents` | Update agent configurations |
 | POST | `/api/agents/reset` | Reset agents to default configuration |
+| GET | `/api/workspace-config` | Get workspace-level prompt and rules |
+| PUT | `/api/workspace-config` | Update workspace-level prompt and rules |
 | GET | `/api/workspaces` | List workspaces |
 | POST | `/api/workspaces` | Create workspace |
 | PUT | `/api/workspaces/:id` | Update workspace |
@@ -136,7 +139,7 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 
 - **EventBus pub/sub**: `SseHub`, `TerminalTranscriptStore`, and `RunManager` all subscribe to `RuntimeEvent` variants on a shared bus
 - **Per-agent serial queue**: Each agent runs one CLI process at a time; additional tasks queue automatically
-- **Private context injection**: Each agent prompt is wrapped with a private routing context block; leaked markers are stripped from replies
+- **Private context injection**: Each agent prompt is wrapped with a private routing context block; leaked markers are stripped from replies. Precedence: app fixed rules → workspace config → agent role instruction
 - **Multi-conversation parallel**: Multiple conversations can run agents simultaneously via a context map with LRU eviction
 - **In-memory state**: Messages and agent state live in memory per conversation context; file-based persistence for messages, sessions, and transcripts
 
@@ -148,7 +151,10 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 ├── conversations/{workspaceId}/conversations.json
 ├── transcripts/{workspaceId}/{conversationId}/{agentId}.log
 ├── sessions/{workspaceId}/{runtime}/{conversationId}/{agentId}.json
-└── workspaces/{workspaceId}/workspace.json
+└── workspaces/{workspaceId}/
+    ├── workspace.json
+    ├── agents.json
+    └── config.json         (workspace-level systemPrompt and rules)
 ```
 
 ### UI Design System ("Warm Observatory")

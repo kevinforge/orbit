@@ -10,7 +10,8 @@ import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { MessageRouter } from "../core/message-router.ts";
-import type { AgentId, AgentProfile } from "../shared/types.ts";
+import type { AgentId, AgentProfile, WorkspaceRuntimeConfig } from "../shared/types.ts";
+import { DEFAULT_WORKSPACE_CONFIG } from "../shared/types.ts";
 
 const MAX_ROUTE_DEPTH = 5;
 
@@ -21,6 +22,7 @@ export type ConversationContextOptions = {
   eventBus: EventBus;
   sessionStore: SessionStore;
   workspaceStore: WorkspaceStore;
+  workspaceConfig?: WorkspaceRuntimeConfig;
 };
 
 export class ConversationContext {
@@ -31,11 +33,15 @@ export class ConversationContext {
   messageRouter: MessageRouter;
 
   private _profiles: readonly AgentProfile[];
+  private _workspaceConfig: WorkspaceRuntimeConfig;
   private readonly eventBus: EventBus;
   private readonly unsubscribe: () => void;
 
-  constructor(private readonly options: ConversationContextOptions) {
+  constructor(private options: ConversationContextOptions) {
     const { workspaceId, conversationId, profiles, eventBus, sessionStore, workspaceStore } = options;
+    // Store workspace config as mutable instance field so updateWorkspaceConfig()
+    // can update it at runtime without recreating the context.
+    this._workspaceConfig = options.workspaceConfig ?? structuredClone(DEFAULT_WORKSPACE_CONFIG);
     this._profiles = profiles;
     this.eventBus = eventBus;
 
@@ -69,7 +75,7 @@ export class ConversationContext {
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string) => {
         const history = buildHistoryForAgent(agentId, this.messages.list());
-        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history });
+        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: this._workspaceConfig });
       },
       onRunCompleted: (message) => {
         this.messageRouter.process(message);
@@ -118,7 +124,7 @@ export class ConversationContext {
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string) => {
         const history = buildHistoryForAgent(agentId, self.messages.list());
-        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history });
+        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig });
       },
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
@@ -143,6 +149,11 @@ export class ConversationContext {
 
     // Replace readonly fields via Object.assign (intentional hot-swap)
     Object.assign(this, { agents: newAgents, runManager: newRunManager, messageRouter: newMessageRouter });
+  }
+
+  updateWorkspaceConfig(config: WorkspaceRuntimeConfig): void {
+    this._workspaceConfig = config;
+    this.options = { ...this.options, workspaceConfig: config };
   }
 
   dispose(): void {
