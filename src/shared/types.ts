@@ -136,6 +136,21 @@ export type Conversation = ConversationInfo & {
   lastOpenedAt: string;
 };
 
+export type WorkspaceConfig = {
+  systemPrompt?: string;
+  rules?: string[];
+};
+
+export type WorkspaceRuntimeConfig = {
+  systemPrompt: string;
+  rules: string[];
+};
+
+export const DEFAULT_WORKSPACE_CONFIG: WorkspaceRuntimeConfig = {
+  systemPrompt: "",
+  rules: [],
+};
+
 export type RuntimeAvailability = {
   runtime: string;
   available: boolean;

@@ -120,3 +120,132 @@ test("plain mention in agent reply does not trigger routing", () => {
   assert.ok(context.includes("Plain @agent mentions without a colon are references only"), "rules must mention plain mentions are references");
   assert.ok(context.includes("@agent: assignment marker"), "rules must mention assignment marker");
 });
+
+// --- Workspace config injection ---
+
+test("includes workspace systemPrompt when provided", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    workspaceConfig: {
+      systemPrompt: "This is a workspace-level instruction.",
+      rules: [],
+    },
+  });
+
+  assert.ok(context.includes("Workspace prompt:"));
+  assert.ok(context.includes("This is a workspace-level instruction."));
+});
+
+test("workspace prompt appears after fixed rules and before role instruction", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    workspaceConfig: {
+      systemPrompt: "WORKSPACE_PROMPT_MARKER",
+      rules: ["WORKSPACE_RULE_MARKER"],
+    },
+  });
+
+  const finalAnswerIndex = context.indexOf("Final answer rules:");
+  const workspacePromptIndex = context.indexOf("Workspace prompt:");
+  const workspaceRulesIndex = context.indexOf("Workspace rules:");
+  const roleInstructionIndex = context.indexOf("Role instruction:");
+  const taskIndex = context.indexOf("[Current task]");
+
+  assert.ok(finalAnswerIndex < workspacePromptIndex, "workspace prompt should appear after final answer rules");
+  assert.ok(workspacePromptIndex < roleInstructionIndex, "workspace prompt should appear before role instruction");
+  assert.ok(workspaceRulesIndex < roleInstructionIndex, "workspace rules should appear before role instruction");
+  assert.ok(roleInstructionIndex < taskIndex, "role instruction should appear before current task");
+});
+
+test("includes workspace rules when provided", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    workspaceConfig: {
+      systemPrompt: "",
+      rules: ["All code must have tests.", "Use TypeScript strict mode."],
+    },
+  });
+
+  assert.ok(context.includes("Workspace rules:"));
+  assert.ok(context.includes("- All code must have tests."));
+  assert.ok(context.includes("- Use TypeScript strict mode."));
+});
+
+test("workspace rules and systemPrompt can coexist in context", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    workspaceConfig: {
+      systemPrompt: "Workspace-level prompt.",
+      rules: ["Rule 1", "Rule 2"],
+    },
+  });
+
+  assert.ok(context.includes("Workspace prompt:"));
+  assert.ok(context.includes("Workspace-level prompt."));
+  assert.ok(context.includes("Workspace rules:"));
+  assert.ok(context.includes("- Rule 1"));
+  assert.ok(context.includes("- Rule 2"));
+});
+
+test("no workspace config injected when workspaceConfig is not provided", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+  });
+
+  assert.ok(!context.includes("Workspace prompt:"));
+  assert.ok(!context.includes("Workspace rules:"));
+});
+
+test("empty workspace config does not inject markers", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    workspaceConfig: {
+      systemPrompt: "",
+      rules: [],
+    },
+  });
+
+  assert.ok(!context.includes("Workspace prompt:"));
+  assert.ok(!context.includes("Workspace rules:"));
+});
+
+test("context is still valid with workspace config (regression check)", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    workspaceConfig: {
+      systemPrompt: "Be extra careful.",
+      rules: ["Never push to main.", "Always review before merge."],
+    },
+  });
+
+  // All essential sections still present
+  assert.ok(context.includes("[Orbit Context]"));
+  assert.ok(context.includes("Current agent: Developer (@developer)"));
+  assert.ok(context.includes("Permission profile:"));
+  assert.ok(context.includes("Available agents:"));
+  assert.ok(context.includes("Collaboration rules:"));
+  assert.ok(context.includes("Final answer rules:"));
+  assert.ok(context.includes("[Current task]"));
+  assert.ok(context.includes("@developer: test"));
+});

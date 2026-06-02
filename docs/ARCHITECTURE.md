@@ -41,6 +41,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
 | `src/core/agent-context-builder.ts` | Builds private context passed into each agent run |
 | `src/core/agent-history-builder.ts` | Builds scoped channel history for each agent run |
+| `src/core/workspace-config-store.ts` | Load/save per-workspace configuration (systemPrompt, rules) |
 | `src/core/conversation-store.ts` | Conversation metadata persistence per workspace |
 | `src/core/message-store.ts` | Workspace-persisted channel messages |
 | `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
@@ -102,6 +103,35 @@ This ensures routing and run dispatch use the current agent configuration. A 409
 
 This is not a general workflow engine. It is a lightweight team-channel routing model.
 
+### Route Depth
+
+Agent-to-agent routing chains are capped at a fixed depth of 5. Each agent reply that contains new assignments increments the chain depth. When a message would exceed the limit, routing is blocked and a system message is posted.
+
+### Workspace Configuration
+
+Each workspace can have workspace-level settings (`WorkspaceConfig`) that apply to all agent runs in all conversations within that workspace:
+
+- `systemPrompt` — A prompt injected into every agent run, after Orbit's fixed rules and before the agent's role instruction.
+- `rules` — A list of rules rendered as bullet points in the agent context.
+
+Stored at `~/.orbit/workspaces/<workspaceId>/config.json`. Can be updated at runtime via `PUT /api/workspace-config`.
+
+### Prompt Assembly Precedence
+
+The final agent prompt is assembled in this order:
+
+1. **Orbit fixed context** (agent identity, permissions, available agents, collaboration rules)
+2. **Final answer rules** (output format constraints)
+3. **Workspace system prompt** (from `WorkspaceConfig.systemPrompt`, if set)
+4. **Workspace rules** (from `WorkspaceConfig.rules`, if set)
+5. **Agent role instruction** (`AgentConfig.systemPrompt`)
+6. **Channel history** (scoped messages since agent's last completed run)
+7. **Current task** (the routed message content)
+
+This means workspace prompts inject shared context across all agents, while each agent retains its own role-specific instruction.
+
+`WorkspaceConfigStore` (`src/core/workspace-config-store.ts`) manages load/save with atomic writes and graceful fallback to defaults when the file is missing or corrupted.
+
 ## Channel History
 
 Each agent run receives a scoped history of channel messages since that agent's last completed run. This lets agents see what other agents (and the user) said while they were idle, complementing the `--resume` flag which preserves each agent's own CLI session.
@@ -133,8 +163,9 @@ Each project directory gets its own isolated workspace via `src/core/workspace-s
   - `workspaces/<workspace-id>/workspace.json` — metadata (id, name, path, createdAt, lastOpenedAt)
   - `workspaces/<workspace-id>/agents.json` — per-workspace agent configurations (`AgentConfigStore`)
   - `sessions/<workspace-id>/<runtime>/<channelId>/<conversationId>/<agentId>.json` — per-agent session records (`SessionStore`)
-  - `channels/<workspace-id>/<channelId>/<conversationId>/messages.json` — persisted channel messages (`MessageStore`)
-  - `channels/<workspace-id>/<channelId>/conversations.json` — conversation metadata (`ConversationStore`)
+  - `conversations/<workspace-id>/<conversationId>/messages.json` — persisted channel messages (`MessageStore`)
+  - `workspaces/<workspace-id>/config.json` — workspace configuration (`WorkspaceConfigStore`)
+  - `conversations/<workspace-id>/conversations.json` — conversation metadata (`ConversationStore`)
   - `transcripts/<workspace-id>/<channelId>/<conversationId>/<agentId>.log` — per-agent terminal transcripts (`TerminalTranscriptStore`)
   - `last-active.json` — last active workspace and conversation for restart recovery
 - **Lifecycle**: on startup, the server checks `last-active.json` for the previously active workspace/conversation, falling back to `WorkspaceStore.resolve(cwd)` for first-run. Switching is blocked while agents are running.
