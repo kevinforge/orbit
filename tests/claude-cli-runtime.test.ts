@@ -56,8 +56,17 @@ test("builds a spawnable command", () => {
   assert.ok(command.args.includes("--print"));
 });
 
-test("falls back to clean text output", () => {
-  assert.equal(extractClaudeCliFinalAnswer("final answer\n").text, "final answer");
+test("returns empty text when no result event is present and input is plain text", () => {
+  assert.equal(extractClaudeCliFinalAnswer("final answer\n").text, "");
+});
+
+test("handles concatenated JSON objects without newline separator", () => {
+  const output =
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "partial" }] } }) +
+    JSON.stringify({ type: "result", result: "final answer" });
+
+  const result = extractClaudeCliFinalAnswer(output);
+  assert.equal(result.text, "final answer");
 });
 
 test("extractSessionId from init event", () => {

@@ -4,6 +4,7 @@ import os from "node:os";
 import type { AgentId } from "../shared/types.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
+import { parseJsonObjects } from "./json-stream-parser.ts";
 
 export type ClaudeCliRunOptions = {
   agentId: AgentId;
@@ -138,37 +139,28 @@ export function extractClaudeCliFinalAnswer(output: string): { text: string; ses
   let sessionId: string | undefined;
   const textParts: string[] = [];
 
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
+  for (const raw of parseJsonObjects(output)) {
+    const event = raw as {
+      type?: string;
+      result?: unknown;
+      session_id?: unknown;
+      message?: { content?: unknown };
+    };
+
+    if (event.type === "result" && typeof event.result === "string") {
+      result = event.result;
     }
 
-    try {
-      const event = JSON.parse(trimmed) as {
-        type?: string;
-        result?: unknown;
-        session_id?: unknown;
-        message?: { content?: unknown };
-      };
+    if (event.type === "result" && typeof event.session_id === "string") {
+      sessionId = event.session_id;
+    }
 
-      if (event.type === "result" && typeof event.result === "string") {
-        result = event.result;
-      }
-
-      if (event.type === "result" && typeof event.session_id === "string") {
-        sessionId = event.session_id;
-      }
-
-      if (event.type === "assistant" && Array.isArray(event.message?.content)) {
-        for (const part of event.message.content as Array<{ type?: unknown; text?: unknown }>) {
-          if (part.type === "text" && typeof part.text === "string") {
-            textParts.push(part.text);
-          }
+    if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+      for (const part of event.message.content as Array<{ type?: unknown; text?: unknown }>) {
+        if (part.type === "text" && typeof part.text === "string") {
+          textParts.push(part.text);
         }
       }
-    } catch {
-      textParts.push(trimmed);
     }
   }
 
