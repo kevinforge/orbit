@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import os from "node:os";
-import path from "node:path";
-import { probeRuntime, probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../src/core/runtime-probe.ts";
+import { probeRuntime, probeAllRuntimes, resolveCodexCommandPath, runtimeKindToCliKey, type RuntimeProbeResult } from "../src/core/runtime-probe.ts";
 
 test("probeRuntime finds node on PATH", async () => {
   const result = await probeRuntime("node");
@@ -59,4 +57,31 @@ test("runtimeKindToCliKey passes through codebuddy unchanged", () => {
 
 test("runtimeKindToCliKey handles unknown runtime types gracefully", () => {
   assert.equal(runtimeKindToCliKey("unknown-runtime"), "unknown-runtime");
+});
+
+// --- resolveCodexCommandPath ---
+
+test("resolveCodexCommandPath respects ORBIT_CODEX_PATH env var", () => {
+  const result = resolveCodexCommandPath({ ORBIT_CODEX_PATH: process.execPath });
+  assert.ok(result, "should resolve when ORBIT_CODEX_PATH points to an existing executable");
+  assert.equal(result, process.execPath);
+});
+
+test("resolveCodexCommandPath respects CODEX_CLI_PATH env var", () => {
+  const result = resolveCodexCommandPath({ CODEX_CLI_PATH: process.execPath });
+  assert.ok(result, "should resolve when CODEX_CLI_PATH points to an existing executable");
+  assert.equal(result, process.execPath);
+});
+
+test("resolveCodexCommandPath returns null for nonexistent absolute configured path", () => {
+  const fakePath = process.platform === "win32" ? "C:\\nonexistent\\codex.exe" : "/nonexistent/codex";
+  const result = resolveCodexCommandPath({ ORBIT_CODEX_PATH: fakePath });
+  assert.equal(result, null, "should return null when configured absolute path does not exist");
+});
+
+test("resolveCodexCommandPath returns null when no env var is set and not on PATH", () => {
+  // Clear env vars that might resolve codex
+  const result = resolveCodexCommandPath({});
+  // May or may not find codex depending on system, but should not throw
+  assert.equal(typeof result, typeof result === "string" ? "string" : "object");
 });

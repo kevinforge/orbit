@@ -358,11 +358,8 @@ function currentAgentStates() {
 // --- Initialize ---
 migrateChannelLayer();
 initActiveContext();
-probeRuntimesOnStartup().catch((err) => {
-  console.warn("[orbit] runtime probe failed:", err instanceof Error ? err.message : String(err));
-});
 
-// --- HTTP Server ---
+// --- HTTP Server (created before probe to avoid blocking setup) ---
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -650,9 +647,15 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`[orbit] listening on http://localhost:${port}`);
-});
+// Probe runtimes before accepting connections to avoid startup race
+(async () => {
+  await probeRuntimesOnStartup().catch((err) => {
+    console.warn("[orbit] runtime probe failed:", err instanceof Error ? err.message : String(err));
+  });
+  server.listen(port, () => {
+    console.log(`[orbit] listening on http://localhost:${port}`);
+  });
+})();
 
 // --- Helpers ---
 
