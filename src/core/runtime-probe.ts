@@ -4,6 +4,9 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { resolveCodexCommand } from "./codex-cli-runtime.ts";
 
+// Re-export from shared browser-safe module
+export { runtimeKindToCliKey, runtimeMeta, type RuntimeMeta } from "./runtime-meta.ts";
+
 const execFileAsync = promisify(execFile);
 
 export type RuntimeProbeResult = {
@@ -56,11 +59,6 @@ export async function probeRuntime(command: string): Promise<RuntimeProbeResult>
 }
 
 export type RuntimeAvailabilityMap = Record<string, RuntimeProbeResult>;
-
-/** Map AgentRuntimeKind to CLI probe key: claude-code → claude */
-export function runtimeKindToCliKey(runtime: string): string {
-  return runtime === "claude-code" ? "claude" : runtime;
-}
 
 export async function probeAllRuntimes(): Promise<RuntimeProbeResult[]> {
   return Promise.all([

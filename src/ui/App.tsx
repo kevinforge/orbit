@@ -1,6 +1,7 @@
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
+import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, Conversation, ConversationInfo, PermissionProfile, RunningSummary, RuntimeEvent, Workspace } from "../shared/types.ts";
 
 const initialState: AppState = {
@@ -1199,9 +1200,13 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
     return map;
   }, [runtimeAvailability]);
 
+  function isRuntimeAvailable(runtime: AgentRuntimeKind): boolean | undefined {
+    return availByRuntime.get(runtimeKindToCliKey(runtime));
+  }
+
   const firstAvailableRuntime = useMemo((): AgentRuntimeKind => {
     for (const rt of RUNTIMES) {
-      if (availByRuntime.get(rt) !== false) return rt; // prefer available or unprobed
+      if (isRuntimeAvailable(rt) !== false) return rt; // prefer available or unprobed
     }
     return "claude-code";
   }, [availByRuntime]);
@@ -1336,22 +1341,24 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                           <span className="pillLabel">Runtime <span className="fieldHint" title="驱动该智能体的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
                           <div className="pillOptions">
                             {RUNTIMES.map((r) => {
-                              const isAvailable = availByRuntime.get(r);
-                              const isMissing = isAvailable === false;
-                              const installUrl = r === "claude-code" ? "https://docs.anthropic.com/en/docs/claude-code/overview" :
-                                r === "codex" ? "https://github.com/openai/codex" : "https://www.codebuddy.ai/cli";
+                              const isAvail = isRuntimeAvailable(r);
+                              const isMissing = isAvail === false;
+                              const isCurrent = config.runtime === r;
+                              const meta = runtimeMeta(r);
+                              const disabled = isMissing && !isCurrent;
                               return (
                                 <button
                                   key={r}
                                   type="button"
-                                  className={`pillBtn ${config.runtime === r ? "pillActive" : ""} ${isMissing ? "pillMissing" : ""}`}
-                                  onClick={() => updateConfig(i, { runtime: r })}
-                                  title={isMissing ? `${r} 未安装 — 点击查看安装说明` : isAvailable === true ? `${r} 已就绪` : `${r} 检测中...`}
+                                  className={`pillBtn ${isCurrent ? "pillActive" : ""} ${isMissing ? "pillMissing" : ""}`}
+                                  onClick={() => { if (!disabled) updateConfig(i, { runtime: r }); }}
+                                  disabled={disabled}
+                                  title={isMissing ? `${r} 未安装 — 点击 ↗ 查看安装说明` : isAvail === true ? `${r} 已就绪` : `${r} 检测中...`}
                                 >
                                   {r}
                                   {isMissing ? (
-                                    <a href={installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallLink" onClick={(e) => e.stopPropagation()} title="安装说明">↗</a>
-                                  ) : isAvailable === true ? <span className="pillCheck"> ✓</span> : <span className="pillUnknown"> ?</span>}
+                                    <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallLink" onClick={(e) => e.stopPropagation()} title="安装说明">↗</a>
+                                  ) : isAvail === true ? <span className="pillCheck"> ✓</span> : <span className="pillUnknown"> ?</span>}
                                 </button>
                               );
                             })}
@@ -1414,7 +1421,19 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
   }
 
   if (event.type === "runtime.availability.updated") {
-    return { ...state, runtimeAvailability: event.availability };
+    const availMap = new Map<string, boolean>();
+    for (const a of event.availability) {
+      availMap.set(a.runtime, a.available);
+    }
+    return {
+      ...state,
+      runtimeAvailability: event.availability,
+      agents: state.agents.map((agent) => {
+        const cliKey = runtimeKindToCliKey(agent.runtime);
+        const available = availMap.get(cliKey);
+        return { ...agent, runtimeAvailable: available };
+      }),
+    };
   }
 
   // For conversation-scoped events, only process if they match the active conversation

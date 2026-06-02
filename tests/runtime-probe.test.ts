@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { probeRuntime, probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../src/core/runtime-probe.ts";
+import { probeRuntime, probeAllRuntimes, runtimeKindToCliKey, runtimeMeta, type RuntimeProbeResult } from "../src/core/runtime-probe.ts";
 
 test("probeRuntime finds node on PATH", async () => {
   const result = await probeRuntime("node");
@@ -74,6 +74,32 @@ test("probeCodexRuntime via probeAllRuntimes returns record for codex", async ()
     // When unavailable, should have error message or null path
     assert.ok(codex!.error || codex!.path === null, "should have error or null path when missing");
   }
+});
+
+// --- runtimeMeta ---
+
+test("runtimeMeta returns label and installUrl for claude-code", () => {
+  const meta = runtimeMeta("claude-code");
+  assert.equal(meta.label, "Claude Code");
+  assert.ok(meta.installUrl.includes("anthropic"), "should have anthropic install URL");
+});
+
+test("runtimeMeta returns label and installUrl for codex", () => {
+  const meta = runtimeMeta("codex");
+  assert.equal(meta.label, "OpenAI Codex");
+  assert.ok(meta.installUrl.includes("openai"), "should have openai install URL");
+});
+
+test("runtimeMeta returns label and installUrl for codebuddy", () => {
+  const meta = runtimeMeta("codebuddy");
+  assert.equal(meta.label, "CodeBuddy");
+  assert.ok(meta.installUrl.includes("codebuddy"), "should have codebuddy install URL");
+});
+
+test("runtimeMeta returns runtime name as label for unknown runtime", () => {
+  const meta = runtimeMeta("unknown");
+  assert.equal(meta.label, "unknown");
+  assert.equal(meta.installUrl, "");
 });
 
 test("probeCodexRuntime is consistent with resolveCodexCommand", async () => {
