@@ -14,6 +14,7 @@ type AgentRunner = {
   get(agentId: AgentId): {
     send(runId: string, prompt: string): Promise<RunResult>;
   };
+  interrupt(agentId: AgentId): void;
 };
 
 export type ManagedRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -101,6 +102,59 @@ export class RunManager {
     return run;
   }
 
+  cancel(runId: string): boolean {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return false;
+    }
+
+    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+      return false;
+    }
+
+    if (run.status === "queued") {
+      // Remove from queue
+      const queue = this.getQueue(run.agentId);
+      const idx = queue.findIndex((r) => r.id === runId);
+      if (idx !== -1) {
+        queue.splice(idx, 1);
+      }
+    }
+
+    if (run.status === "running") {
+      // Request interruption
+      this.options.agents.interrupt(run.agentId);
+    }
+
+    this.markCancelled(run);
+    return true;
+  }
+
+  private markCancelled(run: ManagedRun): void {
+    run.status = "cancelled";
+    run.completedAt = new Date().toISOString();
+    this.active.delete(run.agentId);
+    this.chunkBuffers.delete(run.id);
+    this.lastToolNames.delete(run.id);
+    this.appendActivity(run, "Cancelled by user.");
+
+    const updated = this.options.messages.update(run.resultMessageId, {
+      content: `${getAgentLabel(run.agentId)} was cancelled.`,
+      status: "cancelled",
+      activity: run.activity,
+      completedAt: run.completedAt,
+      startedAt: run.startedAt,
+    });
+    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({
+      type: "run.cancelled",
+      conversationId: this.options.conversationId,
+      agentId: run.agentId,
+      runId: run.id,
+      resultMessageId: updated.id,
+    });
+  }
+
   private start(run: ManagedRun): void {
     run.status = "running";
     run.startedAt = new Date().toISOString();
@@ -122,6 +176,9 @@ export class RunManager {
   }
 
   private complete(run: ManagedRun, runResult: RunResult): void {
+    if (run.status === "cancelled") {
+      return; // Don't overwrite cancelled status
+    }
     run.status = "completed";
     run.completedAt = new Date().toISOString();
     this.active.delete(run.agentId);
@@ -151,6 +208,9 @@ export class RunManager {
   }
 
   private fail(run: ManagedRun, error: string): void {
+    if (run.status === "cancelled") {
+      return; // Don't overwrite cancelled status
+    }
     const errorSummary = summarizeRunError(error);
     run.status = "failed";
     run.completedAt = new Date().toISOString();

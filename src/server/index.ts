@@ -428,6 +428,33 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Cancel run
+    if (req.method === "POST" && url.pathname.startsWith("/api/runs/") && url.pathname.endsWith("/cancel")) {
+      const parts = url.pathname.split("/");
+      const runId = parts[3];
+      if (!runId) {
+        sendJson(res, 400, { ok: false, message: "Missing run id." });
+        return;
+      }
+
+      // Search all active contexts for the run
+      let cancelled = false;
+      for (const [, ctx] of contextMap) {
+        if (ctx.runManager.cancel(runId)) {
+          cancelled = true;
+          break;
+        }
+      }
+
+      if (!cancelled) {
+        sendJson(res, 404, { ok: false, message: "Run not found or already completed." });
+        return;
+      }
+
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     // Agents
     if (req.method === "GET" && url.pathname === "/api/agents") {
       sendJson(res, 200, allConfigs);
