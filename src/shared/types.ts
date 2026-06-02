@@ -53,7 +53,7 @@ export type AgentState = {
 
 export type ChatMessageKind = "user" | "agent" | "system";
 
-export type ChatMessageStatus = "sent" | "running" | "done" | "error";
+export type ChatMessageStatus = "sent" | "running" | "done" | "error" | "cancelled";
 
 export type MessageRouteState = "unprocessed" | "ignored" | "routed" | "blocked";
 
@@ -72,6 +72,7 @@ export type ChatMessage = {
   createdAt: string;
   status?: ChatMessageStatus;
   runId?: string;
+  runStatus?: "queued" | "running" | "completed" | "failed" | "cancelled";
   parentMessageId?: string;
   routeState?: MessageRouteState;
   routeDepth?: number;
@@ -107,6 +108,7 @@ export type RuntimeEvent =
   | { type: "terminal.chunk"; conversationId: string; agentId: AgentId; runId?: string; text: string }
   | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
   | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string }
+  | { type: "run.cancelled"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
   | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
   | { type: "running.updated"; summaries: RunningSummary[] }
   | { type: "runtime.availability.updated"; availability: RuntimeAvailability[] }

@@ -428,6 +428,45 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Cancel run (queued runs only)
+    if (req.method === "POST" && url.pathname.startsWith("/api/runs/") && url.pathname.endsWith("/cancel")) {
+      const parts = url.pathname.split("/");
+      const runId = parts[3];
+      if (!runId) {
+        sendJson(res, 400, { ok: false, message: "Missing run id." });
+        return;
+      }
+
+      // Search all active contexts for the run
+      let result: { ok: boolean; reason?: string } = { ok: false, reason: "not_found" };
+      for (const [, ctx] of contextMap) {
+        const candidate = ctx.runManager.cancel(runId);
+        if (candidate.ok) {
+          result = candidate;
+          break;
+        }
+        // Any reason other than "not_found" is definitive — stop searching
+        if (candidate.reason !== "not_found") {
+          result = candidate;
+          break;
+        }
+      }
+
+      if (!result.ok) {
+        if (result.reason === "already_running") {
+          sendJson(res, 409, { ok: false, reason: "already_running", message: "This run has already started and cannot be cancelled." });
+        } else if (result.reason === "not_cancellable") {
+          sendJson(res, 409, { ok: false, reason: "not_cancellable", message: "This run has already finished and cannot be cancelled." });
+        } else {
+          sendJson(res, 404, { ok: false, reason: "not_found", message: "Run not found." });
+        }
+        return;
+      }
+
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     // Agents
     if (req.method === "GET" && url.pathname === "/api/agents") {
       sendJson(res, 200, allConfigs);

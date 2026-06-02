@@ -997,13 +997,38 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
 function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentState }) {
   const author = message.kind === "user" ? "You" : message.kind === "agent" ? message.agentId ?? "agent" : "system";
   const isRunning = message.status === "running";
+  const isQueued = message.runStatus === "queued";
+  const [cancelling, setCancelling] = useState(false);
+
+  async function cancelRun() {
+    if (!message.runId || cancelling) return;
+    setCancelling(true);
+    try {
+      await fetch(`/api/runs/${message.runId}/cancel`, { method: "POST" });
+    } catch {
+      // Cancellation request failed silently — the run may already be done
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   return (
     <article className={`message ${message.kind}`}>
       <div className="messageMeta">
         <strong>{author}</strong>
         {message.kind === "agent" && agent ? <RuntimeBadge runtime={agent.runtime} /> : null}
-        {message.status ? <span>{message.status}</span> : null}
+        {message.status ? <span className={`statusPill ${message.status}`}>{message.status}</span> : null}
+        {(isQueued || cancelling) && message.runId ? (
+          <button
+            type="button"
+            className="cancelRunBtn"
+            onClick={cancelRun}
+            disabled={cancelling}
+            title={cancelling ? "正在取消..." : "取消排队任务"}
+          >
+            {cancelling ? "取消中..." : "取消"}
+          </button>
+        ) : null}
         <DurationDisplay
           startedAt={message.startedAt ?? (isRunning ? message.createdAt : undefined)}
           completedAt={message.completedAt}
