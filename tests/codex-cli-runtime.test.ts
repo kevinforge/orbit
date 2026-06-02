@@ -96,6 +96,14 @@ test("extracts Codex session id from thread or session fields", () => {
   assert.equal(extractCodexSessionId(JSON.stringify({ type: "session.started", session_id: "sess-123" })), "sess-123");
 });
 
+test("extracts Codex session id from concatenated JSON objects", () => {
+  const output =
+    JSON.stringify({ type: "tool.started", name: "read" }) +
+    JSON.stringify({ type: "thread.started", thread_id: "thread-concat" });
+
+  assert.equal(extractCodexSessionId(output), "thread-concat");
+});
+
 test("parses concatenated JSON objects without newline separator", () => {
   const output =
     JSON.stringify({ type: "tool.started", name: "read" }) +
@@ -104,6 +112,18 @@ test("parses concatenated JSON objects without newline separator", () => {
   const result = extractCodexCliFinalAnswer(output);
 
   assert.equal(result.text, "hi");
+});
+
+test("ignores Codex error result events as final answers", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-error" }),
+    JSON.stringify({ type: "result", is_error: true, result: "API Error: socket closed" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "");
+  assert.equal(result.sessionId, "thread-error");
 });
 
 test("ignores plain non-JSON text between valid events", () => {

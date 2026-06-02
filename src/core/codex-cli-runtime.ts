@@ -99,14 +99,19 @@ export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
   const result = new Promise<string>((resolve, reject) => {
     child.on("error", reject);
     child.on("close", (code) => {
-      if (!capturedSessionId) sessionIdResolve(null);
-
       if (code !== 0) {
+        if (!capturedSessionId) sessionIdResolve(null);
         reject(new Error(stderr.trim() || stdout.trim() || `Codex CLI exited with code ${code}`));
         return;
       }
 
       const parsed = extractCodexCliFinalAnswer(stdout);
+      if (!capturedSessionId && parsed.sessionId) {
+        capturedSessionId = parsed.sessionId;
+        sessionIdResolve(parsed.sessionId);
+      }
+      if (!capturedSessionId) sessionIdResolve(null);
+
       if (!parsed.text) {
         reject(new Error("Codex CLI completed without a final answer."));
         return;
@@ -144,16 +149,10 @@ export function extractCodexCliFinalAnswer(output: string): { text: string; sess
 }
 
 export function extractCodexSessionId(output: string): string | null {
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const sessionId = sessionIdFromEvent(JSON.parse(trimmed));
-      if (sessionId) {
-        return sessionId;
-      }
-    } catch {
-      // not JSON
+  for (const event of parseJsonObjects(output)) {
+    const sessionId = sessionIdFromEvent(event);
+    if (sessionId) {
+      return sessionId;
     }
   }
   return null;
@@ -243,7 +242,12 @@ function textFromEvent(event: unknown): string {
     content?: unknown;
     text?: unknown;
     result?: unknown;
+    is_error?: unknown;
   };
+
+  if (record.is_error === true) {
+    return "";
+  }
 
   if (record.type === "result" && typeof record.result === "string") {
     return record.result;

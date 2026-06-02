@@ -69,9 +69,37 @@ test("handles concatenated JSON objects without newline separator", () => {
   assert.equal(result.text, "final answer");
 });
 
+test("ignores Claude error result events as final answers", () => {
+  const output = [
+    JSON.stringify({
+      type: "assistant",
+      error: "unknown",
+      message: { content: [{ type: "text", text: "API Error: socket closed" }] },
+    }),
+    JSON.stringify({
+      type: "result",
+      is_error: true,
+      result: "API Error: socket closed",
+      session_id: "sess-error",
+    }),
+  ].join("\n");
+
+  const result = extractClaudeCliFinalAnswer(output);
+  assert.equal(result.text, "");
+  assert.equal(result.sessionId, "sess-error");
+});
+
 test("extractSessionId from init event", () => {
   const output = JSON.stringify({ type: "system", subtype: "init", session_id: "abc-123" });
   assert.equal(extractSessionId(output), "abc-123");
+});
+
+test("extractSessionId handles concatenated JSON objects without newline separator", () => {
+  const output =
+    JSON.stringify({ type: "system", subtype: "hook_started", session_id: "hook-id" }) +
+    JSON.stringify({ type: "system", subtype: "init", session_id: "real-session" });
+
+  assert.equal(extractSessionId(output), "real-session");
 });
 
 test("extractSessionId returns null for no session", () => {
