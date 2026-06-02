@@ -157,9 +157,8 @@ function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean)
     return (
       `[Supervisor Check #${count}/${MAX_TRIGGERS_PER_CONVERSATION} — FINAL]\n\n` +
       `This is your last automatic check for this conversation. ` +
-      `Evaluate whether the overall task is complete. ` +
-      `If work remains that was already assigned and is in progress, acknowledge it. ` +
-      `If the task is done, summarize what was accomplished and conclude. ` +
+      `If work was already assigned and is in progress, acknowledge it. ` +
+      `If the overall task is done, conclude with @user: and a final summary. ` +
       `Do NOT assign new work — this is the final check.`
     );
   }
@@ -168,7 +167,7 @@ function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean)
     `[Supervisor Check #${count}/${MAX_TRIGGERS_PER_CONVERSATION}]\n\n` +
     `Evaluate the current state of the conversation. ` +
     `If the overall task needs more work, assign tasks using @agent: markers. ` +
-    `If all work is complete, summarize and conclude without assigning new tasks.`
+    `If all work is complete, conclude with @user: and a final summary.`
   );
 }
 
