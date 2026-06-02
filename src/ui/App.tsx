@@ -1453,7 +1453,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
           <div className="settingsBody">
             <div className="agentManagerIntro">
               <strong>默认智能体模板</strong>
-              <span>Product Manager、Architect、Developer、Tester 是内置模板，默认不启用。你可以按当前工作区需要开启，也可以创建自己的智能体。</span>
+              <span>五个内置模板默认不启用。Product Manager、Architect、Developer、Tester 负责规划与实现，Supervisor 负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的智能体。</span>
             </div>
             <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义智能体</button>
             {configs.map((config, i) => {
@@ -1469,6 +1469,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                       <span className="configCardName">{config.name || config.id}</span>
                       <span className="configCardPill configCardRole">{config.role}</span>
                       <span className="configCardPill configCardRuntime">{config.runtime}</span>
+                      {config.triggers ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
                     </div>
                     <div className="configCardActions">
                       <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="删除">&times;</button>
@@ -1531,6 +1532,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                             })}
                           </div>
                         </div>
+                        {config.triggers ? <SupervisorBanner /> : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给智能体的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -1550,6 +1552,20 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
           <button type="button" onClick={save} disabled={saving}>{saving ? "保存中..." : "保存"}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SupervisorBanner() {
+  return (
+    <div className="supervisorBanner">
+      <p><span aria-hidden="true">🔍</span> <strong>会话监督已启用</strong></p>
+      <p>此智能体会在以下情况自动介入：</p>
+      <ul>
+        <li><span aria-hidden="true">⚡</span> <strong>消息未分配</strong> — 消息中没有 @agent: 标记时，自动分析需求并分配任务</li>
+        <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他智能体的消息被路由拒绝时，介入兜底处理</li>
+      </ul>
+      <p>⏱ 单轮对话最多自动触发 5 次，或在任务闭环后自动停止。关闭 enabled 开关可暂停监督。</p>
     </div>
   );
 }
