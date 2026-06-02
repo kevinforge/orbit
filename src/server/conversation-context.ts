@@ -10,6 +10,7 @@ import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { MessageRouter } from "../core/message-router.ts";
+import { ChannelWatchService } from "../core/channel-watch.ts";
 import type { AgentId, AgentProfile, WorkspaceRuntimeConfig } from "../shared/types.ts";
 import { DEFAULT_WORKSPACE_CONFIG } from "../shared/types.ts";
 
@@ -31,6 +32,7 @@ export class ConversationContext {
   agents: AgentRegistry;
   runManager: RunManager;
   messageRouter: MessageRouter;
+  channelWatch: ChannelWatchService;
 
   private _profiles: readonly AgentProfile[];
   private _workspaceConfig: WorkspaceRuntimeConfig;
@@ -98,6 +100,15 @@ export class ConversationContext {
         self.messages.markRouteState(messageId, routeState);
       },
     });
+
+    this.channelWatch = new ChannelWatchService(
+      conversationId,
+      this.agents,
+      this.runManager,
+      this.messages,
+      eventBus,
+      profiles,
+    );
   }
 
   hasRunningAgent(): boolean {
@@ -105,6 +116,7 @@ export class ConversationContext {
   }
 
   refreshProfiles(profiles: readonly AgentProfile[]): void {
+    this.channelWatch.dispose();
     this.agents.stopAll();
     this.runManager.dispose();
 
@@ -148,8 +160,22 @@ export class ConversationContext {
       },
     });
 
-    // Replace readonly fields via Object.assign (intentional hot-swap)
-    Object.assign(this, { agents: newAgents, runManager: newRunManager, messageRouter: newMessageRouter });
+    const newChannelWatch = new ChannelWatchService(
+      conversationId,
+      newAgents,
+      newRunManager,
+      this.messages,
+      eventBus,
+      profiles,
+    );
+
+    // Replace mutable fields via Object.assign (intentional hot-swap)
+    Object.assign(this, {
+      agents: newAgents,
+      runManager: newRunManager,
+      messageRouter: newMessageRouter,
+      channelWatch: newChannelWatch,
+    });
   }
 
   updateWorkspaceConfig(config: WorkspaceRuntimeConfig): void {
@@ -158,6 +184,7 @@ export class ConversationContext {
   }
 
   dispose(): void {
+    this.channelWatch.dispose();
     this.agents.stopAll();
     this.runManager.dispose();
     this.transcripts.dispose();

@@ -13,6 +13,11 @@ export type PermissionProfile = {
 
 export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 
+export type ChannelWatchTriggers = {
+  onUnassignedMessage?: boolean;
+  onAgentBlocked?: boolean;
+};
+
 export type AgentConfigUi = {
   label?: string;
 };
@@ -27,6 +32,7 @@ export type AgentConfig = {
   permissionProfile?: PermissionProfile;
   enabled: boolean;
   ui?: AgentConfigUi;
+  triggers?: ChannelWatchTriggers;
 };
 
 export type AgentProfile = {
@@ -38,6 +44,7 @@ export type AgentProfile = {
   cwd: string;
   systemPrompt: string;
   permissionProfile: PermissionProfile;
+  triggers?: ChannelWatchTriggers;
 };
 
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";

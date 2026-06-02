@@ -58,6 +58,13 @@ export class RunManager {
     this.unsubscribe();
   }
 
+  hasQueuedRuns(): boolean {
+    for (const queue of this.queues.values()) {
+      if (queue.length > 0) return true;
+    }
+    return false;
+  }
+
   enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage): ManagedRun {
     const runId = createRunId(agentId);
     const routeDepth = (sourceMessage.routeDepth ?? 0) + 1;
