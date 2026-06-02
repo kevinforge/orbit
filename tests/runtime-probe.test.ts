@@ -102,6 +102,27 @@ test("runtimeMeta returns runtime name as label for unknown runtime", () => {
   assert.equal(meta.installUrl, "");
 });
 
+test("Codex probe always returns runtime: codex even with custom CODEX_CLI_PATH", async () => {
+  // When CODEX_CLI_PATH points to a different executable (e.g. node),
+  // the probe result must still use runtime: "codex" so UI/server lookups work
+  const prevCliPath = process.env.CODEX_CLI_PATH;
+  try {
+    process.env.CODEX_CLI_PATH = "node"; // node is always on PATH
+    const results = await probeAllRuntimes();
+    const codex = results.find((r) => r.runtime === "codex");
+    assert.ok(codex, "should find result with runtime: codex even with custom CODEX_CLI_PATH");
+    assert.equal(codex!.available, true);
+    // path should reflect the actual resolved command
+    assert.ok(codex!.path, "should have a resolved path");
+  } finally {
+    if (prevCliPath !== undefined) {
+      process.env.CODEX_CLI_PATH = prevCliPath;
+    } else {
+      delete process.env.CODEX_CLI_PATH;
+    }
+  }
+});
+
 test("probeCodexRuntime is consistent with resolveCodexCommand", async () => {
   // Verify that probeAllRuntimes' codex probe uses resolveCodexCommand by
   // checking it runs without throwing for all env var configurations

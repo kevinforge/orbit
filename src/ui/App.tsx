@@ -1223,8 +1223,17 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
   }
 
   function addConfig() {
+    const role: AgentRole = "general";
     setConfigs((prev) => [
-      { id: `agent-${Date.now()}`, name: "", role: "general", runtime: firstAvailableRuntime, systemPrompt: "", enabled: true },
+      {
+        id: `agent-${Date.now()}`,
+        name: "",
+        role,
+        runtime: firstAvailableRuntime,
+        systemPrompt: "",
+        enabled: true,
+        permissionProfile: permissionProfile(role),
+      },
       ...prev,
     ]);
     setExpandedIndex(0);

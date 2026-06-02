@@ -84,6 +84,9 @@ async function probeCodexRuntime(): Promise<RuntimeProbeResult> {
       : { runtime: "codex", available: false, path: null, error: `Configured path not found: ${resolved}`, checkedAt };
   }
   // Non-absolute command name (e.g. "custom-codex" from CODEX_CLI_PATH) —
-  // resolve via PATH just like the actual runtime does with spawn
-  return probeRuntime(resolved);
+  // resolve via PATH just like the actual runtime does with spawn.
+  // Always report runtime: "codex" so UI/server look up the right key;
+  // the actual resolved command path goes in `path`.
+  const result = await probeRuntime(resolved);
+  return { ...result, runtime: "codex" };
 }

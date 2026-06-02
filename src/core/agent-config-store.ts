@@ -153,7 +153,13 @@ export class AgentConfigStore {
         }
       }
       if (migrated) {
-        this.save(workspaceId, configs);
+        try {
+          this.save(workspaceId, configs);
+        } catch (err) {
+          // Don't lose the user's configs just because we couldn't persist
+          // the migration — warn and return the in-memory fix anyway.
+          console.warn("[orbit] Failed to persist permissionProfile migration:", (err as Error).message ?? String(err));
+        }
       }
       return configs;
     } catch {
