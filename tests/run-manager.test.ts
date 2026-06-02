@@ -656,6 +656,77 @@ test("cancel a running run calls interrupt on the agent", async () => {
   assert.equal(final?.status, "cancelled");
 });
 
+test("cancel a running run advances the queue so the next queued run starts", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+  let interruptCalled = false;
+
+  const calls: Array<{ agentId: AgentId; runId: string }> = [];
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get(agentId: AgentId) {
+        return {
+          send(runId: string) {
+            calls.push({ agentId, runId });
+            return pending.shift()!.promise;
+          },
+        };
+      },
+      interrupt() {
+        interruptCalled = true;
+      },
+    },
+    buildPrompt(_agentId, prompt) {
+      return prompt;
+    },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const run1 = manager.enqueue("developer", "first", source);
+  const run2 = manager.enqueue("developer", "second", source);
+
+  assert.equal(run1.status, "running");
+  assert.equal(run2.status, "queued");
+  assert.equal(calls.length, 1, "only first run should start");
+
+  // Cancel the running run
+  manager.cancel(run1.id);
+  assert.equal(interruptCalled, true);
+
+  // The queued run should have started
+  assert.equal(calls.length, 2, "second run should start after cancel");
+  assert.equal(calls[1]!.runId, run2.id);
+
+  // Verify message states
+  const msg1 = messages.get(run1.resultMessageId);
+  assert.equal(msg1?.status, "cancelled");
+
+  // Complete the second run
+  second.resolve({ content: "second done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const msg2 = messages.get(run2.resultMessageId);
+  assert.equal(msg2?.status, "done");
+
+  // Now resolve the cancelled first run — it should NOT overwrite status
+  first.resolve({ content: "first done anyway" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(messages.get(run1.resultMessageId)?.status, "cancelled",
+    "cancelled status should survive late resolve");
+
+  // And rejecting the cancelled run should also not overwrite
+  const firstMsg = messages.get(run1.resultMessageId);
+  assert.equal(calls.length, 2, "no extra runs should start from stale resolve");
+});
+
 test("cancel a non-existent run returns false", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

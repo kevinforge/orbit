@@ -112,6 +112,8 @@ export class RunManager {
       return false;
     }
 
+    const wasRunning = run.status === "running";
+
     if (run.status === "queued") {
       // Remove from queue
       const queue = this.getQueue(run.agentId);
@@ -121,12 +123,21 @@ export class RunManager {
       }
     }
 
-    if (run.status === "running") {
+    if (wasRunning) {
       // Request interruption
       this.options.agents.interrupt(run.agentId);
     }
 
     this.markCancelled(run);
+
+    // For a cancelled running run, advance the queue immediately.
+    // The cancelled process will still resolve/reject, but complete()/fail()
+    // guard against overwriting the cancelled status. Without this call the
+    // queue would stall because the guards return early and never call startNext().
+    if (wasRunning) {
+      this.startNext(run.agentId);
+    }
+
     return true;
   }
 
