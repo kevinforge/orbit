@@ -1,5 +1,5 @@
 const finalAnswerRejectPattern =
-  /\b(?:API Error|Stop hook error|UserPromptSubmit hook error|Brewing|Brewed for|Twisting|Fiddle|Synthesizing|bypasspermissions|MCP server failed)\b/i;
+  /\b(?:API\s*Error|Stop\s*hook\s*error|UserPromptSubmit\s*hook\s*error|Brewing|Brewed\s*for|Twisting|Fiddle|Synthesizing|bypasspermissions|MCP\s*server\s*failed|tool\.started|tool\.completed|tool\.failed|item\.started|item\.completed)\b|\{"type"\s*:\s*"/i;
 
 export function isCleanFinalAnswer(output: string): boolean {
   const trimmed = output.trim();

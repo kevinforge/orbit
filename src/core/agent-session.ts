@@ -151,7 +151,10 @@ export class AgentSession {
         this.setStatus("idle");
         const cleaned = sanitizeAgentVisibleReply(result.trim());
         if (!isCleanFinalAnswer(cleaned)) {
-          throw new Error("Agent did not return a clean final answer.");
+          throw new Error(
+            "Agent response was rejected by the final-answer safety guard. " +
+            `First 200 chars: "${cleaned.slice(0, 200)}"`,
+          );
         }
         return { content: cleaned, sessionId: sessionId ?? undefined, runIndex };
       })

@@ -6,6 +6,7 @@ import path from "node:path";
 import type { AgentId } from "../shared/types.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
+import { parseJsonObjects } from "./json-stream-parser.ts";
 
 export type CodexCliRunOptions = {
   agentId: AgentId;
@@ -131,21 +132,11 @@ export function extractCodexCliFinalAnswer(output: string): { text: string; sess
   let sessionId: string | undefined;
   const textParts: string[] = [];
 
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    try {
-      const event = JSON.parse(trimmed);
-      sessionId ??= sessionIdFromEvent(event) ?? undefined;
-      const text = textFromEvent(event);
-      if (text) {
-        textParts.push(text);
-      }
-    } catch {
-      textParts.push(trimmed);
+  for (const event of parseJsonObjects(output)) {
+    sessionId ??= sessionIdFromEvent(event) ?? undefined;
+    const text = textFromEvent(event);
+    if (text) {
+      textParts.push(text);
     }
   }
 

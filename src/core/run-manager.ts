@@ -9,6 +9,7 @@ import type {
 import { randomBytes } from "node:crypto";
 import type { EventBus } from "./event-bus.ts";
 import type { MessageStore } from "./message-store.ts";
+import { parseJsonObjects } from "./json-stream-parser.ts";
 
 type AgentRunner = {
   get(agentId: AgentId): {
@@ -539,66 +540,6 @@ function extractStreamJsonActivities(text: string): AgentActivityEvent[] {
 const MAX_RUN_ERROR_CHARS = 2_000;
 const MAX_ACTIVITY_TEXT_CHARS = 2_000;
 const MAX_TOOL_SUMMARY_CHARS = 120;
-
-function parseJsonObjects(text: string): unknown[] {
-  const objects: unknown[] = [];
-  let start = -1;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (start === -1) {
-      if (char === "{") {
-        start = index;
-        depth = 1;
-        inString = false;
-        escaped = false;
-      }
-      continue;
-    }
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char !== "}") {
-      continue;
-    }
-
-    depth -= 1;
-    if (depth === 0) {
-      const candidate = text.slice(start, index + 1);
-      try {
-        objects.push(JSON.parse(candidate));
-      } catch {
-        // Ignore malformed chunks and keep scanning after this candidate.
-      }
-      start = -1;
-    }
-  }
-
-  return objects;
-}
 
 function activityFromCodexItem(item: unknown, eventType: unknown): AgentActivityEvent | null {
   if (!item || typeof item !== "object") {

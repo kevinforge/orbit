@@ -740,7 +740,12 @@ export function App() {
       <section className="conversation" aria-label="Chat conversation">
         <header className={`conversationHeader ${headerCollapsed ? "collapsed" : ""}`}>
           {headerCollapsed ? (
-            <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
+            <div className="conversationHeaderLeft">
+              {state.workspace.name ? <p className="eyebrow">{state.workspace.name}</p> : null}
+              <h1 title={state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}>
+                {state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}
+              </h1>
+            </div>
           ) : (
             <div className="conversationHeaderLeft">
               <p className="eyebrow">{state.workspace.name || "工作区"}</p>
