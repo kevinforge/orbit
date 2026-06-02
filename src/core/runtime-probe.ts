@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 import { promisify } from "node:util";
+import { resolveCodexCommand } from "./codex-cli-runtime.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -52,69 +52,6 @@ export async function probeRuntime(command: string): Promise<RuntimeProbeResult>
   }
 }
 
-/**
- * Probe for codex using the same resolution logic as the Codex CLI runtime
- * (ORBIT_CODEX_PATH, CODEX_CLI_PATH, Windows install locations, PATH fallback).
- */
-export function resolveCodexCommandPath(env: NodeJS.ProcessEnv = process.env): string | null {
-  // 1. Explicit env var overrides
-  const configured = env.ORBIT_CODEX_PATH || env.CODEX_CLI_PATH;
-  if (configured) {
-    // Absolute paths must exist; relative/bare names are trusted (spawn resolves via PATH)
-    if (path.isAbsolute(configured)) {
-      return fs.existsSync(configured) ? configured : null;
-    }
-    return configured;
-  }
-
-  if (process.platform !== "win32") {
-    // On Unix: PATH-only (checked via exec in probe, not fs)
-    return null;
-  }
-
-  // 2. Windows: search known install locations
-  const candidates = resolveWindowsCodexCommand(env);
-  return candidates[0] ?? null;
-}
-
-function resolveWindowsCodexCommand(env: NodeJS.ProcessEnv): string[] {
-  const candidates: string[] = [];
-
-  // OpenAI Codex install directory
-  const codexBin = env.LOCALAPPDATA ? [env.LOCALAPPDATA, "OpenAI", "Codex", "bin"].join(String.fromCharCode(92)) : "";
-  if (codexBin && fs.existsSync(codexBin)) {
-    try {
-      const files = fs.readdirSync(codexBin).map((f) => [codexBin, f].join(String.fromCharCode(92)));
-      candidates.push(...files.filter((f) => f.toLowerCase().endsWith("codex.exe")));
-    } catch { /* ignore read errors */ }
-  }
-
-  // Standalone releases directory
-  const releasesDir = [env.USERPROFILE ?? "", ".codex", "packages", "standalone", "releases"].join(String.fromCharCode(92));
-  if (fs.existsSync(releasesDir)) {
-    try {
-      for (const entry of fs.readdirSync(releasesDir, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          const exe = [releasesDir, entry.name, "codex.exe"].join(String.fromCharCode(92));
-          if (fs.existsSync(exe)) candidates.push(exe);
-        }
-      }
-    } catch { /* ignore read errors */ }
-  }
-
-  // PATH-based candidates (excluding WindowsApps)
-  const pathValue = env.PATH || env.Path || "";
-  for (const dir of pathValue.split(";").filter(Boolean)) {
-    if (dir.toLowerCase().includes("\\windowsapps")) continue;
-    const cmd = [dir, "codex.cmd"].join(String.fromCharCode(92));
-    const exe = [dir, "codex.exe"].join(String.fromCharCode(92));
-    if (fs.existsSync(cmd)) candidates.push(cmd);
-    if (fs.existsSync(exe)) candidates.push(exe);
-  }
-
-  return candidates;
-}
-
 export type RuntimeAvailabilityMap = Record<string, RuntimeProbeResult>;
 
 /** Map AgentRuntimeKind to CLI probe key: claude-code → claude */
@@ -131,11 +68,15 @@ export async function probeAllRuntimes(): Promise<RuntimeProbeResult[]> {
 }
 
 async function probeCodexRuntime(): Promise<RuntimeProbeResult> {
-  // First check full resolution (env vars, known install dirs)
-  const resolved = resolveCodexCommandPath();
-  if (resolved) {
-    return { runtime: "codex", available: true, path: resolved };
+  // Use the same resolver as the actual Codex CLI runtime
+  const resolved = resolveCodexCommand();
+  // If the resolver returned an absolute path, check it exists on disk
+  if (resolved !== "codex") {
+    // Not the bare fallback — the resolver found a specific installation
+    return fs.existsSync(resolved)
+      ? { runtime: "codex", available: true, path: resolved }
+      : { runtime: "codex", available: false, path: null, error: `Configured path not found: ${resolved}` };
   }
-  // Fall back to PATH-based probe
+  // Bare "codex" — fall back to PATH probe
   return probeRuntime("codex");
 }
