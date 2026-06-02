@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { configsToProfiles } from "../core/agent-profiles.ts";
 import { AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
+import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
@@ -29,6 +30,59 @@ const eventBus = new EventBus();
 const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const configStore = new AgentConfigStore();
+
+// --- Runtime availability ---
+const PROBE_INTERVAL_MS = Number(process.env.ORBIT_RUNTIME_PROBE_INTERVAL_MS ?? 60000);
+let runtimeAvailability: Map<string, RuntimeProbeResult> = new Map();
+let probeTimer: ReturnType<typeof setInterval> | null = null;
+
+async function probeRuntimes(): Promise<void> {
+  const results = await probeAllRuntimes();
+  let changed = false;
+  for (const result of results) {
+    const previous = runtimeAvailability.get(result.runtime);
+    if (!previous || previous.available !== result.available) {
+      changed = true;
+    }
+    runtimeAvailability.set(result.runtime, result);
+  }
+  console.log(
+    "[orbit] runtime availability: " +
+    results.map((r) => `${r.runtime}=${r.available ? "found" : "missing"}`).join(", "),
+  );
+  if (changed) {
+    sseHub.publish({ type: "runtime.availability.updated", availability: getRuntimeAvailabilityArray() });
+  }
+}
+
+function startPeriodicProbe(): void {
+  if (probeTimer) return;
+  probeTimer = setInterval(() => {
+    probeRuntimes().catch((err) => {
+      console.warn("[orbit] periodic runtime probe failed:", err instanceof Error ? err.message : String(err));
+    });
+  }, PROBE_INTERVAL_MS);
+  // Prevent timer from keeping the process alive during tests
+  if (probeTimer && typeof probeTimer === "object" && "unref" in probeTimer) {
+    (probeTimer as NodeJS.Timeout).unref();
+  }
+}
+
+function stopPeriodicProbe(): void {
+  if (probeTimer) {
+    clearInterval(probeTimer);
+    probeTimer = null;
+  }
+}
+
+function getRuntimeAvailabilityArray(): RuntimeProbeResult[] {
+  return Array.from(runtimeAvailability.values());
+}
+
+function runtimeAvailable(runtime: string): boolean {
+  const result = runtimeAvailability.get(runtimeKindToCliKey(runtime));
+  return result?.available ?? false;
+}
 
 // Forward all events to SSE clients (single global subscriber)
 eventBus.subscribe((event) => {
@@ -316,7 +370,10 @@ function clearActiveConversation(): void {
 function currentAgentStates() {
   const ctx = getActiveContext();
   if (ctx) {
-    return ctx.agents.states();
+    return ctx.agents.states().map((s) => ({
+      ...s,
+      runtimeAvailable: runtimeAvailable(s.runtime),
+    }));
   }
   return allConfigs
     .filter((config) => config.enabled)
@@ -326,6 +383,7 @@ function currentAgentStates() {
       runtime: config.runtime,
       status: "idle" as const,
       selected: index === 0,
+      runtimeAvailable: runtimeAvailable(config.runtime),
     }));
 }
 
@@ -333,7 +391,7 @@ function currentAgentStates() {
 migrateChannelLayer();
 initActiveContext();
 
-// --- HTTP Server ---
+// --- HTTP Server (created before probe to avoid blocking setup) ---
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -354,6 +412,7 @@ const server = http.createServer(async (req, res) => {
         messages: ctx?.messages.list() ?? [],
         terminal: ctx?.transcripts.all() ?? {},
         runningSummaries: buildRunningSummaries(),
+        runtimeAvailability: getRuntimeAvailabilityArray(),
       });
       return;
     }
@@ -621,9 +680,16 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`[orbit] listening on http://localhost:${port}`);
-});
+// Probe runtimes before accepting connections to avoid startup race
+(async () => {
+  await probeRuntimes().catch((err) => {
+    console.warn("[orbit] runtime probe failed:", err instanceof Error ? err.message : String(err));
+  });
+  startPeriodicProbe();
+  server.listen(port, () => {
+    console.log(`[orbit] listening on http://localhost:${port}`);
+  });
+})();
 
 // --- Helpers ---
 
@@ -765,6 +831,7 @@ async function handlePutAgents(req: http.IncomingMessage, res: http.ServerRespon
 }
 
 function shutdown(): void {
+  stopPeriodicProbe();
   for (const ctx of contextMap.values()) {
     ctx.dispose();
   }

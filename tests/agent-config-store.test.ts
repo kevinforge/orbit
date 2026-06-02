@@ -339,3 +339,107 @@ test("rejects non-object array element without throwing", () => {
   const errors = validateAgentConfigs(["bad"] as unknown as AgentConfig[]);
   assert.ok(errors.some((e) => e.includes("object")), `Expected an object error, got: ${JSON.stringify(errors)}`);
 });
+
+// --- Permission profile persistence (#26) ---
+
+test("DEFAULT_AGENT_CONFIGS include permissionProfile for each agent", () => {
+  for (const config of DEFAULT_AGENT_CONFIGS) {
+    assert.ok(config.permissionProfile, `${config.id} should have permissionProfile`);
+    assert.equal(typeof config.permissionProfile!.canReadFiles, "boolean", `${config.id} canReadFiles`);
+    assert.equal(typeof config.permissionProfile!.canWriteFiles, "boolean", `${config.id} canWriteFiles`);
+    assert.equal(typeof config.permissionProfile!.canRunCommands, "boolean", `${config.id} canRunCommands`);
+    assert.equal(typeof config.permissionProfile!.canInstallDependencies, "boolean", `${config.id} canInstallDependencies`);
+    assert.equal(typeof config.permissionProfile!.canGitCommit, "boolean", `${config.id} canGitCommit`);
+    assert.ok(Array.isArray(config.permissionProfile!.allowedDirectories), `${config.id} allowedDirectories`);
+    assert.ok(config.permissionProfile!.allowedDirectories.length > 0, `${config.id} allowedDirectories non-empty`);
+  }
+});
+
+test("save persists permissionProfile in agents.json on disk", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const configs: AgentConfig[] = [
+      {
+        id: "agent1", name: "A", role: "general", runtime: "claude-code",
+        systemPrompt: "do stuff", enabled: true,
+        permissionProfile: {
+          canReadFiles: true, canWriteFiles: false, canRunCommands: true,
+          canInstallDependencies: false, canGitCommit: false, allowedDirectories: ["."],
+        },
+      },
+    ];
+    store.save("ws1", configs);
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    assert.ok(raw[0].permissionProfile, "file should contain permissionProfile");
+    assert.equal(raw[0].permissionProfile.canReadFiles, true);
+    assert.equal(raw[0].permissionProfile.canWriteFiles, false);
+    assert.equal(raw[0].permissionProfile.canRunCommands, true);
+    assert.equal(raw[0].permissionProfile.canInstallDependencies, false);
+    assert.equal(raw[0].permissionProfile.canGitCommit, false);
+    assert.deepEqual(raw[0].permissionProfile.allowedDirectories, ["."]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("load migrates old configs missing permissionProfile to role defaults", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    // Old config without permissionProfile (simulating pre-#26 format)
+    fs.writeFileSync(filePath, JSON.stringify([
+      { id: "old-dev", name: "Old Dev", description: "", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
+    ]));
+    const loaded = store.load("ws1");
+    assert.equal(loaded.length, 1);
+    // After migration, should have permissionProfile derived from role
+    assert.ok(loaded[0].permissionProfile, "should migrate old config with permissionProfile");
+    assert.equal(loaded[0].permissionProfile!.canReadFiles, true);
+    assert.equal(loaded[0].permissionProfile!.canWriteFiles, true);
+    assert.equal(loaded[0].permissionProfile!.canRunCommands, true);
+    assert.equal(loaded[0].permissionProfile!.canInstallDependencies, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("reset outputs configs with permissionProfile", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const reset = store.reset("ws1");
+    for (const config of reset) {
+      assert.ok(config.permissionProfile, `${config.id} should have permissionProfile after reset`);
+    }
+    // Check file on disk too
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    for (const entry of raw) {
+      assert.ok(entry.permissionProfile, `${entry.id} on disk should have permissionProfile`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("validate still permits configs without permissionProfile (backward compat)", () => {
+  const configs: AgentConfig[] = [
+    { id: "old", name: "Old", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("validate does not require permissionProfile for each config", () => {
+  // permissionProfile is optional in AgentConfig by design
+  const configs: AgentConfig[] = [
+    { id: "a", name: "A", role: "pm", runtime: "codex", systemPrompt: "do pm stuff", enabled: true },
+    { id: "b", name: "B", role: "developer", runtime: "claude-code", systemPrompt: "do dev stuff", enabled: true, permissionProfile: undefined },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});

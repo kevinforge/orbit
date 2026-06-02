@@ -349,6 +349,11 @@ button:active:not(:disabled) {
   transition: background 0.25s var(--ease-out), border-left-color 0.25s var(--ease-out);
 }
 
+/* Runtime missing agent */
+.agentRuntimeMissing {
+  opacity: 0.75;
+}
+
 .sidebarFooter {
   margin-top: auto;
   padding-top: 8px;
@@ -386,6 +391,11 @@ button:active:not(:disabled) {
 .statusDot.stopped {
   background: var(--error);
   box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.statusDot.runtimeMissing {
+  background: var(--subtext);
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.12);
 }
 
 @keyframes statusPulse {
@@ -488,6 +498,16 @@ button:active:not(:disabled) {
 .agentStatusPill.error::before,
 .agentStatusPill.stopped::before {
   background: var(--error);
+}
+
+.agentStatusPill.runtimeMissing {
+  border-color: var(--shadow-border);
+  color: var(--subtext);
+  background: var(--bg-sidebar);
+}
+
+.agentStatusPill.runtimeMissing::before {
+  background: var(--subtext);
 }
 
 /* ── Conversation ──────────────────────────────────────────── */
@@ -2417,6 +2437,44 @@ button:active:not(:disabled) {
 .pillActive:hover {
   color: var(--text-inverse);
   background: var(--accent-hover);
+}
+
+.pillBtnWrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pillBtnWrapperDisabled .pillBtn {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.pillMissing {
+  border-color: var(--error-border);
+  color: var(--error);
+}
+
+.pillCheck {
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pillUnknown {
+  color: var(--subtext);
+  font-size: 11px;
+}
+
+.runtimeInstallLink {
+  margin-left: 2px;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.runtimeInstallLink:hover {
+  text-decoration: underline;
 }
 
 .configFields {

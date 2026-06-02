@@ -1,6 +1,7 @@
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
+import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, Conversation, ConversationInfo, PermissionProfile, RunningSummary, RuntimeEvent, Workspace } from "../shared/types.ts";
 
 const initialState: AppState = {
@@ -10,6 +11,7 @@ const initialState: AppState = {
   messages: [],
   terminal: {},
   runningSummaries: [],
+  runtimeAvailability: [],
 };
 
 export function App() {
@@ -864,6 +866,7 @@ export function App() {
         <AgentManagerPanel
           onClose={() => setShowAgentManager(false)}
           onSaved={() => { setShowAgentManager(false); window.location.reload(); }}
+          runtimeAvailability={state.runtimeAvailability}
         />
       ) : null}
     </main>
@@ -960,18 +963,26 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
 
 function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void }) {
   const isRunning = props.agent.status === "running" || props.agent.status === "starting";
+  const isRuntimeMissing = props.agent.runtimeAvailable === false;
   return (
-    <button className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""}`} onClick={props.onClick} type="button">
-      <span className={`statusDot ${props.agent.status}`} aria-hidden="true" />
+    <button
+      className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""}`}
+      onClick={props.onClick}
+      type="button"
+      title={isRuntimeMissing ? `${props.agent.runtime} not found on PATH — agent cannot run` : undefined}
+    >
+      <span className={`statusDot ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
         <strong>
           {props.agent.label}
           {isRunning && <span className="agentRunningLabel">Running</span>}
           <RuntimeBadge runtime={props.agent.runtime} />
         </strong>
-        <small>{props.agent.id}</small>
+        <small>{props.agent.id}{isRuntimeMissing ? " · unavailable" : ""}</small>
       </span>
-      <span className={`agentStatusPill ${props.agent.status}`}>{props.agent.status}</span>
+      <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
+        {isRuntimeMissing ? "missing" : props.agent.status}
+      </span>
     </button>
   );
 }
@@ -1174,12 +1185,31 @@ function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AgentManagerPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose: () => void; onSaved: () => void; runtimeAvailability: AppState["runtimeAvailability"] }) {
   const [configs, setConfigs] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+
+  const availByRuntime = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const a of runtimeAvailability) {
+      map.set(a.runtime, a.available);
+    }
+    return map;
+  }, [runtimeAvailability]);
+
+  function isRuntimeAvailable(runtime: AgentRuntimeKind): boolean | undefined {
+    return availByRuntime.get(runtimeKindToCliKey(runtime));
+  }
+
+  const firstAvailableRuntime = useMemo((): AgentRuntimeKind => {
+    for (const rt of RUNTIMES) {
+      if (isRuntimeAvailable(rt) !== false) return rt; // prefer available or unprobed
+    }
+    return "claude-code";
+  }, [availByRuntime]);
 
   useEffect(() => {
     fetch("/api/agents")
@@ -1193,8 +1223,17 @@ function AgentManagerPanel({ onClose, onSaved }: { onClose: () => void; onSaved:
   }
 
   function addConfig() {
+    const role: AgentRole = "general";
     setConfigs((prev) => [
-      { id: `agent-${Date.now()}`, name: "", role: "general", runtime: "claude-code", systemPrompt: "", enabled: true },
+      {
+        id: `agent-${Date.now()}`,
+        name: "",
+        role,
+        runtime: firstAvailableRuntime,
+        systemPrompt: "",
+        enabled: true,
+        permissionProfile: permissionProfile(role),
+      },
       ...prev,
     ]);
     setExpandedIndex(0);
@@ -1310,9 +1349,30 @@ function AgentManagerPanel({ onClose, onSaved }: { onClose: () => void; onSaved:
                         <div className="pillGroup">
                           <span className="pillLabel">Runtime <span className="fieldHint" title="驱动该智能体的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
                           <div className="pillOptions">
-                            {RUNTIMES.map((r) => (
-                              <button key={r} type="button" className={`pillBtn ${config.runtime === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { runtime: r })}>{r}</button>
-                            ))}
+                            {RUNTIMES.map((r) => {
+                              const isAvail = isRuntimeAvailable(r);
+                              const isMissing = isAvail === false;
+                              const isCurrent = config.runtime === r;
+                              const meta = runtimeMeta(r);
+                              const disabled = isMissing && !isCurrent;
+                              return (
+                                <span key={r} className={`pillBtnWrapper ${isMissing && !isCurrent ? "pillBtnWrapperDisabled" : ""}`}>
+                                  <button
+                                    type="button"
+                                    className={`pillBtn ${isCurrent ? "pillActive" : ""} ${isMissing ? "pillMissing" : ""}`}
+                                    onClick={() => { if (!disabled) updateConfig(i, { runtime: r }); }}
+                                    aria-disabled={disabled || undefined}
+                                    title={isMissing ? `${r} 未安装` : isAvail === true ? `${r} 已就绪` : `${r} 检测中...`}
+                                  >
+                                    {r}
+                                    {isAvail === true ? <span className="pillCheck"> ✓</span> : isAvail === undefined ? <span className="pillUnknown"> ?</span> : null}
+                                  </button>
+                                  {isMissing ? (
+                                    <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallLink" title={`安装 ${meta.label}`}>↗</a>
+                                  ) : null}
+                                </span>
+                              );
+                            })}
                           </div>
                         </div>
                         <div className="fieldWithHint fieldFullWidth">
@@ -1369,6 +1429,22 @@ function PlainText({ content }: { content: string }) {
 function applyEvent(state: AppState, event: RuntimeEvent): AppState {
   if (event.type === "running.updated") {
     return { ...state, runningSummaries: event.summaries };
+  }
+
+  if (event.type === "runtime.availability.updated") {
+    const availMap = new Map<string, boolean>();
+    for (const a of event.availability) {
+      availMap.set(a.runtime, a.available);
+    }
+    return {
+      ...state,
+      runtimeAvailability: event.availability,
+      agents: state.agents.map((agent) => {
+        const cliKey = runtimeKindToCliKey(agent.runtime);
+        const available = availMap.get(cliKey);
+        return { ...agent, runtimeAvailable: available };
+      }),
+    };
   }
 
   // For conversation-scoped events, only process if they match the active conversation
@@ -1434,6 +1510,7 @@ function normalizeState(nextState: AppState): AppState {
       ...(nextState.terminal ?? {}),
     },
     runningSummaries: nextState.runningSummaries ?? [],
+    runtimeAvailability: nextState.runtimeAvailability ?? [],
   };
 }
 
