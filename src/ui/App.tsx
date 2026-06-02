@@ -1347,19 +1347,21 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                               const meta = runtimeMeta(r);
                               const disabled = isMissing && !isCurrent;
                               return (
-                                <button
-                                  key={r}
-                                  type="button"
-                                  className={`pillBtn ${isCurrent ? "pillActive" : ""} ${isMissing ? "pillMissing" : ""}`}
-                                  onClick={() => { if (!disabled) updateConfig(i, { runtime: r }); }}
-                                  disabled={disabled}
-                                  title={isMissing ? `${r} 未安装 — 点击 ↗ 查看安装说明` : isAvail === true ? `${r} 已就绪` : `${r} 检测中...`}
-                                >
-                                  {r}
+                                <span key={r} className={`pillBtnWrapper ${isMissing && !isCurrent ? "pillBtnWrapperDisabled" : ""}`}>
+                                  <button
+                                    type="button"
+                                    className={`pillBtn ${isCurrent ? "pillActive" : ""} ${isMissing ? "pillMissing" : ""}`}
+                                    onClick={() => { if (!disabled) updateConfig(i, { runtime: r }); }}
+                                    aria-disabled={disabled || undefined}
+                                    title={isMissing ? `${r} 未安装` : isAvail === true ? `${r} 已就绪` : `${r} 检测中...`}
+                                  >
+                                    {r}
+                                    {isAvail === true ? <span className="pillCheck"> ✓</span> : isAvail === undefined ? <span className="pillUnknown"> ?</span> : null}
+                                  </button>
                                   {isMissing ? (
-                                    <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallLink" onClick={(e) => e.stopPropagation()} title="安装说明">↗</a>
-                                  ) : isAvail === true ? <span className="pillCheck"> ✓</span> : <span className="pillUnknown"> ?</span>}
-                                </button>
+                                    <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallLink" title={`安装 ${meta.label}`}>↗</a>
+                                  ) : null}
+                                </span>
                               );
                             })}
                           </div>

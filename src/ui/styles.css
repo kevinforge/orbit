@@ -2439,21 +2439,20 @@ button:active:not(:disabled) {
   background: var(--accent-hover);
 }
 
+.pillBtnWrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pillBtnWrapperDisabled .pillBtn {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .pillMissing {
-  opacity: 0.6;
   border-color: var(--error-border);
   color: var(--error);
-}
-
-.pillBtn:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.pillBtn:disabled:hover {
-  border-color: var(--border);
-  color: inherit;
-  background: transparent;
 }
 
 .pillCheck {
