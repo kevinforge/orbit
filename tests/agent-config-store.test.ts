@@ -45,7 +45,8 @@ test("save then load round-trips configs", () => {
     ];
     store.save("ws1", configs);
     const loaded = store.load("ws1");
-    assert.equal(loaded.length, 1);
+    // auto-migration adds missing default templates (5) to the 1 custom → 6 total
+    assert.equal(loaded.length, 6);
     assert.equal(loaded[0].id, "custom");
     assert.equal(loaded[0].name, "Custom Agent");
   } finally {
@@ -146,7 +147,8 @@ test("load accepts valid JSON with no enabled agents", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: false }]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 1);
+    // auto-migration adds 5 missing default templates → 1 + 5 = 6
+    assert.equal(configs.length, 6);
     assert.equal(configs[0].id, "a");
     assert.equal(configs[0].enabled, false);
   } finally {
@@ -396,7 +398,8 @@ test("load migrates old configs missing permissionProfile to role defaults", () 
       { id: "old-dev", name: "Old Dev", description: "", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
     ]));
     const loaded = store.load("ws1");
-    assert.equal(loaded.length, 1);
+    // auto-migration adds 5 missing default templates → 1 + 5 = 6
+    assert.equal(loaded.length, 6);
     // After migration, should have permissionProfile derived from role
     assert.ok(loaded[0].permissionProfile, "should migrate old config with permissionProfile");
     assert.equal(loaded[0].permissionProfile!.canReadFiles, true);

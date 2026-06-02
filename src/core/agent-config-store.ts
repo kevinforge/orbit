@@ -187,13 +187,23 @@ export class AgentConfigStore {
           migrated = true;
         }
       }
+
+      // Auto-add new default templates not present in saved configs
+      const savedIds = new Set(configs.map((c) => c.id));
+      for (const def of DEFAULT_AGENT_CONFIGS) {
+        if (!savedIds.has(def.id)) {
+          configs.push(structuredClone(def));
+          migrated = true;
+        }
+      }
+
       if (migrated) {
         try {
           this.save(workspaceId, configs);
         } catch (err) {
           // Don't lose the user's configs just because we couldn't persist
           // the migration — warn and return the in-memory fix anyway.
-          console.warn("[orbit] Failed to persist permissionProfile migration:", (err as Error).message ?? String(err));
+          console.warn("[orbit] Failed to persist config migration:", (err as Error).message ?? String(err));
         }
       }
       return configs;
