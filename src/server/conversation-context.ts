@@ -85,9 +85,14 @@ export class ConversationContext {
       },
     });
 
+    const hasActiveSupervisor = profiles.some(
+      (p) => p.triggers && (p.triggers.onUnassignedMessage || p.triggers.onAgentBlocked),
+    );
+
     this.messageRouter = new MessageRouter({
       availableAgents: agentIds,
       maxRouteDepth: MAX_ROUTE_DEPTH,
+      hasActiveSupervisor,
       createSystemMessage: (content, parentMessageId) => {
         const msg = self.messages.add({ kind: "system", content, status: "done", parentMessageId });
         eventBus.publish({ type: "message.created", conversationId, message: msg });
@@ -144,9 +149,14 @@ export class ConversationContext {
       },
     });
 
+    const newHasSupervisor = profiles.some(
+      (p) => p.triggers && (p.triggers.onUnassignedMessage || p.triggers.onAgentBlocked),
+    );
+
     const newMessageRouter = new MessageRouter({
       availableAgents: agentIds,
       maxRouteDepth: MAX_ROUTE_DEPTH,
+      hasActiveSupervisor: newHasSupervisor,
       createSystemMessage: (content, parentMessageId) => {
         const msg = self.messages.add({ kind: "system", content, status: "done", parentMessageId });
         eventBus.publish({ type: "message.created", conversationId, message: msg });

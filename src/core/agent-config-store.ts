@@ -65,13 +65,15 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's conversation supervisor. Your role is to track the user's original " +
       "request and determine if the overall task is complete. " +
+      "You must NOT write code, run commands, or modify files yourself. " +
+      "Always delegate implementation work to other agents using @agent: markers. " +
       "When triggered, evaluate the conversation state:\n" +
       "- If work is still needed, assign tasks using @agent: markers.\n" +
       "- If blocked, explain what's missing to the user.\n" +
       "- If complete, summarize what was accomplished and conclude.\n" +
       "Before assigning work, check if any agents are already running or have queued tasks — do not duplicate.",
     enabled: false,
-    permissionProfile: permissionProfile("architect"),
+    permissionProfile: permissionProfile("pm"),
     triggers: {
       onUnassignedMessage: true,
       onAgentBlocked: true,
@@ -153,6 +155,18 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
           errors.push(`Agent "${configId}" triggers.onAgentBlocked must be a boolean.`);
         }
       }
+    }
+  }
+
+  // Cross-validation: supervisor requires at least one other agent enabled
+  const supervisor = configs.find((c) => c && c.id === "supervisor" && c.enabled);
+  if (supervisor) {
+    const othersEnabled = configs.some((c) => c && c.id !== "supervisor" && c.enabled);
+    if (!othersEnabled) {
+      errors.push(
+        "Supervisor cannot be enabled when no other agents are enabled. " +
+          "Enable at least one working agent (pm, architect, developer, tester) first.",
+      );
     }
   }
 

@@ -1737,7 +1737,7 @@ button:active:not(:disabled) {
   min-height: 0;
   flex: 1 1 auto;
   align-content: start;
-  overflow: visible;
+  overflow-y: auto;
   padding-bottom: 16px;
 }
 
@@ -2046,7 +2046,7 @@ button:active:not(:disabled) {
 
 .compactAgents {
   flex: 0 0 auto;
-  max-height: 220px;
+  max-height: 270px;
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
