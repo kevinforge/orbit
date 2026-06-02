@@ -95,3 +95,108 @@ test("extracts Codex session id from thread or session fields", () => {
   assert.equal(extractCodexSessionId(JSON.stringify({ type: "thread.started", thread_id: "thread-123" })), "thread-123");
   assert.equal(extractCodexSessionId(JSON.stringify({ type: "session.started", session_id: "sess-123" })), "sess-123");
 });
+
+test("extracts Codex session id from concatenated JSON objects", () => {
+  const output =
+    JSON.stringify({ type: "tool.started", name: "read" }) +
+    JSON.stringify({ type: "thread.started", thread_id: "thread-concat" });
+
+  assert.equal(extractCodexSessionId(output), "thread-concat");
+});
+
+test("parses concatenated JSON objects without newline separator", () => {
+  const output =
+    JSON.stringify({ type: "tool.started", name: "read" }) +
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hi" } });
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "hi");
+});
+
+test("ignores Codex error result events as final answers", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-error" }),
+    JSON.stringify({ type: "result", is_error: true, result: "API Error: socket closed" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "");
+  assert.equal(result.sessionId, "thread-error");
+});
+
+test("ignores plain non-JSON text between valid events", () => {
+  const output = [
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "first" } }),
+    "DEBUG: some random log output",
+    "> npm run build output",
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "second" } }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "first\nsecond");
+});
+
+test("handles braces inside JSON string values", () => {
+  const output = JSON.stringify({
+    type: "item.completed",
+    item: { type: "agent_message", text: "use {braces} in code" },
+  });
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "use {braces} in code");
+});
+
+test("handles escaped quotes inside JSON string values", () => {
+  const output = JSON.stringify({
+    type: "item.completed",
+    item: { type: "agent_message", text: 'she said "hello"' },
+  });
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, 'she said "hello"');
+});
+
+test("returns empty text for plain non-JSON input", () => {
+  const result = extractCodexCliFinalAnswer("plain text only, no JSON at all");
+
+  assert.equal(result.text, "");
+});
+
+test("returns empty text for empty input", () => {
+  const result = extractCodexCliFinalAnswer("");
+
+  assert.equal(result.text, "");
+});
+
+test("extracts only structured final answer, ignoring tool events in same stream", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-456" }),
+    JSON.stringify({ type: "tool.started", name: "web_search", input: "query" }),
+    JSON.stringify({ type: "item.completed", item: { type: "tool_execution", aggregated_output: "search results..." } }),
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "结论：当前实现是 **best-effort interrupt**，不是强保证停止。" } }),
+    JSON.stringify({ type: "turn.completed" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "结论：当前实现是 **best-effort interrupt**，不是强保证停止。");
+  assert.equal(result.sessionId, "thread-456");
+});
+
+test("ignores tool output, stderr, and reconnect events when extracting final answer", () => {
+  const output = [
+    JSON.stringify({ type: "item.completed", item: { type: "command_execution", aggregated_output: "npm ERR! failed" } }),
+    "Reconnecting... 2/5",
+    "Reconnecting... 5/5 (request timed out)",
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "The build failed due to a type error." } }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "The build failed due to a type error.");
+});

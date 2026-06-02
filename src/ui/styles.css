@@ -527,15 +527,28 @@ button:active:not(:disabled) {
 
 .conversationHeader.collapsed {
   padding: 8px 24px;
+  gap: 10px;
+}
+
+.conversationHeader.collapsed .conversationHeaderLeft {
+  min-width: 0;
 }
 
 .conversationHeader.collapsed h1 {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
-.conversationHeader.collapsed .eyebrow,
+.conversationHeader.collapsed .eyebrow {
+  font-size: 10px;
+  margin-bottom: 1px;
+}
+
 .conversationHeader.collapsed .workspacePath,
 .conversationHeader.collapsed .headerMeta {
   display: none;
@@ -1360,7 +1373,7 @@ button:active:not(:disabled) {
   grid-template-columns: minmax(0, 1fr) 108px;
   gap: 12px;
   min-width: 0;
-  padding: 18px 32px;
+  padding: 12px 24px;
   border-top: 1px solid var(--border);
   background: var(--bg-surface);
   box-shadow: 0 -2px 16px rgba(26, 24, 21, 0.05);
@@ -1374,11 +1387,11 @@ button:active:not(:disabled) {
 .composer textarea {
   width: 100%;
   min-width: 0;
-  min-height: 54px;
-  max-height: calc(22px * 6 + 16px);
+  min-height: 42px;
+  max-height: calc(22px * 6 + 12px);
   border: 1.5px solid var(--border);
   border-radius: 14px;
-  padding: 15px 18px;
+  padding: 10px 16px;
   color: var(--text-primary);
   background: var(--bg-input);
   outline: none;
@@ -1404,7 +1417,8 @@ button:active:not(:disabled) {
 
 .composer > button {
   min-width: 0;
-  min-height: 54px;
+  min-height: 42px;
+  align-self: start;
   color: var(--text-inverse);
   border: none;
   border-radius: 14px;
@@ -2044,6 +2058,14 @@ button:active:not(:disabled) {
   grid-template-areas: "dot text";
   min-height: 40px;
   padding: 8px 10px;
+}
+
+/* In compact mode, selected agent should not look like it's running */
+.compactAgents .agentButton.selected {
+  border-color: transparent;
+  border-left-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .compactAgents .agentText {
