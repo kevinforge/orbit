@@ -59,13 +59,13 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
     id: "supervisor",
     name: "Supervisor",
-    description: "Monitors channel progress and coordinates agents toward task completion.",
+    description: "Monitors conversation progress and coordinates agents toward task completion.",
     role: "general",
     runtime: "claude-code",
     systemPrompt:
-      "You are Orbit's channel supervisor. Your role is to track the user's original " +
+      "You are Orbit's conversation supervisor. Your role is to track the user's original " +
       "request and determine if the overall task is complete. " +
-      "When triggered, evaluate the channel state:\n" +
+      "When triggered, evaluate the conversation state:\n" +
       "- If work is still needed, assign tasks using @agent: markers.\n" +
       "- If blocked, explain what's missing to the user.\n" +
       "- If complete, summarize what was accomplished and conclude.\n" +

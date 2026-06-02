@@ -574,6 +574,47 @@ test("debounce coalesces rapid triggers", async () => {
   service.dispose();
 });
 
+test("supervisor completing does not trigger itself (self-trigger prevention)", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", dev: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // Supervisor completes with a plain message (no @agent:)
+  const supervisorReply = messages.add({
+    kind: "agent",
+    agentId: "supervisor",
+    content: "All tasks are complete.",
+    status: "done",
+    runId: "run_supervisor_1",
+    runStatus: "completed",
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "supervisor",
+    runId: "run_supervisor_1",
+    resultMessageId: supervisorReply.id,
+  });
+
+  // Should NOT trigger itself — ctx.agentId === agentId guard
+  assert.equal(enqueueCalls.length, 0);
+
+  service.dispose();
+});
+
 test("trigger count caps at MAX_TRIGGERS and final prompt indicates last", async () => {
   const eventBus = new EventBus();
   const messages = new MessageStore();

@@ -103,6 +103,7 @@ export class ChannelWatchService {
     if (hasAssignmentMarker(message.content)) return;
 
     for (const ctx of this.triggerContexts.values()) {
+      if (ctx.agentId === agentId) continue;
       if (ctx.triggers.onUnassignedMessage) {
         this.tryTrigger(ctx, "agent_completed", message);
       }
