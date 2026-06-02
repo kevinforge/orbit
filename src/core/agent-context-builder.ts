@@ -22,7 +22,7 @@ function renderHistory(entries: AgentHistoryEntry[]): string[] {
 export function buildAgentContext(input: AgentContextInput): string {
   const profile = input.profiles.find((agent) => agent.id === input.agentId);
   const availableAgents = input.profiles.map((agent) => {
-    const desc = agent.description ? ` — ${agent.description}` : "";
+    const desc = agent.description ? ` - ${agent.description}` : "";
     return `@${agent.id}: ${agent.name}${desc}`;
   }).join("\n");
   const permissions = profile
@@ -65,13 +65,13 @@ export function buildAgentContext(input: AgentContextInput): string {
     "Good: @reviewer: Please review the changes above, focusing on edge cases.",
     "",
     "# Typical handoff loop:",
-    "Planner → @worker: Build the first version, then decide if others are needed.",
-    "Worker → @reviewer: Review this for completeness and risks.",
-    "Reviewer → @worker: Fix issues X and Y, then re-submit.",
-    "Worker → @reviewer: Fixes applied, please re-verify.",
-    "Reviewer → Done. No further work needed.",
+    "Planner -> @worker: Build the first version, then decide if others are needed.",
+    "Worker -> @reviewer: Review this for completeness and risks.",
+    "Reviewer -> @worker: Fix issues X and Y, then re-submit.",
+    "Worker -> @reviewer: Fixes applied, please re-verify.",
+    "Reviewer -> Done. No further work needed.",
     "",
-    "# No further work — just end naturally:",
+    "# No further work - just end naturally:",
     "Good: Task complete. No further agent work is needed at this time.",
     "",
     "Final answer rules:",
