@@ -49,6 +49,8 @@ const forbiddenNames = new Set([
   "package-lock.json",
   "tsconfig.json",
   "vite.config.ts",
+  "README.md",
+  "README.zh-CN.md",
 ]);
 
 const forbiddenFiles = paths.filter((filePath) => {
