@@ -10,13 +10,14 @@ function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-test-config-"));
 }
 
-test("DEFAULT_AGENT_CONFIGS seeds four disabled built-in templates", () => {
-  assert.equal(DEFAULT_AGENT_CONFIGS.length, 4);
+test("DEFAULT_AGENT_CONFIGS seeds five disabled built-in templates", () => {
+  assert.equal(DEFAULT_AGENT_CONFIGS.length, 5);
   const ids = DEFAULT_AGENT_CONFIGS.map((c) => c.id);
   assert.ok(ids.includes("pm"));
   assert.ok(ids.includes("architect"));
   assert.ok(ids.includes("developer"));
   assert.ok(ids.includes("tester"));
+  assert.ok(ids.includes("supervisor"));
   for (const config of DEFAULT_AGENT_CONFIGS) {
     assert.equal(config.enabled, false, `${config.id} should be disabled by default`);
     assert.ok(config.systemPrompt.length > 0, `${config.id} should have a systemPrompt`);
@@ -28,7 +29,7 @@ test("load returns seed configs when no file exists", () => {
   try {
     const store = new AgentConfigStore(dir);
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -69,7 +70,7 @@ test("reset restores seed configs", () => {
     const store = new AgentConfigStore(dir);
     store.save("ws1", [{ id: "x", name: "X", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true }]);
     const reset = store.reset("ws1");
-    assert.equal(reset.length, 4);
+    assert.equal(reset.length, 5);
     assert.equal(reset[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -97,7 +98,7 @@ test("load handles corrupted file gracefully", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, "not valid json{{{");
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -112,7 +113,7 @@ test("load returns defaults for valid JSON with invalid runtime", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "not-a-runtime", systemPrompt: "x", enabled: true }]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -130,7 +131,7 @@ test("load returns defaults for valid JSON with duplicate ids", () => {
       { id: "dup", name: "B", role: "general", runtime: "codex", systemPrompt: "y", enabled: true },
     ]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

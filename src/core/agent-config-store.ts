@@ -56,6 +56,27 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     enabled: false,
     permissionProfile: permissionProfile("tester"),
   },
+  {
+    id: "supervisor",
+    name: "Supervisor",
+    description: "Monitors channel progress and coordinates agents toward task completion.",
+    role: "general",
+    runtime: "claude-code",
+    systemPrompt:
+      "You are Orbit's channel supervisor. Your role is to track the user's original " +
+      "request and determine if the overall task is complete. " +
+      "When triggered, evaluate the channel state:\n" +
+      "- If work is still needed, assign tasks using @agent: markers.\n" +
+      "- If blocked, explain what's missing to the user.\n" +
+      "- If complete, summarize what was accomplished and conclude.\n" +
+      "Before assigning work, check if any agents are already running or have queued tasks — do not duplicate.",
+    enabled: false,
+    permissionProfile: permissionProfile("architect"),
+    triggers: {
+      onUnassignedMessage: true,
+      onAgentBlocked: true,
+    },
+  },
 ];
 
 export function validateAgentConfigs(configs: AgentConfig[]): string[] {
@@ -117,6 +138,20 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
       }
       if (!Array.isArray(pp.allowedDirectories) || pp.allowedDirectories.length === 0) {
         errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty.`);
+      }
+    }
+
+    if (config.triggers !== undefined) {
+      if (typeof config.triggers !== "object" || Array.isArray(config.triggers)) {
+        errors.push(`Agent "${configId}" triggers must be an object.`);
+      } else {
+        const t = config.triggers;
+        if (t.onUnassignedMessage !== undefined && typeof t.onUnassignedMessage !== "boolean") {
+          errors.push(`Agent "${configId}" triggers.onUnassignedMessage must be a boolean.`);
+        }
+        if (t.onAgentBlocked !== undefined && typeof t.onAgentBlocked !== "boolean") {
+          errors.push(`Agent "${configId}" triggers.onAgentBlocked must be a boolean.`);
+        }
       }
     }
   }

@@ -133,5 +133,6 @@ export function configsToProfiles(configs: readonly AgentConfig[], cwd: string):
     cwd,
     systemPrompt: config.systemPrompt,
     permissionProfile: config.permissionProfile ?? permissionProfile(config.role),
+    triggers: config.triggers,
   }));
 }
