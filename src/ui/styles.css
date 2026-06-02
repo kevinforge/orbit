@@ -354,15 +354,6 @@ button:active:not(:disabled) {
   opacity: 0.75;
 }
 
-.sidebarFooter {
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* ── Status Dot ────────────────────────────────────────────── */
 
 .statusDot {
@@ -1572,8 +1563,7 @@ button:active:not(:disabled) {
   letter-spacing: 0.02em;
 }
 
-.navSectionHeader span,
-.settingsBtn {
+.navSectionHeader span {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2071,6 +2061,153 @@ button:active:not(:disabled) {
   background: #f7faf9;
 }
 
+/* --- Workspace Config Panel --- */
+
+.workspaceConfigPanel {
+  width: 520px;
+  max-width: 95vw;
+}
+
+.workspaceConfigPanel .settingsBody {
+  padding: 16px 20px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.settingsSection {
+  margin-bottom: 20px;
+}
+
+.settingsSection:last-child {
+  margin-bottom: 0;
+}
+
+.settingsLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.settingsAddBtn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.settingsAddBtn:hover {
+  opacity: 0.85;
+}
+
+.workspaceConfigHint {
+  display: block;
+  max-width: 100%;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workspaceConfigTextarea {
+  width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.55;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  resize: vertical;
+  min-height: 80px;
+  margin-top: 8px;
+}
+
+.workspaceConfigTextarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.rulesEmptyHint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+  font-style: italic;
+}
+
+.rulesList {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rulesRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rulesIndex {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 20px;
+  text-align: right;
+}
+
+.rulesInput {
+  flex: 1;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+}
+
+.rulesInput:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
+.rulesRemoveBtn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.rulesRemoveBtn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.settingsSavedMsg {
+  font-size: 12px;
+  color: var(--accent);
+  margin-right: auto;
+}
+
 .addBtnTop {
   margin-bottom: 4px;
 }
@@ -2102,26 +2239,6 @@ button:active:not(:disabled) {
   background: var(--bg-muted);
   font-size: 13px;
   font-weight: 650;
-}
-
-/* ── Settings Button ───────────────────────────────────────── */
-
-.settingsBtn {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  padding: 2px 8px;
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.3;
-  background: var(--bg-surface);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.settingsBtn:hover {
-  border-color: var(--accent-border);
-  color: var(--accent);
-  background: var(--accent-subtle);
 }
 
 /* ── Modal / Settings ──────────────────────────────────────── */

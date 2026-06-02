@@ -10,9 +10,10 @@ import { SessionStore } from "../core/session-store.ts";
 import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { MessageRouter } from "../core/message-router.ts";
-import type { AgentId, AgentProfile } from "../shared/types.ts";
+import type { AgentId, AgentProfile, WorkspaceRuntimeConfig } from "../shared/types.ts";
+import { DEFAULT_WORKSPACE_CONFIG } from "../shared/types.ts";
 
-const MAX_ROUTE_DEPTH = 5;
+const MAX_ROUTE_DEPTH = 10;
 
 export type ConversationContextOptions = {
   workspaceId: string;
@@ -21,6 +22,7 @@ export type ConversationContextOptions = {
   eventBus: EventBus;
   sessionStore: SessionStore;
   workspaceStore: WorkspaceStore;
+  workspaceConfig?: WorkspaceRuntimeConfig;
 };
 
 export class ConversationContext {
@@ -31,11 +33,15 @@ export class ConversationContext {
   messageRouter: MessageRouter;
 
   private _profiles: readonly AgentProfile[];
+  private _workspaceConfig: WorkspaceRuntimeConfig;
   private readonly eventBus: EventBus;
   private readonly unsubscribe: () => void;
 
-  constructor(private readonly options: ConversationContextOptions) {
+  constructor(private options: ConversationContextOptions) {
     const { workspaceId, conversationId, profiles, eventBus, sessionStore, workspaceStore } = options;
+    // Store workspace config as mutable instance field so updateWorkspaceConfig()
+    // can update it at runtime without recreating the context.
+    this._workspaceConfig = options.workspaceConfig ?? structuredClone(DEFAULT_WORKSPACE_CONFIG);
     this._profiles = profiles;
     this.eventBus = eventBus;
 
@@ -62,17 +68,18 @@ export class ConversationContext {
 
     const agentIds = this.agents.ids();
 
+    const self = this;
     this.runManager = new RunManager({
       conversationId,
       agents: this.agents,
       messages: this.messages,
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string) => {
-        const history = buildHistoryForAgent(agentId, this.messages.list());
-        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history });
+        const history = buildHistoryForAgent(agentId, self.messages.list());
+        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig });
       },
       onRunCompleted: (message) => {
-        this.messageRouter.process(message);
+        self.messageRouter.process(message);
       },
     });
 
@@ -80,15 +87,15 @@ export class ConversationContext {
       availableAgents: agentIds,
       maxRouteDepth: MAX_ROUTE_DEPTH,
       createSystemMessage: (content, parentMessageId) => {
-        const msg = this.messages.add({ kind: "system", content, status: "done", parentMessageId });
+        const msg = self.messages.add({ kind: "system", content, status: "done", parentMessageId });
         eventBus.publish({ type: "message.created", conversationId, message: msg });
         return msg;
       },
       startAgentRun: (agentId, prompt, sourceMessage) => {
-        this.runManager.enqueue(agentId, prompt, sourceMessage);
+        self.runManager.enqueue(agentId, prompt, sourceMessage);
       },
       markMessageRouted: (messageId, routeState) => {
-        this.messages.markRouteState(messageId, routeState);
+        self.messages.markRouteState(messageId, routeState);
       },
     });
   }
@@ -118,7 +125,7 @@ export class ConversationContext {
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string) => {
         const history = buildHistoryForAgent(agentId, self.messages.list());
-        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history });
+        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig });
       },
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
@@ -143,6 +150,11 @@ export class ConversationContext {
 
     // Replace readonly fields via Object.assign (intentional hot-swap)
     Object.assign(this, { agents: newAgents, runManager: newRunManager, messageRouter: newMessageRouter });
+  }
+
+  updateWorkspaceConfig(config: WorkspaceRuntimeConfig): void {
+    this._workspaceConfig = config;
+    this.options = { ...this.options, workspaceConfig: config };
   }
 
   dispose(): void {

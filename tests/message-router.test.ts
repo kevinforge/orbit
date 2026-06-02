@@ -36,7 +36,7 @@ function createRouter(options?: Partial<{ availableAgents: readonly AgentId[]; m
 
   const router = new MessageRouter({
     availableAgents: options?.availableAgents ?? agents,
-    maxRouteDepth: options?.maxRouteDepth ?? 5,
+    maxRouteDepth: options?.maxRouteDepth ?? 10,
     createSystemMessage(content: string, parentMessageId?: string) {
       systemMessages.push({ content, parentMessageId });
       return createUserMessage(content, { kind: "system" });
@@ -189,12 +189,57 @@ test("depth limit blocks all assignments", () => {
   assert.equal(agentRuns.length, 0);
   assert.equal(systemMessages.length, 1);
   assert.ok(systemMessages[0].content.includes("maximum routing depth"));
+  assert.ok(systemMessages[0].content.includes("(3/2)"));
   assert.equal(routeStates[0]?.state, "blocked");
 });
 
 test("depth within limit allows routing", () => {
   const { router, agentRuns } = createRouter({ maxRouteDepth: 3 });
   router.process(createAgentMessage("agent1", "@agent2: check this", { routeDepth: 2 }));
+
+  assert.equal(agentRuns.length, 1);
+  assert.equal(agentRuns[0].agentId, "agent2");
+});
+
+test("default maxRouteDepth is 10", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter();
+  router.process(createAgentMessage("agent1", "@agent2: check this", { routeDepth: 10 }));
+
+  assert.equal(agentRuns.length, 0);
+  assert.equal(systemMessages.length, 1);
+  assert.ok(systemMessages[0].content.includes("(11/10)"));
+  assert.equal(routeStates[0]?.state, "blocked");
+});
+
+test("depth at limit allows routing", () => {
+  const { router, agentRuns } = createRouter({ maxRouteDepth: 5 });
+  router.process(createAgentMessage("agent1", "@agent2: check this", { routeDepth: 4 }));
+
+  assert.equal(agentRuns.length, 1);
+  assert.equal(agentRuns[0].agentId, "agent2");
+});
+
+test("depth below limit allows routing", () => {
+  const { router, agentRuns } = createRouter({ maxRouteDepth: 10 });
+  router.process(createAgentMessage("agent1", "@agent2: check this", { routeDepth: 3 }));
+
+  assert.equal(agentRuns.length, 1);
+  assert.equal(agentRuns[0].agentId, "agent2");
+});
+
+test("depth above limit blocks routing with depth info", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter({ maxRouteDepth: 5 });
+  router.process(createAgentMessage("agent1", "@agent2: check this", { routeDepth: 5 }));
+
+  assert.equal(agentRuns.length, 0);
+  assert.equal(systemMessages.length, 1);
+  assert.ok(systemMessages[0].content.includes("(6/5)"));
+  assert.equal(routeStates[0]?.state, "blocked");
+});
+
+test("default maxRouteDepth allows routing below limit", () => {
+  const { router, agentRuns } = createRouter();
+  router.process(createAgentMessage("agent1", "@agent2: check this", { routeDepth: 9 }));
 
   assert.equal(agentRuns.length, 1);
   assert.equal(agentRuns[0].agentId, "agent2");

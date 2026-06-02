@@ -11,7 +11,7 @@ export function isCleanFinalAnswer(output: string): boolean {
     return false;
   }
 
-  if (/^>/.test(trimmed) || /^@[\w-]+:/.test(trimmed)) {
+  if (/^>/.test(trimmed)) {
     return false;
   }
 

@@ -70,6 +70,29 @@ git commit -m "Short imperative message"
 git push -u origin <branch-name>
 ```
 
+### Commit Message Rules
+
+- The first commit message line must be the real subject, for example:
+  `fix: allow agent handoff final answers (#38)`.
+- Never use routing markers or placeholders such as `@`, `@agent`, `@agent:`,
+  `wip`, or `temp` as the commit subject.
+- When using multiple `-m` flags, the first `-m` is the subject. Put the
+  detailed body in later `-m` flags only.
+- Before pushing, verify the latest subject:
+
+```powershell
+git log -1 --format=%s
+```
+
+If the subject is wrong, fix it before pushing:
+
+```powershell
+git commit --amend -m "Correct imperative subject"
+```
+
+For a PR branch with several bad local commits, rewrite or squash them into
+clean commits before pushing. Do not leave commit headlines like `@`.
+
 Create a draft PR:
 
 ```powershell

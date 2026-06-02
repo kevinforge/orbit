@@ -9,7 +9,7 @@ The current version is intentionally small. It validates the core workflow befor
 ## Features
 
 - One local channel: `Orbit P0`
-- Configurable agents with settings UI (gear icon in sidebar)
+- Configurable agents with management UI (the `+` button in the agents section)
 - Four built-in agents by default: `@pm:`, `@architect:`, `@developer:`, `@tester:`
 - Custom agent creation, editing, enable/disable, and delete
 - Per-agent configurable permissions (read/write/run/install/git commit, allowed directories)
@@ -22,6 +22,8 @@ The current version is intentionally small. It validates the core workflow befor
 - Session persistence so agents retain conversation context across runs
 - Per-agent runtime homes under `.orbit/` so CLI backends do not share incompatible local sessions
 - Channel history injection so agents see what others said since their last run
+- Workspace-level configuration: shared system prompt and rules per workspace
+- Fixed maximum routing depth (default 10) with depth info in blocking messages
 - Local HTTP server with Server-Sent Events
 
 ## Not Included Yet
@@ -53,7 +55,7 @@ Open `http://localhost:4317`.
 
 ### Agent Configuration
 
-Agents are configured via the settings modal (gear icon in the sidebar) or by
+Agents are configured via the agent manager (`+` in the agents section) or by
 editing the config file directly:
 
 ```
@@ -83,6 +85,30 @@ save is blocked with a 409 response until the run completes.
 - `GET /api/agents` — list all agent configs
 - `PUT /api/agents` — save agent configs (validates first)
 - `POST /api/agents/reset` — restore default configs
+
+### Workspace Configuration
+
+Each workspace can have workspace-level settings stored in:
+
+```
+~/.orbit/workspaces/<workspace-id>/config.json
+```
+
+Workspace config fields:
+
+- **systemPrompt** (string, optional): A prompt injected into every agent run
+  in the workspace, after Orbit's fixed rules and before the agent's role instruction.
+- **rules** (string[], optional): A list of workspace-level rules injected into
+  every agent run. Each rule is rendered as a bullet point.
+
+Route depth is fixed at 10 and not configurable.
+
+Without custom configuration, all fields use their defaults (empty prompt, empty
+rules), so existing workspaces and conversations continue to work unchanged.
+
+**API endpoints:**
+- `GET /api/workspace-config` — get workspace config for the active workspace
+- `PUT /api/workspace-config` — update workspace config (validates field types)
 
 To restart the local service on Windows PowerShell and clear the default port first:
 

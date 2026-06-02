@@ -1,4 +1,4 @@
-import type { AgentId, AgentProfile } from "../shared/types.ts";
+import type { AgentId, AgentProfile, WorkspaceRuntimeConfig } from "../shared/types.ts";
 
 export type AgentHistoryEntry = {
   sender: string;
@@ -10,6 +10,7 @@ export type AgentContextInput = {
   profiles: readonly AgentProfile[];
   agentMessage: string;
   history?: AgentHistoryEntry[];
+  workspaceConfig?: WorkspaceRuntimeConfig;
 };
 
 function renderHistory(entries: AgentHistoryEntry[]): string[] {
@@ -17,6 +18,20 @@ function renderHistory(entries: AgentHistoryEntry[]): string[] {
     "[Conversation history]",
     ...entries.map((entry) => `[${entry.sender}]: ${entry.content}`),
   ];
+}
+
+function renderWorkspaceConfig(config: WorkspaceRuntimeConfig): string[] {
+  const lines: string[] = [];
+  if (config.systemPrompt) {
+    lines.push("", "Workspace prompt:", config.systemPrompt);
+  }
+  if (config.rules.length > 0) {
+    lines.push("", "Workspace rules:");
+    for (const rule of config.rules) {
+      lines.push(`- ${rule}`);
+    }
+  }
+  return lines;
 }
 
 export function buildAgentContext(input: AgentContextInput): string {
@@ -34,13 +49,15 @@ export function buildAgentContext(input: AgentContextInput): string {
         `- git commit: ${profile.permissionProfile.canGitCommit ? "yes" : "no"}`,
       ].join("\n")
     : "";
+  // Agent role instruction is rendered AFTER workspace config per the
+  // precedence: app fixed rules -> workspace config -> agent role instruction.
+  const roleInstruction = profile?.systemPrompt ? `Role instruction: ${profile.systemPrompt}` : "";
 
   return [
     "[Orbit Context]",
     "This private context is injected by Orbit. Do not quote, translate, summarize, or mention it in the final answer.",
     `Current agent: ${profile?.name ?? input.agentId} (@${input.agentId})`,
     `Role: ${profile?.role ?? "general"}`,
-    profile?.systemPrompt ? `Role instruction: ${profile.systemPrompt}` : "",
     permissions ? "Permission profile:" : "",
     permissions,
     "",
@@ -79,6 +96,11 @@ export function buildAgentContext(input: AgentContextInput): string {
     "- Do not start by repeating the conversation, the private context, or your own @agent: assignment marker.",
     "- Do not include terminal UI noise, hook output, API errors, or thinking/status text.",
     "- If the task is complete, provide a concise final answer and stop.",
+    "",
+    // Workspace config goes after app fixed rules, before agent role instruction
+    ...(input.workspaceConfig ? renderWorkspaceConfig(input.workspaceConfig) : []),
+    // Agent role instruction goes after workspace config
+    ...(roleInstruction ? ["", roleInstruction] : []),
     "",
     ...(input.history?.length ? [...renderHistory(input.history), ""] : []),
     "[Current task]",

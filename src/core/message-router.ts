@@ -14,6 +14,14 @@ export class MessageRouter {
 
   constructor(private options: MessageRouterOptions) {}
 
+  setMaxRouteDepth(value: number): void {
+    this.options = { ...this.options, maxRouteDepth: value };
+  }
+
+  get maxRouteDepth(): number {
+    return this.options.maxRouteDepth;
+  }
+
   process(message: ChatMessage): void {
     if (this.processedIds.has(message.id)) {
       return;
@@ -45,7 +53,7 @@ export class MessageRouter {
         const nextDepth = (message.routeDepth ?? 0) + 1;
         if (nextDepth > this.options.maxRouteDepth) {
           this.options.createSystemMessage(
-            "This collaboration chain has reached the maximum routing depth. Please decide the next step manually.",
+            `This collaboration chain has reached the maximum routing depth (${nextDepth}/${this.options.maxRouteDepth}). Please decide the next step manually.`,
             message.id,
           );
           this.options.markMessageRouted(message.id, "blocked");

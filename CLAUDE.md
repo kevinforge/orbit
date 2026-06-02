@@ -16,6 +16,16 @@ Current boundary:
 
 Because this is currently a private repository on a no-cost GitHub setup, branch protection may show as not enforced. Treat the workflow as mandatory anyway.
 
+Commit message hygiene is mandatory:
+
+- The first line must be the real conventional subject, such as
+  `fix: allow agent handoff final answers (#38)`.
+- Never make `@`, `@agent`, `@agent:`, `wip`, or `temp` the commit subject.
+- If multiple `-m` flags are used, remember that the first `-m` becomes the
+  subject. Put detailed notes in later `-m` flags only.
+- Before pushing, run `git log -1 --format=%s`. If the subject is wrong, amend
+  or squash before pushing.
+
 For every non-trivial change:
 
 ```text
@@ -92,6 +102,7 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/ansi-text-extractor.ts`** — Strips ANSI codes and extracts readable text
 - **`src/core/agent-prompt.ts`** — Prompt templates for agent role instructions
 - **`src/core/migrate-channel-layer.ts`** — One-time migration for flattening legacy directory structure
+- **`src/core/workspace-config-store.ts`** — Workspace-level system prompt and rules persistence
 
 ### UI Module
 
@@ -119,6 +130,8 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 | GET | `/api/agents` | List agent configurations |
 | PUT | `/api/agents` | Update agent configurations |
 | POST | `/api/agents/reset` | Reset agents to default configuration |
+| GET | `/api/workspace-config` | Get workspace-level prompt and rules |
+| PUT | `/api/workspace-config` | Update workspace-level prompt and rules |
 | GET | `/api/workspaces` | List workspaces |
 | POST | `/api/workspaces` | Create workspace |
 | PUT | `/api/workspaces/:id` | Update workspace |
@@ -136,7 +149,7 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 
 - **EventBus pub/sub**: `SseHub`, `TerminalTranscriptStore`, and `RunManager` all subscribe to `RuntimeEvent` variants on a shared bus
 - **Per-agent serial queue**: Each agent runs one CLI process at a time; additional tasks queue automatically
-- **Private context injection**: Each agent prompt is wrapped with a private routing context block; leaked markers are stripped from replies
+- **Private context injection**: Each agent prompt is wrapped with a private routing context block; leaked markers are stripped from replies. Precedence: app fixed rules → workspace config → agent role instruction
 - **Multi-conversation parallel**: Multiple conversations can run agents simultaneously via a context map with LRU eviction
 - **In-memory state**: Messages and agent state live in memory per conversation context; file-based persistence for messages, sessions, and transcripts
 
@@ -148,7 +161,10 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 ├── conversations/{workspaceId}/conversations.json
 ├── transcripts/{workspaceId}/{conversationId}/{agentId}.log
 ├── sessions/{workspaceId}/{runtime}/{conversationId}/{agentId}.json
-└── workspaces/{workspaceId}/workspace.json
+└── workspaces/{workspaceId}/
+    ├── workspace.json
+    ├── agents.json
+    └── config.json         (workspace-level systemPrompt and rules)
 ```
 
 ### UI Design System ("Warm Observatory")
@@ -170,4 +186,4 @@ When modifying UI: use CSS variables, never hardcode colors. Keep all changes in
 - Multiple assignments in one message are allowed
 - Self-assignments are ignored
 - `@all:` assigns work to all registered agents (sender excluded); expands at route time, not a real agent profile
-- Route depth capped at 5 to prevent infinite delegation loops
+- Route depth capped at 10 to prevent infinite delegation loops

@@ -247,6 +247,36 @@ test("send executes through configured runtime and passes resume session", async
   assert.equal(store.load("codebuddy", "default", "developer")!.sessionId, "next-sess");
 });
 
+test("send accepts agent handoff final answer", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const { runtime } = controllableRuntime("@architect: PR #37 is ready for review.", "handoff-sess");
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  session.start();
+  const result = await session.send("run-1", "hello");
+
+  assert.equal(result.content, "@architect: PR #37 is ready for review.");
+  assert.equal(result.sessionId, "handoff-sess");
+  assert.equal(session.getStatus(), "idle");
+});
+
 test("resume failure clears stale session and retries without resume", async () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
