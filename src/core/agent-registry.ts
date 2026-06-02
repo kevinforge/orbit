@@ -59,14 +59,6 @@ export class AgentRegistry {
     return session;
   }
 
-  interrupt(agentId: AgentId): void {
-    const session = this.sessions.get(agentId);
-    if (!session) {
-      return;
-    }
-    session.interrupt();
-  }
-
   ids(): AgentId[] {
     return this.profiles.map((profile) => profile.id);
   }

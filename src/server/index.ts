@@ -440,9 +440,16 @@ const server = http.createServer(async (req, res) => {
       // Search all active contexts for the run
       let result: { ok: boolean; reason?: string } = { ok: false, reason: "not_found" };
       for (const [, ctx] of contextMap) {
-        result = ctx.runManager.cancel(runId);
-        if (result.ok) break;
-        if (result.reason === "already_running") break; // don't keep searching — definitive answer
+        const candidate = ctx.runManager.cancel(runId);
+        if (candidate.ok) {
+          result = candidate;
+          break;
+        }
+        // Any reason other than "not_found" is definitive — stop searching
+        if (candidate.reason !== "not_found") {
+          result = candidate;
+          break;
+        }
       }
 
       if (!result.ok) {

@@ -26,7 +26,6 @@ export class AgentSession {
   private status: AgentStatus = "stopped";
   private activeRun: ActiveRun | null = null;
   private runCount = 0;
-  private interrupted = false;
 
   constructor(private readonly options: AgentSessionOptions) {}
 
@@ -53,7 +52,6 @@ export class AgentSession {
       return Promise.reject(new Error(`${this.id} is already running`));
     }
 
-    this.interrupted = false;
     this.runCount += 1;
     const runIndex = this.runCount;
     this.setStatus("running");
@@ -82,17 +80,6 @@ export class AgentSession {
     }
 
     this.setStatus("stopped");
-  }
-
-  interrupt(): void {
-    if (!this.activeRun) {
-      return;
-    }
-
-    this.interrupted = true;
-    this.activeRun.child.kill();
-    this.activeRun = null;
-    this.setStatus("idle");
   }
 
   private isResumeFailure(
@@ -170,9 +157,7 @@ export class AgentSession {
       })
       .catch((error: unknown) => {
         this.activeRun = null;
-        if (!this.interrupted) {
-          this.setStatus("error");
-        }
+        this.setStatus("error");
         throw error;
       });
   }
