@@ -17,6 +17,7 @@ type TriggerContext = {
 
 export class ChannelWatchService {
   private readonly triggerContexts: Map<AgentId, TriggerContext> = new Map();
+  private readonly knownIds: Set<string>;
   private readonly unsubscribe: () => void;
   private disposed = false;
 
@@ -28,6 +29,9 @@ export class ChannelWatchService {
     eventBus: EventBus,
     profiles: readonly AgentProfile[],
   ) {
+    this.knownIds = new Set(profiles.map((p) => p.id));
+    this.knownIds.add("user"); // @user: is the task-closure signal
+
     for (const profile of profiles) {
       if (profile.triggers && hasAnyTrigger(profile.triggers)) {
         this.triggerContexts.set(profile.id, {
@@ -87,7 +91,7 @@ export class ChannelWatchService {
       return;
     }
 
-    if (message.kind === "user" && !hasAssignmentMarker(message.content)) {
+    if (message.kind === "user" && !hasAssignmentMarker(message.content, this.knownIds)) {
       for (const ctx of this.triggerContexts.values()) {
         if (ctx.triggers.onUnassignedMessage) {
           this.tryTrigger(ctx, "unassigned_message", message);
@@ -100,7 +104,7 @@ export class ChannelWatchService {
     const message = this.messages.get(resultMessageId);
     if (!message) return;
 
-    if (hasAssignmentMarker(message.content)) return;
+    if (hasAssignmentMarker(message.content, this.knownIds)) return;
 
     for (const ctx of this.triggerContexts.values()) {
       if (ctx.agentId === agentId) continue;
@@ -147,9 +151,13 @@ function hasAnyTrigger(triggers: ChannelWatchTriggers): boolean {
   return triggers.onUnassignedMessage === true || triggers.onAgentBlocked === true;
 }
 
-function hasAssignmentMarker(content: string): boolean {
+function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): boolean {
   ASSIGNMENT_PATTERN.lastIndex = 0;
-  return ASSIGNMENT_PATTERN.test(content);
+  let m: RegExpExecArray | null;
+  while ((m = ASSIGNMENT_PATTERN.exec(content)) !== null) {
+    if (knownIds.has(m[1])) return true;
+  }
+  return false;
 }
 
 function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean): string {

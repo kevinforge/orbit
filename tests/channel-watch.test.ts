@@ -200,10 +200,10 @@ test("run.completed with @agent: does NOT trigger supervisor", async () => {
   const eventBus = new EventBus();
   const messages = new MessageStore();
   const { agentRegistry, runManager, enqueueCalls } = createMocks({
-    agentStatuses: { supervisor: "idle", dev: "idle" },
+    agentStatuses: { supervisor: "idle", dev: "idle", tester: "idle" },
   });
 
-  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev"), makePlainAgentProfile("tester")];
   const service = new ChannelWatchService(
     "conv-1",
     agentRegistry as any,
@@ -268,10 +268,10 @@ test("user message with @agent: does NOT trigger supervisor", async () => {
   const eventBus = new EventBus();
   const messages = new MessageStore();
   const { agentRegistry, runManager, enqueueCalls } = createMocks({
-    agentStatuses: { supervisor: "idle", dev: "idle" },
+    agentStatuses: { supervisor: "idle", developer: "idle", tester: "idle" },
   });
 
-  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("developer"), makePlainAgentProfile("tester")];
   const service = new ChannelWatchService(
     "conv-1",
     agentRegistry as any,
@@ -848,6 +848,89 @@ test("agent with triggers.disabled → not used as supervisor", async () => {
     message: createBlockedMessage("dev"),
   });
 
+  assert.equal(enqueueCalls.length, 0);
+
+  service.dispose();
+});
+
+test("hasAssignmentMarker only matches known agent IDs — @agent: reference text does not suppress trigger", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", architect: "idle", dev: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("architect"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // Architect's reply mentions "@agent:" as reference text — "agent" is NOT a known ID
+  const architectReply = messages.add({
+    kind: "agent",
+    agentId: "architect",
+    content: "The @agent: convention is used for assigning work to specific agents.",
+    status: "done",
+    runId: "run_1",
+    runStatus: "completed",
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "architect",
+    runId: "run_1",
+    resultMessageId: architectReply.id,
+  });
+
+  // Should trigger — @agent: matched "agent" but "agent" is not a known ID
+  assert.equal(enqueueCalls.length, 1);
+  assert.equal(enqueueCalls[0].agentId, "supervisor");
+
+  service.dispose();
+});
+
+test("hasAssignmentMarker matches @user: as known ID — @user: in reply suppresses trigger", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", architect: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("architect")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // Supervisor concludes with @user:
+  const supervisorReply = messages.add({
+    kind: "agent",
+    agentId: "supervisor",
+    content: "@user: Login feature is complete. All tasks done.",
+    status: "done",
+    runId: "run_sup",
+    runStatus: "completed",
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "supervisor",
+    runId: "run_sup",
+    resultMessageId: supervisorReply.id,
+  });
+
+  // Should NOT trigger — @user: matches known ID "user" → self-trigger suppressed
   assert.equal(enqueueCalls.length, 0);
 
   service.dispose();
