@@ -72,6 +72,7 @@ export type ChatMessage = {
   createdAt: string;
   status?: ChatMessageStatus;
   runId?: string;
+  runStatus?: "queued" | "running" | "completed" | "failed" | "cancelled";
   parentMessageId?: string;
   routeState?: MessageRouteState;
   routeDepth?: number;

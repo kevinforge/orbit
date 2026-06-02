@@ -14,7 +14,6 @@ type AgentRunner = {
   get(agentId: AgentId): {
     send(runId: string, prompt: string): Promise<RunResult>;
   };
-  interrupt(agentId: AgentId): void;
 };
 
 export type ManagedRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -71,6 +70,7 @@ export class RunManager {
       kind: "agent",
       agentId,
       runId,
+      runStatus: isBusy ? "queued" : "running",
       content: isBusy ? `${getAgentLabel(agentId)} queued...` : `${getAgentLabel(agentId)} is working...`,
       status: "running",
       parentMessageId: sourceMessage.id,
@@ -102,56 +102,42 @@ export class RunManager {
     return run;
   }
 
-  cancel(runId: string): boolean {
+  cancel(runId: string): { ok: boolean; reason?: "not_found" | "not_cancellable" | "already_running" } {
     const run = this.runs.get(runId);
     if (!run) {
-      return false;
+      return { ok: false, reason: "not_found" };
     }
 
     if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
-      return false;
+      return { ok: false, reason: "not_cancellable" };
     }
 
-    const wasRunning = run.status === "running";
-
-    if (run.status === "queued") {
-      // Remove from queue
-      const queue = this.getQueue(run.agentId);
-      const idx = queue.findIndex((r) => r.id === runId);
-      if (idx !== -1) {
-        queue.splice(idx, 1);
-      }
+    if (run.status === "running") {
+      return { ok: false, reason: "already_running" };
     }
 
-    if (wasRunning) {
-      // Request interruption
-      this.options.agents.interrupt(run.agentId);
+    // run.status === "queued" — the only cancellable state
+    const queue = this.getQueue(run.agentId);
+    const idx = queue.findIndex((r) => r.id === runId);
+    if (idx !== -1) {
+      queue.splice(idx, 1);
     }
 
     this.markCancelled(run);
-
-    // For a cancelled running run, advance the queue immediately.
-    // The cancelled process will still resolve/reject, but complete()/fail()
-    // guard against overwriting the cancelled status. Without this call the
-    // queue would stall because the guards return early and never call startNext().
-    if (wasRunning) {
-      this.startNext(run.agentId);
-    }
-
-    return true;
+    return { ok: true };
   }
 
   private markCancelled(run: ManagedRun): void {
     run.status = "cancelled";
     run.completedAt = new Date().toISOString();
-    this.active.delete(run.agentId);
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
-    this.appendActivity(run, "Cancelled by user.");
+    this.appendActivity(run, "Cancelled by user before start.");
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} was cancelled.`,
+      content: `${getAgentLabel(run.agentId)} queued run was cancelled.`,
       status: "cancelled",
+      runStatus: "cancelled",
       activity: run.activity,
       completedAt: run.completedAt,
       startedAt: run.startedAt,
@@ -170,6 +156,14 @@ export class RunManager {
     run.status = "running";
     run.startedAt = new Date().toISOString();
     this.active.set(run.agentId, run);
+
+    // Reflect runStatus transition on the UI message
+    this.options.messages.update(run.resultMessageId, {
+      content: `${getAgentLabel(run.agentId)} is working...`,
+      runStatus: "running",
+      startedAt: run.startedAt,
+    });
+
     this.appendActivity(run, "Run started.");
 
     const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt);
@@ -188,7 +182,7 @@ export class RunManager {
 
   private complete(run: ManagedRun, runResult: RunResult): void {
     if (run.status === "cancelled") {
-      return; // Don't overwrite cancelled status
+      return;
     }
     run.status = "completed";
     run.completedAt = new Date().toISOString();
@@ -200,6 +194,7 @@ export class RunManager {
     const updated = this.options.messages.update(run.resultMessageId, {
       content: runResult.content,
       status: "done",
+      runStatus: "completed",
       activity: run.activity,
       completedAt: run.completedAt,
       startedAt: run.startedAt,
@@ -220,7 +215,7 @@ export class RunManager {
 
   private fail(run: ManagedRun, error: string): void {
     if (run.status === "cancelled") {
-      return; // Don't overwrite cancelled status
+      return;
     }
     const errorSummary = summarizeRunError(error);
     run.status = "failed";
@@ -233,6 +228,7 @@ export class RunManager {
     const updated = this.options.messages.update(run.resultMessageId, {
       content: `${getAgentLabel(run.agentId)} failed: ${errorSummary}`,
       status: "error",
+      runStatus: "failed",
       activity: run.activity,
       completedAt: run.completedAt,
       startedAt: run.startedAt,
@@ -252,6 +248,7 @@ export class RunManager {
     const updated = this.options.messages.update(next.resultMessageId, {
       content: `${getAgentLabel(agentId)} is working...`,
       status: "running",
+      runStatus: "running",
       activity: next.activity,
       startedAt,
     });

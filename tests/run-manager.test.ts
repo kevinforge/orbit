@@ -22,19 +22,6 @@ function deferred(): Deferred {
   return { promise, resolve, reject };
 }
 
-function mockAgents(send: (agentId: string, runId: string, prompt: string) => Promise<RunResult>) {
-  return {
-    get(_agentId: string) {
-      return {
-        send(runId: string, prompt: string) {
-          return send(_agentId, runId, prompt);
-        },
-      };
-    },
-    interrupt() {},
-  };
-}
-
 function createSourceMessage(): ChatMessage {
   return {
     id: "msg_source",
@@ -66,7 +53,6 @@ test("queues a second run for the same agent until the first completes", async (
           },
         };
       },
-      interrupt() {},
     },
     buildPrompt(_agentId, prompt) {
       return `context\n${prompt}`;
@@ -114,7 +100,6 @@ test("terminal chunks append visible activity to the running message", async () 
           },
         };
       },
-      interrupt() {},
     },
     buildPrompt(_agentId, prompt) {
       return prompt;
@@ -357,7 +342,6 @@ test("split Claude tool_use across two terminal chunks still produces tool.start
           },
         };
       },
-      interrupt() {},
     },
     buildPrompt(_agentId, prompt) {
       return prompt;
@@ -406,7 +390,6 @@ test("split Claude tool_use_result across chunks still produces tool.completed w
           },
         };
       },
-      interrupt() {},
     },
     buildPrompt(_agentId, prompt) {
       return prompt;
@@ -461,7 +444,6 @@ test("split Claude tool_use_result error across chunks still produces tool.faile
           },
         };
       },
-      interrupt() {},
     },
     buildPrompt(_agentId, prompt) {
       return prompt;
@@ -516,7 +498,6 @@ test("split Codex command_execution completion across chunks still produces tool
           },
         };
       },
-      interrupt() {},
     },
     buildPrompt(_agentId, prompt) {
       return prompt;
@@ -559,7 +540,6 @@ test("cancel a queued run prevents it from starting when the active run complete
   const second = deferred();
   const pending = [first, second];
   const calls: Array<{ agentId: AgentId; runId: string }> = [];
-  let interruptCalled = false;
 
   const manager = new RunManager({
     conversationId: "test-conv",
@@ -573,9 +553,6 @@ test("cancel a queued run prevents it from starting when the active run complete
             return pending.shift()?.promise ?? Promise.reject(new Error("unexpected"));
           },
         };
-      },
-      interrupt() {
-        interruptCalled = true;
       },
     },
     buildPrompt(_agentId, prompt) {
@@ -592,27 +569,25 @@ test("cancel a queued run prevents it from starting when the active run complete
   assert.equal(calls.length, 1, "only the first run starts");
 
   // Cancel the queued run
-  const cancelled = manager.cancel(queued.id);
-  assert.ok(cancelled, "cancel should return true for queued run");
-  assert.equal(interruptCalled, false, "interrupt should not be called for queued runs");
+  const result = manager.cancel(queued.id);
+  assert.equal(result.ok, true, "cancel should return ok:true for queued run");
 
   const cancelledMsg = messages.get(queued.resultMessageId);
   assert.equal(cancelledMsg?.status, "cancelled");
+  assert.equal(cancelledMsg?.runStatus, "cancelled");
   assert.ok(cancelledMsg?.content.includes("cancelled"));
 
-  // Complete the active run — queued should NOT start
+  // Complete the active run — cancelled queued run should NOT start
   first.resolve({ content: "first done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(calls.length, 1, "cancelled queued run should not start");
-  assert.equal(interruptCalled, false);
 });
 
-test("cancel a running run calls interrupt on the agent", async () => {
+test("cancel a running run returns already_running error", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
   const first = deferred();
-  let interruptCalled = false;
 
   const manager = new RunManager({
     conversationId: "test-conv",
@@ -621,18 +596,11 @@ test("cancel a running run calls interrupt on the agent", async () => {
     agents: {
       get() {
         return {
-          send() {
-            return first.promise;
-          },
+          send() { return first.promise; },
         };
       },
-      interrupt() {
-        interruptCalled = true;
-      },
     },
-    buildPrompt(_agentId, prompt) {
-      return prompt;
-    },
+    buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},
   });
 
@@ -640,51 +608,148 @@ test("cancel a running run calls interrupt on the agent", async () => {
   const run = manager.enqueue("developer", "work", source);
   assert.equal(run.status, "running");
 
-  const cancelled = manager.cancel(run.id);
-  assert.ok(cancelled, "cancel should return true for running run");
-  assert.equal(interruptCalled, true, "interrupt should be called for running runs");
+  const result = manager.cancel(run.id);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "already_running");
+  assert.equal(run.status, "running", "run status must not change");
 
-  const cancelledMsg = messages.get(run.resultMessageId);
-  assert.equal(cancelledMsg?.status, "cancelled");
-
-  // Resolve the run — it should not fire onRunCompleted
-  first.resolve({ content: "done anyway" });
+  // Run should complete normally
+  first.resolve({ content: "done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  // Message should stay cancelled, not overwritten to "done"
-  const final = messages.get(run.resultMessageId);
-  assert.equal(final?.status, "cancelled");
+  const msg = messages.get(run.resultMessageId);
+  assert.equal(msg?.status, "done");
 });
 
-test("cancel a running run advances the queue so the next queued run starts", async () => {
+test("cancel a non-existent run returns not_found error", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
-  const first = deferred();
-  const second = deferred();
-  const pending = [first, second];
-  let interruptCalled = false;
 
-  const calls: Array<{ agentId: AgentId; runId: string }> = [];
   const manager = new RunManager({
     conversationId: "test-conv",
     messages,
     eventBus,
     agents: {
-      get(agentId: AgentId) {
+      get() { return { send() { return Promise.resolve({ content: "ok" }); } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const result = manager.cancel("nonexistent-run");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "not_found");
+});
+
+test("cancel an already-completed run returns not_cancellable", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return first.promise; } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const run = manager.enqueue("developer", "work", source);
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const result = manager.cancel(run.id);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "not_cancellable");
+});
+
+test("cancel publishes run.cancelled event for queued runs", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const events: Array<{ type: string }> = [];
+
+  // Enqueue two runs so the second is queued
+  const pending = [first, deferred()];
+  let callIdx = 0;
+  eventBus.subscribe((event) => { events.push(event as { type: string }); });
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return pending[callIdx++]!.promise; } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  manager.enqueue("developer", "first", source);
+  const queued = manager.enqueue("developer", "second", source);
+  assert.equal(queued.status, "queued");
+
+  const result = manager.cancel(queued.id);
+  assert.equal(result.ok, true);
+
+  const cancelledEvents = events.filter((e) => e.type === "run.cancelled");
+  assert.equal(cancelledEvents.length, 1, "should publish one run.cancelled event");
+});
+
+test("cancel a running run does not publish a run.cancelled event", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const events: Array<{ type: string }> = [];
+
+  eventBus.subscribe((event) => { events.push(event as { type: string }); });
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return first.promise; } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const run = manager.enqueue("developer", "work", source);
+  assert.equal(run.status, "running");
+
+  const result = manager.cancel(run.id);
+  assert.equal(result.reason, "already_running");
+
+  const cancelledEvents = events.filter((e) => e.type === "run.cancelled");
+  assert.equal(cancelledEvents.length, 0, "running runs should not publish run.cancelled");
+});
+
+test("queued run cancel sets runStatus on message", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
         return {
-          send(runId: string) {
-            calls.push({ agentId, runId });
-            return pending.shift()!.promise;
-          },
+          send() { return pending.shift()!.promise; },
         };
       },
-      interrupt() {
-        interruptCalled = true;
-      },
     },
-    buildPrompt(_agentId, prompt) {
-      return prompt;
-    },
+    buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},
   });
 
@@ -692,143 +757,17 @@ test("cancel a running run advances the queue so the next queued run starts", as
   const run1 = manager.enqueue("developer", "first", source);
   const run2 = manager.enqueue("developer", "second", source);
 
-  assert.equal(run1.status, "running");
-  assert.equal(run2.status, "queued");
-  assert.equal(calls.length, 1, "only first run should start");
+  // Check initial runStatus values
+  assert.equal(messages.get(run1.resultMessageId)?.runStatus, "running");
+  assert.equal(messages.get(run2.resultMessageId)?.runStatus, "queued");
 
-  // Cancel the running run
-  manager.cancel(run1.id);
-  assert.equal(interruptCalled, true);
+  // Cancel the queued run
+  manager.cancel(run2.id);
+  assert.equal(messages.get(run2.resultMessageId)?.runStatus, "cancelled");
+  assert.equal(messages.get(run2.resultMessageId)?.status, "cancelled");
 
-  // The queued run should have started
-  assert.equal(calls.length, 2, "second run should start after cancel");
-  assert.equal(calls[1]!.runId, run2.id);
-
-  // Verify message states
-  const msg1 = messages.get(run1.resultMessageId);
-  assert.equal(msg1?.status, "cancelled");
-
-  // Complete the second run
-  second.resolve({ content: "second done" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  const msg2 = messages.get(run2.resultMessageId);
-  assert.equal(msg2?.status, "done");
-
-  // Now resolve the cancelled first run — it should NOT overwrite status
-  first.resolve({ content: "first done anyway" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(messages.get(run1.resultMessageId)?.status, "cancelled",
-    "cancelled status should survive late resolve");
-
-  // And rejecting the cancelled run should also not overwrite
-  const firstMsg = messages.get(run1.resultMessageId);
-  assert.equal(calls.length, 2, "no extra runs should start from stale resolve");
-});
-
-test("cancel a non-existent run returns false", async () => {
-  const messages = new MessageStore();
-  const eventBus = new EventBus();
-
-  const manager = new RunManager({
-    conversationId: "test-conv",
-    messages,
-    eventBus,
-    agents: {
-      get() {
-        return {
-          send() { return Promise.resolve({ content: "ok" }); },
-        };
-      },
-      interrupt() {},
-    },
-    buildPrompt(_agentId, prompt) {
-      return prompt;
-    },
-    onRunCompleted() {},
-  });
-
-  assert.equal(manager.cancel("nonexistent-run"), false);
-});
-
-test("onRunCompleted is not called for cancelled runs", async () => {
-  const messages = new MessageStore();
-  const eventBus = new EventBus();
-  const first = deferred();
-  let completedCount = 0;
-
-  const manager = new RunManager({
-    conversationId: "test-conv",
-    messages,
-    eventBus,
-    agents: {
-      get() {
-        return {
-          send() {
-            return first.promise;
-          },
-        };
-      },
-      interrupt() {},
-    },
-    buildPrompt(_agentId, prompt) {
-      return prompt;
-    },
-    onRunCompleted() {
-      completedCount++;
-    },
-  });
-
-  const source = createSourceMessage();
-  const run = manager.enqueue("developer", "work", source);
-  manager.cancel(run.id);
-
-  first.resolve({ content: "done" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(completedCount, 0, "onRunCompleted should not fire for cancelled runs");
-});
-
-test("cancel publishes a run.cancelled event", async () => {
-  const messages = new MessageStore();
-  const eventBus = new EventBus();
-  const first = deferred();
-  const events: Array<{ type: string; runId: string }> = [];
-
-  eventBus.subscribe((event) => {
-    if (event.type === "run.cancelled") {
-      events.push(event as { type: string; runId: string });
-    }
-  });
-
-  const manager = new RunManager({
-    conversationId: "test-conv",
-    messages,
-    eventBus,
-    agents: {
-      get() {
-        return {
-          send() {
-            return first.promise;
-          },
-        };
-      },
-      interrupt() {},
-    },
-    buildPrompt(_agentId, prompt) {
-      return prompt;
-    },
-    onRunCompleted() {},
-  });
-
-  const source = createSourceMessage();
-  const run = manager.enqueue("developer", "work", source);
-  manager.cancel(run.id);
-
-  assert.equal(events.length, 1, "should publish one run.cancelled event");
-  assert.equal(events[0]!.runId, run.id);
-  assert.equal(events[0]!.type, "run.cancelled");
+  // First run still running
+  assert.equal(messages.get(run1.resultMessageId)?.runStatus, "running");
 });
 
 test("run failures store a concise error instead of raw stream output", async () => {
@@ -848,7 +787,6 @@ test("run failures store a concise error instead of raw stream output", async ()
           },
         };
       },
-      interrupt() {},
     },
     buildPrompt(_agentId, prompt) {
       return prompt;

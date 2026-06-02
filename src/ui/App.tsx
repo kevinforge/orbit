@@ -997,6 +997,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
 function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentState }) {
   const author = message.kind === "user" ? "You" : message.kind === "agent" ? message.agentId ?? "agent" : "system";
   const isRunning = message.status === "running";
+  const isQueued = message.runStatus === "queued";
   const [cancelling, setCancelling] = useState(false);
 
   async function cancelRun() {
@@ -1017,13 +1018,13 @@ function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentSta
         <strong>{author}</strong>
         {message.kind === "agent" && agent ? <RuntimeBadge runtime={agent.runtime} /> : null}
         {message.status ? <span className={`statusPill ${message.status}`}>{message.status}</span> : null}
-        {(isRunning || cancelling) && message.runId ? (
+        {(isQueued || cancelling) && message.runId ? (
           <button
             type="button"
             className="cancelRunBtn"
             onClick={cancelRun}
             disabled={cancelling}
-            title={cancelling ? "正在取消..." : "取消此任务"}
+            title={cancelling ? "正在取消..." : "取消排队任务"}
           >
             {cancelling ? "取消中..." : "取消"}
           </button>

@@ -428,7 +428,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Cancel run
+    // Cancel run (queued runs only)
     if (req.method === "POST" && url.pathname.startsWith("/api/runs/") && url.pathname.endsWith("/cancel")) {
       const parts = url.pathname.split("/");
       const runId = parts[3];
@@ -438,16 +438,21 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Search all active contexts for the run
-      let cancelled = false;
+      let result: { ok: boolean; reason?: string } = { ok: false, reason: "not_found" };
       for (const [, ctx] of contextMap) {
-        if (ctx.runManager.cancel(runId)) {
-          cancelled = true;
-          break;
-        }
+        result = ctx.runManager.cancel(runId);
+        if (result.ok) break;
+        if (result.reason === "already_running") break; // don't keep searching — definitive answer
       }
 
-      if (!cancelled) {
-        sendJson(res, 404, { ok: false, message: "Run not found or already completed." });
+      if (!result.ok) {
+        if (result.reason === "already_running") {
+          sendJson(res, 409, { ok: false, reason: "already_running", message: "This run has already started and cannot be cancelled." });
+        } else if (result.reason === "not_cancellable") {
+          sendJson(res, 409, { ok: false, reason: "not_cancellable", message: "This run has already finished and cannot be cancelled." });
+        } else {
+          sendJson(res, 404, { ok: false, reason: "not_found", message: "Run not found." });
+        }
         return;
       }
 
