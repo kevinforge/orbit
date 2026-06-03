@@ -26,8 +26,16 @@ type MessageManifest = {
   shards: Array<{ name: string; firstCreatedAt: string; lastCreatedAt: string; count: number; bytes: number }>;
 };
 
-const DEFAULT_MESSAGE_RETAIN_DAYS = Number(process.env.ORBIT_HISTORY_RETAIN_DAYS ?? 90);
-const DEFAULT_TRANSCRIPT_RETAIN_DAYS = Number(process.env.ORBIT_TRANSCRIPT_RETAIN_DAYS ?? 30);
+const DEFAULT_MESSAGE_RETAIN_DAYS = parsePositiveIntEnv("ORBIT_HISTORY_RETAIN_DAYS", 90);
+const DEFAULT_TRANSCRIPT_RETAIN_DAYS = parsePositiveIntEnv("ORBIT_TRANSCRIPT_RETAIN_DAYS", 30);
+
+export function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) return fallback;
+  return value;
+}
 
 export function cleanupHistory(options: HistoryRetentionOptions = {}): HistoryRetentionResult {
   const baseDir = options.baseDir ?? path.join(os.homedir(), ".orbit");

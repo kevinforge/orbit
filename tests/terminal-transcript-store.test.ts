@@ -299,6 +299,31 @@ test("different directories keep transcripts isolated", () => {
   }
 });
 
+test("persisted store tail truncation preserves multi-byte UTF-8 characters", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const stores: TerminalTranscriptStore[] = [];
+  try {
+    // "你好世界" is 12 bytes in UTF-8 (3 bytes per char × 4 chars)
+    const content = "abc你好世界";
+    const agentDir = path.join(dir, "developer");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "2026-01-01-0001.log"), content);
+
+    // tailBytes = 9 should split in the middle of "你好" (each 3 bytes)
+    // but must not produce a replacement character
+    const store = new TerminalTranscriptStore(dir, { tailBytes: 9 });
+    stores.push(store);
+
+    const result = store.get("developer");
+    // Should NOT contain replacement character � (U+FFFD)
+    assert.ok(!result.includes("�"), `tail should not contain replacement character, got: ${JSON.stringify(result)}`);
+    // Should be a valid suffix of the original
+    assert.ok(content.endsWith(result), `tail "${result}" should be a suffix of "${content}"`);
+  } finally {
+    cleanupTranscriptTest(dir, stores);
+  }
+});
+
 test("persisted store ignores non-log files in directory", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
   const stores: TerminalTranscriptStore[] = [];

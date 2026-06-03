@@ -280,6 +280,113 @@ test("different file paths keep messages isolated", () => {
   }
 });
 
+test("listBefore reads only needed shards, not all history", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const legacy: ChatMessage[] = [
+    { id: "msg_000001", kind: "user", content: "day 1-a", createdAt: "2026-01-01T10:00:00.000Z" },
+    { id: "msg_000002", kind: "user", content: "day 1-b", createdAt: "2026-01-01T11:00:00.000Z" },
+    { id: "msg_000003", kind: "user", content: "day 2", createdAt: "2026-01-02T10:00:00.000Z" },
+    { id: "msg_000004", kind: "user", content: "day 3", createdAt: "2026-01-03T10:00:00.000Z" },
+  ];
+  const originalReadFileSync = fs.readFileSync;
+  let shardReadCount = 0;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ messages: legacy, nextId: 5 }, null, 2));
+
+    const store = new MessageStore(filePath, { recentShardCount: 1 });
+
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      const targetPath = String(args[0]);
+      if (targetPath.endsWith(".ndjson")) {
+        shardReadCount++;
+      }
+      return originalReadFileSync(...args);
+    }) as typeof fs.readFileSync;
+
+    shardReadCount = 0;
+    const page = store.listBefore("msg_000004", 1);
+
+    assert.deepEqual(page.messages.map((m) => m.content), ["day 2"]);
+    assert.equal(page.hasOlderMessages, true);
+    assert.equal(page.olderCursor, "msg_000003");
+    assert.ok(shardReadCount <= 2, `expected at most 2 shard reads for limit=1, got ${shardReadCount}`);
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("listBefore pages across multiple shards with limit larger than one shard", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const legacy: ChatMessage[] = [
+    { id: "msg_000001", kind: "user", content: "day 1", createdAt: "2026-01-01T10:00:00.000Z" },
+    { id: "msg_000002", kind: "user", content: "day 2-a", createdAt: "2026-01-02T10:00:00.000Z" },
+    { id: "msg_000003", kind: "user", content: "day 2-b", createdAt: "2026-01-02T11:00:00.000Z" },
+    { id: "msg_000004", kind: "user", content: "day 3", createdAt: "2026-01-03T10:00:00.000Z" },
+  ];
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ messages: legacy, nextId: 5 }, null, 2));
+
+    const store = new MessageStore(filePath, { recentShardCount: 1 });
+
+    const page = store.listBefore("msg_000004", 10);
+    assert.deepEqual(page.messages.map((m) => m.content), ["day 1", "day 2-a", "day 2-b"]);
+    assert.equal(page.hasOlderMessages, false);
+    assert.equal(page.olderCursor, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("listBefore with null cursor returns last N messages before end", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const legacy: ChatMessage[] = [
+    { id: "msg_000001", kind: "user", content: "day 1", createdAt: "2026-01-01T10:00:00.000Z" },
+    { id: "msg_000002", kind: "user", content: "day 2", createdAt: "2026-01-02T10:00:00.000Z" },
+    { id: "msg_000003", kind: "user", content: "day 3", createdAt: "2026-01-03T10:00:00.000Z" },
+  ];
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ messages: legacy, nextId: 4 }, null, 2));
+
+    const store = new MessageStore(filePath, { recentShardCount: 1 });
+
+    const page = store.listBefore(null, 2);
+    assert.deepEqual(page.messages.map((m) => m.content), ["day 2", "day 3"]);
+    assert.equal(page.hasOlderMessages, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("manifest nextId is auto-corrected when lower than max existing id in shards", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const legacy: ChatMessage[] = [
+    { id: "msg_000001", kind: "user", content: "first", createdAt: "2026-01-01T10:00:00.000Z" },
+    { id: "msg_000005", kind: "user", content: "fifth", createdAt: "2026-01-01T11:00:00.000Z" },
+  ];
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ messages: legacy, nextId: 2 }, null, 2));
+
+    const store = new MessageStore(filePath);
+    const newMsg = store.append({ kind: "user", content: "after correction" });
+    assert.equal(newMsg.id, "msg_000006", "nextId should be corrected to 6 based on max existing msg_000005");
+
+    const loaded = new MessageStore(filePath);
+    const nextNew = loaded.append({ kind: "user", content: "another" });
+    assert.equal(nextNew.id, "msg_000007");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("persisted store writes each message on its own line", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
   const filePath = path.join(dir, "messages.json");

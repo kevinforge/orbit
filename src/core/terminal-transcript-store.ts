@@ -2,10 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { stripAnsi } from "./ansi-text-extractor.ts";
 import type { AgentId, TerminalState } from "../shared/types.ts";
+import { parsePositiveIntEnv } from "./history-retention.ts";
 
 const RETRY_SAVE_DELAY_MS = 50;
-const DEFAULT_MAX_SEGMENT_BYTES = Number(process.env.ORBIT_TRANSCRIPT_MAX_BYTES ?? 1024 * 1024);
-const DEFAULT_TAIL_BYTES = Number(process.env.ORBIT_TRANSCRIPT_TAIL_BYTES ?? 64 * 1024);
+const DEFAULT_MAX_SEGMENT_BYTES = parsePositiveIntEnv("ORBIT_TRANSCRIPT_MAX_BYTES", 1024 * 1024);
+const DEFAULT_TAIL_BYTES = parsePositiveIntEnv("ORBIT_TRANSCRIPT_TAIL_BYTES", 64 * 1024);
 
 export type TerminalTranscriptStoreOptions = {
   maxSegmentBytes?: number;
@@ -287,17 +288,32 @@ function tailFiles(files: string[], maxBytes: number): string {
     if (remaining <= 0) break;
     const stat = safeStat(file);
     if (!stat?.isFile()) continue;
-    const readBytes = Math.min(remaining, stat.size);
     const buffer = fs.readFileSync(file);
+    const readBytes = Math.min(remaining, stat.size);
     chunks.unshift(buffer.subarray(buffer.length - readBytes));
     remaining -= readBytes;
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return safeTailDecode(Buffer.concat(chunks), maxBytes);
 }
 
 function tailString(value: string, maxBytes: number): string {
   const buffer = Buffer.from(value, "utf8");
-  return buffer.subarray(Math.max(0, buffer.length - maxBytes)).toString("utf8");
+  return safeTailDecode(buffer, maxBytes);
+}
+
+/**
+ * Decode a buffer as UTF-8, ensuring the result starts on a complete code point.
+ * Used for tail truncation to avoid producing replacement characters.
+ */
+function safeTailDecode(buffer: Buffer, maxBytes: number): string {
+  if (buffer.length <= maxBytes) return buffer.toString("utf8");
+  // Start from maxBytes before the end, then skip any continuation bytes
+  // to avoid splitting a multi-byte UTF-8 character at the boundary.
+  let start = buffer.length - maxBytes;
+  while (start < buffer.length && (buffer[start] & 0xC0) === 0x80) {
+    start++;
+  }
+  return buffer.subarray(start).toString("utf8");
 }
 
 function takePrefixByBytes(value: string, maxBytes: number): string {

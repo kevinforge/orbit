@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ChatMessage, MessageHistoryState, MessagePage, MessageRouteState, NewChatMessage } from "../shared/types.ts";
+import { parsePositiveIntEnv } from "./history-retention.ts";
 
 type PersistedData = { messages: ChatMessage[]; nextId: number };
 
@@ -25,7 +26,7 @@ export type MessageStoreOptions = {
 };
 
 const MANIFEST_FILE = "manifest.json";
-const DEFAULT_RECENT_SHARDS = Number(process.env.ORBIT_MESSAGE_RECENT_SHARDS ?? 3);
+const DEFAULT_RECENT_SHARDS = parsePositiveIntEnv("ORBIT_MESSAGE_RECENT_SHARDS", 3);
 
 export class MessageStore {
   private messages: ChatMessage[] = [];
@@ -126,16 +127,21 @@ export class MessageStore {
 
   listBefore(beforeId: string | null | undefined, limit = 50): MessagePage {
     const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
-    const all = this.readAllMessages();
-    const beforeIndex = beforeId ? all.findIndex((message) => message.id === beforeId) : all.length;
-    const end = beforeIndex === -1 ? all.length : beforeIndex;
-    const start = Math.max(0, end - boundedLimit);
-    const messages = all.slice(start, end);
-    return {
-      messages,
-      hasOlderMessages: start > 0,
-      olderCursor: start > 0 ? messages[0]?.id ?? null : null,
-    };
+
+    if (!this.filePath) {
+      const all = this.messages;
+      const beforeIndex = beforeId ? all.findIndex((message) => message.id === beforeId) : all.length;
+      const end = beforeIndex === -1 ? all.length : beforeIndex;
+      const start = Math.max(0, end - boundedLimit);
+      const messages = all.slice(start, end);
+      return {
+        messages,
+        hasOlderMessages: start > 0,
+        olderCursor: start > 0 ? messages[0]?.id ?? null : null,
+      };
+    }
+
+    return this.listBeforeFromShards(beforeId, boundedLimit);
   }
 
   private createId(): string {
@@ -149,8 +155,28 @@ export class MessageStore {
     this.ensureMigrated();
     this.manifest = this.loadManifest();
     this.nextId = this.manifest.nextId;
+    this.validateAndFixNextId();
     const recentShards = this.manifest.shards.slice(-this.recentShardCount);
     this.messages = sortMessages(recentShards.flatMap((shard) => this.readShard(shard.name)));
+  }
+
+  private validateAndFixNextId(): void {
+    if (!this.filePath || this.manifest.shards.length === 0) return;
+    let maxId = 0;
+    for (const shard of this.manifest.shards) {
+      for (const message of this.readShard(shard.name)) {
+        const match = /^msg_(\d+)$/.exec(message.id);
+        if (match) {
+          maxId = Math.max(maxId, Number(match[1]));
+        }
+      }
+    }
+    const needed = maxId + 1;
+    if (this.nextId < needed) {
+      this.nextId = needed;
+      this.manifest.nextId = needed;
+      this.saveManifest();
+    }
   }
 
   private ensureMigrated(): void {
@@ -236,6 +262,74 @@ export class MessageStore {
     fs.writeFileSync(tmp, messages.map((message) => JSON.stringify(message)).join(os.EOL) + (messages.length ? os.EOL : ""));
     fs.renameSync(tmp, shardPath);
     this.upsertShardMetadata(shardName, messages);
+  }
+
+  private listBeforeFromShards(beforeId: string | null | undefined, limit: number): MessagePage {
+    const shards = this.manifest.shards;
+    if (shards.length === 0) {
+      const all = this.messages;
+      const beforeIndex = beforeId ? all.findIndex((message) => message.id === beforeId) : all.length;
+      const end = beforeIndex === -1 ? all.length : beforeIndex;
+      const start = Math.max(0, end - limit);
+      const messages = all.slice(start, end);
+      return { messages, hasOlderMessages: start > 0, olderCursor: start > 0 ? messages[0]?.id ?? null : null };
+    }
+
+    // Find the shard containing the beforeId cursor
+    let endShardIndex = shards.length; // default: include up to last shard
+    let messagesBeforeCursor: ChatMessage[] = [];
+    if (beforeId) {
+      for (let i = shards.length - 1; i >= 0; i--) {
+        const shardMessages = this.readShard(shards[i].name);
+        const cursorIndex = shardMessages.findIndex((message) => message.id === beforeId);
+        if (cursorIndex !== -1) {
+          endShardIndex = i;
+          messagesBeforeCursor = shardMessages.slice(0, cursorIndex);
+          break;
+        }
+      }
+      if (endShardIndex === shards.length) {
+        // cursor not found, treat as end
+        messagesBeforeCursor = [];
+      }
+    }
+
+    // Walk backwards through shards accumulating messages until we have `limit`
+    const collected: ChatMessage[] = [];
+    let earliestShardRead = endShardIndex;
+    let skippedInEarliestShard = 0;
+
+    // First, take from messagesBeforeCursor (already in the cursor's shard)
+    for (let i = messagesBeforeCursor.length - 1; i >= 0 && collected.length < limit; i--) {
+      collected.unshift(messagesBeforeCursor[i]);
+    }
+    if (messagesBeforeCursor.length > 0 && collected.length < messagesBeforeCursor.length) {
+      skippedInEarliestShard = messagesBeforeCursor.length - collected.length;
+    }
+
+    // Then walk backwards through older shards
+    for (let i = endShardIndex - 1; i >= 0 && collected.length < limit; i--) {
+      const shardMessages = sortMessages(this.readShard(shards[i].name));
+      earliestShardRead = i;
+      const toTake = Math.min(limit - collected.length, shardMessages.length);
+      if (toTake < shardMessages.length) {
+        skippedInEarliestShard = shardMessages.length - toTake;
+      } else {
+        skippedInEarliestShard = 0;
+      }
+      collected.unshift(...shardMessages.slice(shardMessages.length - toTake));
+    }
+
+    // Determine hasOlderMessages without re-reading shards:
+    // - If we skipped messages in the earliest shard we read
+    // - Or if there are shards before the earliest one we read
+    const hasOlderMessages = skippedInEarliestShard > 0 || earliestShardRead > 0;
+
+    return {
+      messages: collected,
+      hasOlderMessages,
+      olderCursor: hasOlderMessages ? collected[0]?.id ?? null : null,
+    };
   }
 
   private readAllMessages(): ChatMessage[] {
