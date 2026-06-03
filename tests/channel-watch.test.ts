@@ -94,6 +94,7 @@ function createMocks(opts?: {
 
   const agentRegistry = {
     ids: () => Object.keys(opts?.agentStatuses ?? {}),
+    has: (id: string) => id in (opts?.agentStatuses ?? {}),
     get: (id: string) => {
       const status = opts?.agentStatuses?.[id];
       if (status === undefined) throw new Error(`Unknown agent: ${id}`);

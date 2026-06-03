@@ -29,7 +29,7 @@ function createAgentMessage(agentId: AgentId, content: string, overrides?: Parti
   };
 }
 
-function createRouter(options?: Partial<{ availableAgents: readonly AgentId[]; maxRouteDepth: number }>) {
+function createRouter(options?: Partial<{ availableAgents: readonly AgentId[]; maxRouteDepth: number; hasActiveSupervisor: boolean }>) {
   const systemMessages: Array<{ content: string; parentMessageId?: string }> = [];
   const agentRuns: Array<{ agentId: AgentId; prompt: string; source: ChatMessage }> = [];
   const routeStates: Array<{ id: string; state: MessageRouteState }> = [];
@@ -37,6 +37,7 @@ function createRouter(options?: Partial<{ availableAgents: readonly AgentId[]; m
   const router = new MessageRouter({
     availableAgents: options?.availableAgents ?? agents,
     maxRouteDepth: options?.maxRouteDepth ?? 10,
+    hasActiveSupervisor: options?.hasActiveSupervisor,
     createSystemMessage(content: string, parentMessageId?: string) {
       systemMessages.push({ content, parentMessageId });
       return createUserMessage(content, { kind: "system" });
@@ -253,4 +254,35 @@ test("empty assignment does not start agent run", () => {
   assert.equal(systemMessages.length, 1);
   assert.ok(systemMessages[0].content.includes("task content"));
   assert.equal(routeStates[0]?.state, "blocked");
+});
+
+// --- hasActiveSupervisor behavior ---
+
+test("plain mention with supervisor active is silently ignored (no system message)", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter({ hasActiveSupervisor: true });
+  router.process(createUserMessage("hello world"));
+
+  assert.equal(agentRuns.length, 0);
+  assert.equal(systemMessages.length, 0);
+  assert.equal(routeStates[0]?.state, "ignored");
+});
+
+test("plain mention WITHOUT supervisor creates system hint message", () => {
+  const { router, systemMessages, agentRuns, routeStates } = createRouter({ hasActiveSupervisor: false });
+  router.process(createUserMessage("hello world"));
+
+  assert.equal(agentRuns.length, 0);
+  assert.equal(systemMessages.length, 1);
+  assert.ok(systemMessages[0].content.includes("@agent1:"));
+  assert.equal(routeStates[0]?.state, "ignored");
+});
+
+test("plain mention without hasActiveSupervisor option creates system hint", () => {
+  // When the option is omitted (undefined/falsy), behavior should match hasActiveSupervisor: false
+  const { router, systemMessages, agentRuns, routeStates } = createRouter();
+  router.process(createUserMessage("no assignment here"));
+
+  assert.equal(agentRuns.length, 0);
+  assert.equal(systemMessages.length, 1);
+  assert.equal(routeStates[0]?.state, "ignored");
 });

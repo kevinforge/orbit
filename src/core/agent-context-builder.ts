@@ -1,5 +1,9 @@
 import type { AgentId, AgentProfile, WorkspaceRuntimeConfig } from "../shared/types.ts";
 
+export const SUPERVISOR_TOOL_REMINDER =
+  "Remember: you CANNOT read files or use any tools. " +
+  "Only coordinate based on messages already in the conversation history.";
+
 export type AgentHistoryEntry = {
   sender: string;
   content: string;

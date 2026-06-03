@@ -483,6 +483,176 @@ test("coordinator permissionProfile with empty allowedDirectories is valid", () 
   assert.deepEqual(errors, []);
 });
 
+// --- Triggers validation tests ---
+
+test("rejects triggers as a non-object (string)", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: "bad" as unknown as AgentConfig["triggers"],
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("triggers") && e.includes("object")), `Expected a triggers object error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects triggers as an array", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: [] as unknown as AgentConfig["triggers"],
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("triggers") && e.includes("object")), `Expected a triggers object error for array, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects triggers with non-boolean onUnassignedMessage", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { onUnassignedMessage: "yes" as unknown as boolean },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("onUnassignedMessage") && e.includes("boolean")), `Expected onUnassignedMessage boolean error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects triggers with non-boolean onAgentBlocked", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { onAgentBlocked: "no" as unknown as boolean },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("onAgentBlocked") && e.includes("boolean")), `Expected onAgentBlocked boolean error, got: ${JSON.stringify(errors)}`);
+});
+
+test("accepts valid triggers with both flags set", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { onUnassignedMessage: true, onAgentBlocked: false },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("accepts triggers with undefined values (omitted flags)", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: {},
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("rejects triggers.maxTriggersPerConversation when non-number", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { maxTriggersPerConversation: "five" as unknown as number },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("maxTriggersPerConversation")), `Expected maxTriggersPerConversation error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects triggers.maxTriggersPerConversation when out of range", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { maxTriggersPerConversation: 200 },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("maxTriggersPerConversation")), `Expected maxTriggersPerConversation range error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects triggers.debounceMs when non-number", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { debounceMs: "fast" as unknown as number },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("debounceMs")), `Expected debounceMs error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects triggers.debounceMs when out of range", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { debounceMs: 120_000 },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("debounceMs")), `Expected debounceMs range error, got: ${JSON.stringify(errors)}`);
+});
+
+test("accepts triggers with valid maxTriggersPerConversation and debounceMs", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { maxTriggersPerConversation: 10, debounceMs: 5000 },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+// --- Cross-validation tests ---
+
+test("rejects supervisor enabled with no other agents enabled", () => {
+  const configs: AgentConfig[] = [
+    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true },
+    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: false },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("Supervisor cannot be enabled")), `Expected supervisor cross-validation error, got: ${JSON.stringify(errors)}`);
+});
+
+test("accepts supervisor enabled when at least one other agent is enabled", () => {
+  const configs: AgentConfig[] = [
+    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true },
+    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("rejects supervisor enabled alone (single config)", () => {
+  const configs: AgentConfig[] = [
+    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("Supervisor cannot be enabled")), `Expected supervisor-alone error, got: ${JSON.stringify(errors)}`);
+});
+
+test("accepts supervisor disabled when alone", () => {
+  const configs: AgentConfig[] = [
+    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: false },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
 test("validate does not require permissionProfile for each config", () => {
   // permissionProfile is optional in AgentConfig by design
   const configs: AgentConfig[] = [

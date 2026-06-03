@@ -16,7 +16,15 @@ export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 export type ChannelWatchTriggers = {
   onUnassignedMessage?: boolean;
   onAgentBlocked?: boolean;
+  /** Maximum automatic triggers per conversation (default 5). */
+  maxTriggersPerConversation?: number;
+  /** Minimum milliseconds between consecutive triggers (default 2000). */
+  debounceMs?: number;
 };
+
+export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): boolean {
+  return triggers?.onUnassignedMessage === true || triggers?.onAgentBlocked === true;
+}
 
 export type AgentConfigUi = {
   label?: string;

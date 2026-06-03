@@ -1,4 +1,5 @@
-import type { AgentId, AgentProfile, ChatMessage, ChannelWatchTriggers } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type ChatMessage, type ChannelWatchTriggers } from "../shared/types.ts";
+import { SUPERVISOR_TOOL_REMINDER } from "./agent-context-builder.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { AgentRegistry } from "./agent-registry.ts";
 import type { RunManager } from "./run-manager.ts";
@@ -13,6 +14,8 @@ type TriggerContext = {
   triggers: ChannelWatchTriggers;
   triggerCount: number;
   lastEnqueueTime: number;
+  maxTriggers: number;
+  debounceMs: number;
 };
 
 export class ChannelWatchService {
@@ -33,12 +36,14 @@ export class ChannelWatchService {
     this.knownIds.add("user"); // @user: is the task-closure signal
 
     for (const profile of profiles) {
-      if (profile.triggers && hasAnyTrigger(profile.triggers)) {
+      if (profile.triggers && hasActiveChannelWatchTriggers(profile.triggers)) {
         this.triggerContexts.set(profile.id, {
           agentId: profile.id,
           triggers: profile.triggers,
           triggerCount: 0,
           lastEnqueueTime: 0,
+          maxTriggers: profile.triggers.maxTriggersPerConversation ?? MAX_TRIGGERS_PER_CONVERSATION,
+          debounceMs: profile.triggers.debounceMs ?? DEBOUNCE_MS,
         });
       }
     }
@@ -60,6 +65,11 @@ export class ChannelWatchService {
     });
   }
 
+  // Design note: this method lives on ChannelWatchService rather than RunManager
+  // because it needs AgentRegistry to query per-agent run status — moving it to
+  // RunManager would require expanding AgentRunner's interface with status query
+  // methods, which would bloat that abstraction unnecessarily. The query is
+  // read-only and does not introduce circular dependencies.
   isChannelTrulyIdle(supervisorId: AgentId): boolean {
     for (const agentId of this.agentRegistry.ids()) {
       if (agentId === supervisorId) continue;
@@ -117,24 +127,20 @@ export class ChannelWatchService {
   private tryTrigger(ctx: TriggerContext, sourceMessage: ChatMessage): void {
     if (!this.isChannelTrulyIdle(ctx.agentId)) return;
 
-    let supervisorSession;
-    try {
-      supervisorSession = this.agentRegistry.get(ctx.agentId);
-    } catch {
-      return;
-    }
+    if (!this.agentRegistry.has(ctx.agentId)) return;
+    const supervisorSession = this.agentRegistry.get(ctx.agentId);
     if (supervisorSession.getStatus() !== "idle") return;
 
     const now = Date.now();
-    if (now - ctx.lastEnqueueTime < DEBOUNCE_MS) return;
+    if (now - ctx.lastEnqueueTime < ctx.debounceMs) return;
 
-    if (ctx.triggerCount >= MAX_TRIGGERS_PER_CONVERSATION) return;
+    if (ctx.triggerCount >= ctx.maxTriggers) return;
 
     ctx.triggerCount += 1;
     ctx.lastEnqueueTime = now;
 
-    const isLast = ctx.triggerCount >= MAX_TRIGGERS_PER_CONVERSATION;
-    const prompt = buildSupervisorPrompt(ctx.agentId, ctx.triggerCount, isLast);
+    const isLast = ctx.triggerCount >= ctx.maxTriggers;
+    const prompt = buildSupervisorPrompt(ctx.agentId, ctx.triggerCount, isLast, ctx.maxTriggers);
 
     const syntheticSource: ChatMessage = {
       id: `trigger_${ctx.agentId}_${Date.now()}_${ctx.triggerCount}`,
@@ -147,10 +153,6 @@ export class ChannelWatchService {
   }
 }
 
-function hasAnyTrigger(triggers: ChannelWatchTriggers): boolean {
-  return triggers.onUnassignedMessage === true || triggers.onAgentBlocked === true;
-}
-
 function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): boolean {
   ASSIGNMENT_PATTERN.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -160,14 +162,12 @@ function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): bo
   return false;
 }
 
-function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean): string {
-  const toolReminder =
-    "Remember: you CANNOT read files or use any tools. " +
-    "Only coordinate based on messages already in the conversation history.\n\n";
+function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean, maxTriggers: number): string {
+  const toolReminder = SUPERVISOR_TOOL_REMINDER + "\n\n";
 
   if (isLast) {
     return (
-      `[Supervisor Check #${count}/${MAX_TRIGGERS_PER_CONVERSATION} — FINAL]\n\n` +
+      `[Supervisor Check #${count}/${maxTriggers} — FINAL]\n\n` +
       toolReminder +
       `This is your last automatic check for this conversation. ` +
       `If work was already assigned and is in progress, acknowledge it. ` +
@@ -177,7 +177,7 @@ function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean)
   }
 
   return (
-    `[Supervisor Check #${count}/${MAX_TRIGGERS_PER_CONVERSATION}]\n\n` +
+    `[Supervisor Check #${count}/${maxTriggers}]\n\n` +
     toolReminder +
     `Evaluate the current state of the conversation. ` +
     `If the overall task needs more work, assign tasks using @agent: markers. ` +

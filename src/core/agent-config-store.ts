@@ -163,6 +163,16 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
         if (t.onAgentBlocked !== undefined && typeof t.onAgentBlocked !== "boolean") {
           errors.push(`Agent "${configId}" triggers.onAgentBlocked must be a boolean.`);
         }
+        if (t.maxTriggersPerConversation !== undefined) {
+          if (typeof t.maxTriggersPerConversation !== "number" || t.maxTriggersPerConversation < 1 || t.maxTriggersPerConversation > 100) {
+            errors.push(`Agent "${configId}" triggers.maxTriggersPerConversation must be an integer between 1 and 100.`);
+          }
+        }
+        if (t.debounceMs !== undefined) {
+          if (typeof t.debounceMs !== "number" || t.debounceMs < 0 || t.debounceMs > 60000) {
+            errors.push(`Agent "${configId}" triggers.debounceMs must be a number between 0 and 60000.`);
+          }
+        }
       }
     }
   }
