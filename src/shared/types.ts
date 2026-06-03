@@ -57,6 +57,7 @@ export type AgentState = {
   role: AgentRole;
   selected?: boolean;
   runtimeAvailable?: boolean;
+  triggers?: ChannelWatchTriggers;
 };
 
 export type ChatMessageKind = "user" | "agent" | "system";
@@ -178,3 +179,8 @@ export type AppState = {
   runningSummaries: RunningSummary[];
   runtimeAvailability: RuntimeAvailability[];
 };
+
+export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): boolean {
+  if (!triggers) return false;
+  return !!(triggers.onUnassignedMessage || triggers.onAgentBlocked);
+}
