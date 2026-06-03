@@ -443,3 +443,62 @@ test("validate does not require permissionProfile for each config", () => {
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);
 });
+
+// --- Coordinator role validation ---
+
+test("coordinator is a valid role accepted by validation", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code",
+      systemPrompt: "You monitor.", enabled: true,
+      permissionProfile: {
+        canReadFiles: false, canWriteFiles: false, canRunCommands: false,
+        canInstallDependencies: false, canGitCommit: false, allowedDirectories: [],
+      },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("coordinator permissionProfile with empty allowedDirectories is valid", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code",
+      systemPrompt: "You monitor.", enabled: true,
+      permissionProfile: {
+        canReadFiles: false, canWriteFiles: false, canRunCommands: false,
+        canInstallDependencies: false, canGitCommit: false, allowedDirectories: [],
+      },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("save-load round-trip preserves coordinator config with empty allowedDirectories", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const configs: AgentConfig[] = [
+      {
+        id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code",
+        systemPrompt: "You coordinate.", enabled: true,
+        permissionProfile: {
+          canReadFiles: false, canWriteFiles: false, canRunCommands: false,
+          canInstallDependencies: false, canGitCommit: false, allowedDirectories: [],
+        },
+      },
+    ];
+    store.save("ws1", configs);
+    const loaded = store.load("ws1");
+    // auto-migration adds 5 missing default templates
+    assert.ok(loaded.length >= 1);
+    const loadedSupervisor = loaded.find((c) => c.id === "supervisor");
+    assert.ok(loadedSupervisor, "supervisor should survive round-trip");
+    assert.equal(loadedSupervisor!.role, "coordinator");
+    assert.equal(loadedSupervisor!.permissionProfile!.canReadFiles, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
