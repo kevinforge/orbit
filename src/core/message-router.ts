@@ -4,6 +4,7 @@ import { routeMention } from "./mention-router.ts";
 export type MessageRouterOptions = {
   availableAgents: readonly AgentId[];
   maxRouteDepth: number;
+  hasActiveSupervisor?: boolean;
   createSystemMessage: (content: string, parentMessageId?: string) => ChatMessage;
   startAgentRun: (agentId: AgentId, prompt: string, sourceMessage: ChatMessage) => void;
   markMessageRouted: (messageId: string, routeState: MessageRouteState) => void;
@@ -38,7 +39,9 @@ export class MessageRouter {
     switch (result.kind) {
       case "none":
         if (message.kind === "user") {
-          this.options.createSystemMessage(result.message);
+          if (!this.options.hasActiveSupervisor) {
+            this.options.createSystemMessage(result.message);
+          }
         }
         this.options.markMessageRouted(message.id, "ignored");
         break;

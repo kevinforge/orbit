@@ -386,6 +386,7 @@ function currentAgentStates() {
       id: config.id,
       label: config.name,
       runtime: config.runtime,
+      role: config.role,
       status: "idle" as const,
       selected: index === 0,
       runtimeAvailable: runtimeAvailable(config.runtime),

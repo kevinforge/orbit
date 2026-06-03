@@ -1,6 +1,6 @@
 export type AgentId = string;
 
-export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general";
+export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general" | "coordinator";
 
 export type PermissionProfile = {
   canReadFiles: boolean;
@@ -12,6 +12,11 @@ export type PermissionProfile = {
 };
 
 export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
+
+export type ChannelWatchTriggers = {
+  onUnassignedMessage?: boolean;
+  onAgentBlocked?: boolean;
+};
 
 export type AgentConfigUi = {
   label?: string;
@@ -27,6 +32,7 @@ export type AgentConfig = {
   permissionProfile?: PermissionProfile;
   enabled: boolean;
   ui?: AgentConfigUi;
+  triggers?: ChannelWatchTriggers;
 };
 
 export type AgentProfile = {
@@ -38,6 +44,7 @@ export type AgentProfile = {
   cwd: string;
   systemPrompt: string;
   permissionProfile: PermissionProfile;
+  triggers?: ChannelWatchTriggers;
 };
 
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
@@ -47,6 +54,7 @@ export type AgentState = {
   label: string;
   runtime: AgentRuntimeKind;
   status: AgentStatus;
+  role: AgentRole;
   selected?: boolean;
   runtimeAvailable?: boolean;
 };

@@ -6,7 +6,7 @@ import { permissionProfile } from "./agent-profiles.ts";
 
 export type { AgentConfig };
 
-const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general"]);
+const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general", "coordinator"]);
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -55,6 +55,36 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
       "You are Orbit's tester. Validate behavior, run tests, inspect regressions, and report risks. Do not modify production code unless explicitly assigned.",
     enabled: false,
     permissionProfile: permissionProfile("tester"),
+  },
+  {
+    id: "supervisor",
+    name: "Supervisor",
+    description: "Monitors conversation progress and coordinates agents toward task completion.",
+    role: "coordinator",
+    runtime: "claude-code",
+    systemPrompt:
+      "You are Orbit's conversation supervisor. Your role is to monitor conversation " +
+      "progress and coordinate agents toward task completion.\n\n" +
+      "**CRITICAL CONSTRAINT: You are a coordinator ONLY — like a project foreman. " +
+      "You must NEVER read files, search code, analyze the codebase, run commands, " +
+      "or use ANY tool.** Your only source of information is the conversation history " +
+      "messages from the user and other agents. Your only actions are delegating work " +
+      "via @agent: markers and concluding to the user via @user: markers.\n\n" +
+      "**Forbidden actions:** Read, Glob, Grep, Bash, Edit, Write, NotebookEdit, " +
+      "WebSearch, WebFetch, Skill, Agent, Task — if you can see it in your tool list, " +
+      "you must NOT use it.\n\n" +
+      "When triggered, evaluate ONLY the conversation history and follow this protocol:\n" +
+      "- If work is needed → @agent: assign tasks to specific agents\n" +
+      "- If blocked → explain to the user what's missing\n" +
+      "- If complete → @user: produce a final summary of accomplishments\n\n" +
+      "Before assigning: check conversation history to avoid duplicating work " +
+      "already in progress. Each message MUST have either @agent: or @user:.",
+    enabled: false,
+    permissionProfile: permissionProfile("coordinator"),
+    triggers: {
+      onUnassignedMessage: true,
+      onAgentBlocked: true,
+    },
   },
 ];
 
@@ -115,9 +145,37 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
           errors.push(`Agent "${config.id}" permissionProfile.${flag} must be a boolean.`);
         }
       }
-      if (!Array.isArray(pp.allowedDirectories) || pp.allowedDirectories.length === 0) {
-        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty.`);
+      if (!Array.isArray(pp.allowedDirectories)) {
+        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be an array.`);
+      } else if (pp.allowedDirectories.length === 0 && (pp.canReadFiles || pp.canWriteFiles || pp.canRunCommands)) {
+        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty when file or command access is enabled.`);
       }
+    }
+
+    if (config.triggers !== undefined) {
+      if (typeof config.triggers !== "object" || Array.isArray(config.triggers)) {
+        errors.push(`Agent "${configId}" triggers must be an object.`);
+      } else {
+        const t = config.triggers;
+        if (t.onUnassignedMessage !== undefined && typeof t.onUnassignedMessage !== "boolean") {
+          errors.push(`Agent "${configId}" triggers.onUnassignedMessage must be a boolean.`);
+        }
+        if (t.onAgentBlocked !== undefined && typeof t.onAgentBlocked !== "boolean") {
+          errors.push(`Agent "${configId}" triggers.onAgentBlocked must be a boolean.`);
+        }
+      }
+    }
+  }
+
+  // Cross-validation: supervisor requires at least one other agent enabled
+  const supervisor = configs.find((c) => c && c.id === "supervisor" && c.enabled);
+  if (supervisor) {
+    const othersEnabled = configs.some((c) => c && c.id !== "supervisor" && c.enabled);
+    if (!othersEnabled) {
+      errors.push(
+        "Supervisor cannot be enabled when no other agents are enabled. " +
+          "Enable at least one working agent (pm, architect, developer, tester) first.",
+      );
     }
   }
 
@@ -152,13 +210,23 @@ export class AgentConfigStore {
           migrated = true;
         }
       }
+
+      // Auto-add new default templates not present in saved configs
+      const savedIds = new Set(configs.map((c) => c.id));
+      for (const def of DEFAULT_AGENT_CONFIGS) {
+        if (!savedIds.has(def.id)) {
+          configs.push(structuredClone(def));
+          migrated = true;
+        }
+      }
+
       if (migrated) {
         try {
           this.save(workspaceId, configs);
         } catch (err) {
           // Don't lose the user's configs just because we couldn't persist
           // the migration — warn and return the in-memory fix anyway.
-          console.warn("[orbit] Failed to persist permissionProfile migration:", (err as Error).message ?? String(err));
+          console.warn("[orbit] Failed to persist config migration:", (err as Error).message ?? String(err));
         }
       }
       return configs;

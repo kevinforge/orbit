@@ -10,13 +10,14 @@ function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-test-config-"));
 }
 
-test("DEFAULT_AGENT_CONFIGS seeds four disabled built-in templates", () => {
-  assert.equal(DEFAULT_AGENT_CONFIGS.length, 4);
+test("DEFAULT_AGENT_CONFIGS seeds five disabled built-in templates", () => {
+  assert.equal(DEFAULT_AGENT_CONFIGS.length, 5);
   const ids = DEFAULT_AGENT_CONFIGS.map((c) => c.id);
   assert.ok(ids.includes("pm"));
   assert.ok(ids.includes("architect"));
   assert.ok(ids.includes("developer"));
   assert.ok(ids.includes("tester"));
+  assert.ok(ids.includes("supervisor"));
   for (const config of DEFAULT_AGENT_CONFIGS) {
     assert.equal(config.enabled, false, `${config.id} should be disabled by default`);
     assert.ok(config.systemPrompt.length > 0, `${config.id} should have a systemPrompt`);
@@ -28,7 +29,7 @@ test("load returns seed configs when no file exists", () => {
   try {
     const store = new AgentConfigStore(dir);
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -44,7 +45,8 @@ test("save then load round-trips configs", () => {
     ];
     store.save("ws1", configs);
     const loaded = store.load("ws1");
-    assert.equal(loaded.length, 1);
+    // auto-migration adds missing default templates (5) to the 1 custom → 6 total
+    assert.equal(loaded.length, 6);
     assert.equal(loaded[0].id, "custom");
     assert.equal(loaded[0].name, "Custom Agent");
   } finally {
@@ -69,7 +71,7 @@ test("reset restores seed configs", () => {
     const store = new AgentConfigStore(dir);
     store.save("ws1", [{ id: "x", name: "X", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true }]);
     const reset = store.reset("ws1");
-    assert.equal(reset.length, 4);
+    assert.equal(reset.length, 5);
     assert.equal(reset[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -97,7 +99,7 @@ test("load handles corrupted file gracefully", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, "not valid json{{{");
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -112,7 +114,7 @@ test("load returns defaults for valid JSON with invalid runtime", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "not-a-runtime", systemPrompt: "x", enabled: true }]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -130,7 +132,7 @@ test("load returns defaults for valid JSON with duplicate ids", () => {
       { id: "dup", name: "B", role: "general", runtime: "codex", systemPrompt: "y", enabled: true },
     ]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -145,7 +147,8 @@ test("load accepts valid JSON with no enabled agents", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: false }]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 1);
+    // auto-migration adds 5 missing default templates → 1 + 5 = 6
+    assert.equal(configs.length, 6);
     assert.equal(configs[0].id, "a");
     assert.equal(configs[0].enabled, false);
   } finally {
@@ -351,7 +354,10 @@ test("DEFAULT_AGENT_CONFIGS include permissionProfile for each agent", () => {
     assert.equal(typeof config.permissionProfile!.canInstallDependencies, "boolean", `${config.id} canInstallDependencies`);
     assert.equal(typeof config.permissionProfile!.canGitCommit, "boolean", `${config.id} canGitCommit`);
     assert.ok(Array.isArray(config.permissionProfile!.allowedDirectories), `${config.id} allowedDirectories`);
-    assert.ok(config.permissionProfile!.allowedDirectories.length > 0, `${config.id} allowedDirectories non-empty`);
+    // coordinator agents have no file access, so empty allowedDirectories is valid
+    if (config.role !== "coordinator") {
+      assert.ok(config.permissionProfile!.allowedDirectories.length > 0, `${config.id} allowedDirectories non-empty`);
+    }
   }
 });
 
@@ -395,7 +401,8 @@ test("load migrates old configs missing permissionProfile to role defaults", () 
       { id: "old-dev", name: "Old Dev", description: "", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
     ]));
     const loaded = store.load("ws1");
-    assert.equal(loaded.length, 1);
+    // auto-migration adds 5 missing default templates → 1 + 5 = 6
+    assert.equal(loaded.length, 6);
     // After migration, should have permissionProfile derived from role
     assert.ok(loaded[0].permissionProfile, "should migrate old config with permissionProfile");
     assert.equal(loaded[0].permissionProfile!.canReadFiles, true);
@@ -429,6 +436,48 @@ test("reset outputs configs with permissionProfile", () => {
 test("validate still permits configs without permissionProfile (backward compat)", () => {
   const configs: AgentConfig[] = [
     { id: "old", name: "Old", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("supervisor uses coordinator role with all-false permissionProfile", () => {
+  const supervisor = DEFAULT_AGENT_CONFIGS.find((c) => c.id === "supervisor");
+  assert.ok(supervisor, "supervisor should exist in defaults");
+  assert.equal(supervisor!.role, "coordinator");
+  const pp = supervisor!.permissionProfile!;
+  assert.equal(pp.canReadFiles, false, "supervisor cannot read files");
+  assert.equal(pp.canWriteFiles, false, "supervisor cannot write files");
+  assert.equal(pp.canRunCommands, false, "supervisor cannot run commands");
+  assert.equal(pp.canInstallDependencies, false, "supervisor cannot install dependencies");
+  assert.equal(pp.canGitCommit, false, "supervisor cannot git commit");
+});
+
+test("supervisor systemPrompt forbids reading files and using tools", () => {
+  const supervisor = DEFAULT_AGENT_CONFIGS.find((c) => c.id === "supervisor");
+  assert.ok(supervisor);
+  const prompt = supervisor!.systemPrompt;
+  assert.ok(prompt.includes("NEVER read files"), "should forbid reading files");
+  assert.ok(prompt.includes("NEVER"), "should use strong CANNOT language");
+  assert.ok(prompt.includes("coordinator ONLY"), "should emphasize coordinator role");
+  assert.ok(prompt.includes("conversation history"), "should reference conversation history as only source");
+});
+
+test("coordinator is a valid role accepted by validation", () => {
+  const configs: AgentConfig[] = [
+    { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
+      permissionProfile: { canReadFiles: false, canWriteFiles: false, canRunCommands: false, canInstallDependencies: false, canGitCommit: false, allowedDirectories: [] },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("coordinator permissionProfile with empty allowedDirectories is valid", () => {
+  const configs: AgentConfig[] = [
+    { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
+      permissionProfile: { canReadFiles: false, canWriteFiles: false, canRunCommands: false, canInstallDependencies: false, canGitCommit: false, allowedDirectories: [] },
+    },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);

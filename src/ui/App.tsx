@@ -151,6 +151,7 @@ export function App() {
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
+  const hasCoordinator = useMemo(() => state.agents.some((agent) => agent.role === "coordinator"), [state.agents]);
   const scrollKey = useMemo(
     () =>
       state.messages
@@ -706,7 +707,7 @@ export function App() {
               agentIds.map((agentId) => (
                 <AgentButton
                   key={agentId}
-                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", status: "idle" }}
+                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", role: "general", status: "idle" }}
                   selected={selectedAgent === agentId}
                   onClick={() => chooseAgent(agentId)}
                 />
@@ -849,7 +850,7 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用智能体"}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @agent: 指派具体智能体" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用智能体"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1160,7 +1161,7 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
 }
 
 const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
-const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
+const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
 const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
   { key: "canReadFiles", label: "读取文件", hint: "允许智能体读取工作区中的文件内容。" },
   { key: "canWriteFiles", label: "写入文件", hint: "允许智能体创建、修改或删除工作区中的文件。" },
@@ -1453,7 +1454,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
           <div className="settingsBody">
             <div className="agentManagerIntro">
               <strong>默认智能体模板</strong>
-              <span>Product Manager、Architect、Developer、Tester 是内置模板，默认不启用。你可以按当前工作区需要开启，也可以创建自己的智能体。</span>
+              <span>五个内置模板默认不启用。Product Manager、Architect、Developer、Tester 负责规划与实现，Supervisor 负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的智能体。</span>
             </div>
             <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义智能体</button>
             {configs.map((config, i) => {
@@ -1469,6 +1470,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                       <span className="configCardName">{config.name || config.id}</span>
                       <span className="configCardPill configCardRole">{config.role}</span>
                       <span className="configCardPill configCardRuntime">{config.runtime}</span>
+                      {config.triggers && config.role === "coordinator" ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
                     </div>
                     <div className="configCardActions">
                       <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="删除">&times;</button>
@@ -1495,10 +1497,10 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                           <span className="fieldHint" title="智能体能力的简短描述。其他智能体发现可协作成员时会看到此内容。">?</span>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">Role <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义。">?</span></span>
+                          <span className="pillLabel">Role <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
                           <div className="pillOptions">
                             {ROLES.map((r) => (
-                              <button key={r} type="button" className={`pillBtn ${config.role === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { role: r })}>{r}</button>
+                              <button key={r} type="button" className={`pillBtn ${config.role === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { role: r, permissionProfile: permissionProfile(r) })}>{r}</button>
                             ))}
                           </div>
                         </div>
@@ -1531,6 +1533,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                             })}
                           </div>
                         </div>
+                        {config.triggers && config.role === "coordinator" ? <SupervisorBanner /> : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给智能体的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -1550,6 +1553,20 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
           <button type="button" onClick={save} disabled={saving}>{saving ? "保存中..." : "保存"}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SupervisorBanner() {
+  return (
+    <div className="supervisorBanner">
+      <p><span aria-hidden="true">🔍</span> <strong>会话监督已启用</strong></p>
+      <p>此智能体会在以下情况自动介入：</p>
+      <ul>
+        <li><span aria-hidden="true">⚡</span> <strong>消息未分配</strong> — 消息中没有 @agent: 标记时，自动分析需求并分配任务</li>
+        <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他智能体的消息被路由拒绝时，介入兜底处理</li>
+      </ul>
+      <p>⏱ 单轮对话最多自动触发 5 次，或在任务闭环后自动停止。关闭 enabled 开关可暂停监督。</p>
     </div>
   );
 }

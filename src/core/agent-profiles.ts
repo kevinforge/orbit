@@ -42,6 +42,15 @@ export function permissionProfile(role: AgentRole): PermissionProfile {
         canGitCommit: false,
         allowedDirectories: ["."],
       };
+    case "coordinator":
+      return {
+        canReadFiles: false,
+        canWriteFiles: false,
+        canRunCommands: false,
+        canInstallDependencies: false,
+        canGitCommit: false,
+        allowedDirectories: [],
+      };
     default:
       return {
         canReadFiles: true,
@@ -133,5 +142,6 @@ export function configsToProfiles(configs: readonly AgentConfig[], cwd: string):
     cwd,
     systemPrompt: config.systemPrompt,
     permissionProfile: config.permissionProfile ?? permissionProfile(config.role),
+    triggers: config.triggers,
   }));
 }

@@ -1737,7 +1737,7 @@ button:active:not(:disabled) {
   min-height: 0;
   flex: 1 1 auto;
   align-content: start;
-  overflow: visible;
+  overflow-y: auto;
   padding-bottom: 16px;
 }
 
@@ -2046,7 +2046,7 @@ button:active:not(:disabled) {
 
 .compactAgents {
   flex: 0 0 auto;
-  max-height: 220px;
+  max-height: 270px;
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
@@ -2463,6 +2463,45 @@ button:active:not(:disabled) {
   border: 1px solid var(--border);
   color: var(--text-muted);
   background: var(--bg-surface);
+}
+
+.supervisorBadge {
+  border: 1px solid #c4c4e8;
+  color: #4a4496;
+  background: #f0f0fa;
+}
+
+.supervisorBanner {
+  margin: 8px 0 12px;
+  padding: 12px 14px;
+  border-left: 3px solid #c4c4e8;
+  background: #f0f0fa;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: 1.6;
+  color: #4a4496;
+}
+
+.supervisorBanner p {
+  margin: 0 0 6px;
+}
+
+.supervisorBanner p:last-child {
+  margin-bottom: 0;
+}
+
+.supervisorBanner ul {
+  margin: 4px 0 6px;
+  padding-left: 16px;
+  list-style: none;
+}
+
+.supervisorBanner ul li {
+  margin-bottom: 3px;
+}
+
+.supervisorBanner strong {
+  color: #3a3380;
 }
 
 .configCardActions {
