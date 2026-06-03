@@ -151,6 +151,7 @@ export function App() {
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
+  const hasCoordinator = useMemo(() => state.agents.some((agent) => agent.role === "coordinator"), [state.agents]);
   const scrollKey = useMemo(
     () =>
       state.messages
@@ -706,7 +707,7 @@ export function App() {
               agentIds.map((agentId) => (
                 <AgentButton
                   key={agentId}
-                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", status: "idle" }}
+                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", role: "general", status: "idle" }}
                   selected={selectedAgent === agentId}
                   onClick={() => chooseAgent(agentId)}
                 />
@@ -849,7 +850,7 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用智能体"}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @agent: 指派具体智能体" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用智能体"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1160,7 +1161,7 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
 }
 
 const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
-const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
+const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
 const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
   { key: "canReadFiles", label: "读取文件", hint: "允许智能体读取工作区中的文件内容。" },
   { key: "canWriteFiles", label: "写入文件", hint: "允许智能体创建、修改或删除工作区中的文件。" },

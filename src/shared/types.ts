@@ -1,6 +1,6 @@
 export type AgentId = string;
 
-export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general";
+export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general" | "coordinator";
 
 export type PermissionProfile = {
   canReadFiles: boolean;
@@ -47,6 +47,7 @@ export type AgentState = {
   label: string;
   runtime: AgentRuntimeKind;
   status: AgentStatus;
+  role: AgentRole;
   selected?: boolean;
   runtimeAvailable?: boolean;
 };

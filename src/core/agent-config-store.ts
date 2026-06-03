@@ -6,7 +6,7 @@ import { permissionProfile } from "./agent-profiles.ts";
 
 export type { AgentConfig };
 
-const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general"]);
+const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general", "coordinator"]);
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -115,8 +115,10 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
           errors.push(`Agent "${config.id}" permissionProfile.${flag} must be a boolean.`);
         }
       }
-      if (!Array.isArray(pp.allowedDirectories) || pp.allowedDirectories.length === 0) {
-        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty.`);
+      if (!Array.isArray(pp.allowedDirectories)) {
+        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be an array.`);
+      } else if (pp.allowedDirectories.length === 0 && (pp.canReadFiles || pp.canWriteFiles || pp.canRunCommands)) {
+        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty when file or command access is enabled.`);
       }
     }
   }
