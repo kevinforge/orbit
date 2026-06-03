@@ -266,6 +266,11 @@ export class RunManager {
     this.startNext(run.agentId);
   }
 
+  // Design note: fail() intentionally does NOT check suppressFollowupRouting.
+  // Unlike complete(), fail() never calls onRunCompleted (error content should not
+  // be auto-routed), and run.failed events are not subscribed to by
+  // ChannelWatchService. If a future change adds routing subscribers to run.failed,
+  // add the suppressFollowupRouting check here to match complete().
   private fail(run: ManagedRun, error: string): void {
     if (run.status === "cancelled") {
       return;
