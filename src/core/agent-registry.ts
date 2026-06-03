@@ -68,6 +68,7 @@ export class AgentRegistry {
       id: profile.id,
       label: profile.name,
       runtime: profile.runtime,
+      role: profile.role,
       status: this.get(profile.id).getStatus(),
       selected: index === 0,
     }));

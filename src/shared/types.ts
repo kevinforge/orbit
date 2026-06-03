@@ -54,6 +54,7 @@ export type AgentState = {
   label: string;
   runtime: AgentRuntimeKind;
   status: AgentStatus;
+  role: AgentRole;
   selected?: boolean;
   runtimeAvailable?: boolean;
 };

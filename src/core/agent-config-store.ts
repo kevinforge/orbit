@@ -145,10 +145,10 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
           errors.push(`Agent "${config.id}" permissionProfile.${flag} must be a boolean.`);
         }
       }
-      // allowedDirectories is only meaningful when the agent can read or write files
-      if ((pp.canReadFiles || pp.canWriteFiles) &&
-          (!Array.isArray(pp.allowedDirectories) || pp.allowedDirectories.length === 0)) {
-        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty.`);
+      if (!Array.isArray(pp.allowedDirectories)) {
+        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be an array.`);
+      } else if (pp.allowedDirectories.length === 0 && (pp.canReadFiles || pp.canWriteFiles || pp.canRunCommands)) {
+        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty when file or command access is enabled.`);
       }
     }
 
