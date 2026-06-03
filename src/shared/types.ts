@@ -16,7 +16,15 @@ export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 export type ChannelWatchTriggers = {
   onUnassignedMessage?: boolean;
   onAgentBlocked?: boolean;
+  /** Maximum automatic triggers per conversation (default 5). */
+  maxTriggersPerConversation?: number;
+  /** Minimum milliseconds between consecutive triggers (default 2000). */
+  debounceMs?: number;
 };
+
+export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): boolean {
+  return triggers?.onUnassignedMessage === true || triggers?.onAgentBlocked === true;
+}
 
 export type AgentConfigUi = {
   label?: string;
@@ -55,9 +63,9 @@ export type AgentState = {
   runtime: AgentRuntimeKind;
   status: AgentStatus;
   role: AgentRole;
+  triggers?: ChannelWatchTriggers;
   selected?: boolean;
   runtimeAvailable?: boolean;
-  triggers?: ChannelWatchTriggers;
 };
 
 export type ChatMessageKind = "user" | "agent" | "system";
@@ -179,8 +187,3 @@ export type AppState = {
   runningSummaries: RunningSummary[];
   runtimeAvailability: RuntimeAvailability[];
 };
-
-export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): boolean {
-  if (!triggers) return false;
-  return !!(triggers.onUnassignedMessage || triggers.onAgentBlocked);
-}

@@ -51,6 +51,10 @@ export class AgentRegistry {
     }
   }
 
+  has(agentId: AgentId): boolean {
+    return this.sessions.has(agentId);
+  }
+
   get(agentId: AgentId): AgentSession {
     const session = this.sessions.get(agentId);
     if (!session) {

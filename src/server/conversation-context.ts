@@ -11,7 +11,7 @@ import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { MessageRouter } from "../core/message-router.ts";
 import { ChannelWatchService } from "../core/channel-watch.ts";
-import type { AgentId, AgentProfile, WorkspaceRuntimeConfig } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type WorkspaceRuntimeConfig } from "../shared/types.ts";
 import { DEFAULT_WORKSPACE_CONFIG } from "../shared/types.ts";
 
 const MAX_ROUTE_DEPTH = 10;
@@ -86,7 +86,7 @@ export class ConversationContext {
     });
 
     const hasActiveSupervisor = profiles.some(
-      (p) => p.triggers && (p.triggers.onUnassignedMessage || p.triggers.onAgentBlocked),
+      (p) => p.role === "coordinator" && hasActiveChannelWatchTriggers(p.triggers),
     );
 
     this.messageRouter = new MessageRouter({
@@ -102,7 +102,10 @@ export class ConversationContext {
         self.runManager.enqueue(agentId, prompt, sourceMessage);
       },
       markMessageRouted: (messageId, routeState) => {
-        self.messages.markRouteState(messageId, routeState);
+        const updated = self.messages.markRouteState(messageId, routeState);
+        if (updated) {
+          eventBus.publish({ type: "message.updated", conversationId, message: updated });
+        }
       },
     });
 
@@ -150,7 +153,7 @@ export class ConversationContext {
     });
 
     const newHasSupervisor = profiles.some(
-      (p) => p.triggers && (p.triggers.onUnassignedMessage || p.triggers.onAgentBlocked),
+      (p) => p.role === "coordinator" && hasActiveChannelWatchTriggers(p.triggers),
     );
 
     const newMessageRouter = new MessageRouter({
@@ -166,7 +169,10 @@ export class ConversationContext {
         newRunManager.enqueue(agentId, prompt, sourceMessage);
       },
       markMessageRouted: (messageId, routeState) => {
-        self.messages.markRouteState(messageId, routeState);
+        const updated = self.messages.markRouteState(messageId, routeState);
+        if (updated) {
+          eventBus.publish({ type: "message.updated", conversationId, message: updated });
+        }
       },
     });
 

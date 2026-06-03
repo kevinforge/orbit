@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AgentConfig, AgentId, AgentRole, AgentRuntimeKind } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind } from "../shared/types.ts";
 import { permissionProfile } from "./agent-profiles.ts";
 
 export type { AgentConfig };
@@ -10,6 +10,7 @@ const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester"
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const CURRENT_MIGRATION_VERSION = 1;
 
 export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
@@ -163,8 +164,41 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
         if (t.onAgentBlocked !== undefined && typeof t.onAgentBlocked !== "boolean") {
           errors.push(`Agent "${configId}" triggers.onAgentBlocked must be a boolean.`);
         }
+        if (t.maxTriggersPerConversation !== undefined) {
+          if (typeof t.maxTriggersPerConversation !== "number" || t.maxTriggersPerConversation < 1 || t.maxTriggersPerConversation > 100) {
+            errors.push(`Agent "${configId}" triggers.maxTriggersPerConversation must be an integer between 1 and 100.`);
+          }
+        }
+        if (t.debounceMs !== undefined) {
+          if (typeof t.debounceMs !== "number" || t.debounceMs < 0 || t.debounceMs > 60000) {
+            errors.push(`Agent "${configId}" triggers.debounceMs must be a number between 0 and 60000.`);
+          }
+        }
       }
     }
+  }
+
+  // Cross-validation: only coordinator-role agents may have active channel-watch triggers
+  const agentsWithActiveTriggers: AgentConfig[] = [];
+  for (const c of configs) {
+    if (c && hasActiveChannelWatchTriggers(c.triggers)) {
+      agentsWithActiveTriggers.push(c);
+      if (c.role !== "coordinator") {
+        errors.push(
+          `Agent "${c.id}" has active channel watch triggers but its role is "${c.role}". ` +
+            "Only coordinator-role agents can act as supervisor. Change the role to coordinator or disable the triggers.",
+        );
+      }
+    }
+  }
+
+  // Cross-validation: at most one supervisor (agent with active triggers) per conversation
+  if (agentsWithActiveTriggers.length > 1) {
+    errors.push(
+      `Only one supervisor is allowed per conversation, but ${agentsWithActiveTriggers.length} agents have active channel watch triggers: ` +
+        `${agentsWithActiveTriggers.map((c) => c.id).join(", ")}. ` +
+        "Disable triggers on all but one agent.",
+    );
   }
 
   // Cross-validation: supervisor requires at least one other agent enabled
@@ -193,7 +227,21 @@ export class AgentConfigStore {
     const filePath = this.configPath(workspaceId);
     try {
       const data = fs.readFileSync(filePath, "utf8");
-      const configs = JSON.parse(data) as AgentConfig[];
+      const parsed = JSON.parse(data) as AgentConfig[] | { configs: AgentConfig[]; _meta?: { migrationVersion?: number } };
+
+      let configs: AgentConfig[];
+      let storedVersion = 0;
+
+      if (Array.isArray(parsed)) {
+        // Legacy format: plain array
+        configs = parsed;
+      } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { configs: AgentConfig[] }).configs)) {
+        configs = (parsed as { configs: AgentConfig[] }).configs;
+        storedVersion = (parsed as { _meta?: { migrationVersion?: number } })._meta?.migrationVersion ?? 0;
+      } else {
+        return structuredClone(DEFAULT_AGENT_CONFIGS);
+      }
+
       if (!Array.isArray(configs) || configs.length === 0) {
         return structuredClone(DEFAULT_AGENT_CONFIGS);
       }
@@ -211,12 +259,14 @@ export class AgentConfigStore {
         }
       }
 
-      // Auto-add new default templates not present in saved configs
-      const savedIds = new Set(configs.map((c) => c.id));
-      for (const def of DEFAULT_AGENT_CONFIGS) {
-        if (!savedIds.has(def.id)) {
-          configs.push(structuredClone(def));
-          migrated = true;
+      // Auto-add new default templates only when migration version is behind
+      if (storedVersion < CURRENT_MIGRATION_VERSION) {
+        const savedIds = new Set(configs.map((c) => c.id));
+        for (const def of DEFAULT_AGENT_CONFIGS) {
+          if (!savedIds.has(def.id)) {
+            configs.push(structuredClone(def));
+            migrated = true;
+          }
         }
       }
 
@@ -240,7 +290,8 @@ export class AgentConfigStore {
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmpFile = filePath + ".tmp";
-    fs.writeFileSync(tmpFile, JSON.stringify(configs, null, 2) + os.EOL);
+    const payload = { configs, _meta: { migrationVersion: CURRENT_MIGRATION_VERSION } };
+    fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2) + os.EOL);
     fs.renameSync(tmpFile, filePath);
   }
 

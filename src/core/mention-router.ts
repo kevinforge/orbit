@@ -12,7 +12,7 @@ type AssignmentMarker = {
   end: number;
 };
 
-const assignmentPattern = /@([A-Za-z0-9_-]+)\s*(?::|：)/g;
+export const assignmentPattern = /@([A-Za-z0-9_-]+)\s*(?::|：)/g;
 
 export function routeMention(
   content: string,
