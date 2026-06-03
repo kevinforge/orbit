@@ -259,7 +259,9 @@ test("supervisor context includes strict tool constraint block", () => {
   assert.ok(context.includes("YOU CANNOT READ FILES"), "should explicitly forbid reading files");
   assert.ok(context.includes("YOU CANNOT RUN COMMANDS"), "should explicitly forbid running commands");
   assert.ok(context.includes("YOU CANNOT SEARCH CODE"), "should explicitly forbid searching code");
+  assert.ok(context.includes("notifying the user via @user:"), "should include user notification capability");
   assert.ok(context.includes("Delegation guide:"), "should provide delegation guidance");
+  assert.ok(context.includes("@user: summarize"), "delegation guide should include @user: for task closure");
 });
 
 test("non-supervisor context does not include supervisor constraints block", () => {

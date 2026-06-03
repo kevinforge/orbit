@@ -44,12 +44,14 @@ function renderSupervisorConstraints(): string[] {
     "- ❌ Bash — YOU CANNOT RUN COMMANDS",
     "- ❌ Edit / Write — YOU CANNOT MODIFY FILES",
     "- ❌ WebSearch / WebFetch — YOU CANNOT ACCESS EXTERNAL RESOURCES",
-    "- ✅ Your ONLY capability: reading conversation history and routing to agents",
+    "- ✅ Your ONLY capabilities: reading conversation history, routing to agents, " +
+      "and notifying the user via @user:",
     "",
     "Delegation guide:",
     "- Need code analysis? → @architect: analyze ...",
     "- Need implementation? → @developer: implement ...",
     "- Need testing? → @tester: validate ...",
+    "- Task complete? → @user: summarize what was accomplished",
     "",
     "Violating these constraints corrupts the supervision mechanism.",
   ];
