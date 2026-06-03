@@ -2466,20 +2466,20 @@ button:active:not(:disabled) {
 }
 
 .supervisorBadge {
-  border: 1px solid #c4c4e8;
-  color: #4a4496;
-  background: #f0f0fa;
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-subtle);
 }
 
 .supervisorBanner {
   margin: 8px 0 12px;
   padding: 12px 14px;
-  border-left: 3px solid #c4c4e8;
-  background: #f0f0fa;
+  border-left: 3px solid var(--accent-border);
+  background: var(--accent-subtle);
   border-radius: var(--radius-md);
   font-size: 12px;
   line-height: 1.6;
-  color: #4a4496;
+  color: var(--accent);
 }
 
 .supervisorBanner p {
@@ -2501,7 +2501,7 @@ button:active:not(:disabled) {
 }
 
 .supervisorBanner strong {
-  color: #3a3380;
+  color: var(--accent-hover);
 }
 
 .configCardActions {

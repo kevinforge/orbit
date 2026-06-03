@@ -1,5 +1,4 @@
 import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type ChatMessage, type ChannelWatchTriggers } from "../shared/types.ts";
-import { SUPERVISOR_TOOL_REMINDER } from "./agent-context-builder.ts";
 import { assignmentPattern } from "./mention-router.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { AgentRegistry } from "./agent-registry.ts";
@@ -91,14 +90,10 @@ export class ChannelWatchService {
 
   private onMessageCreated(message: ChatMessage): void {
     if (message.kind === "user") {
+      const hasAssignment = hasAssignmentMarker(message.content, this.knownIds);
       for (const ctx of this.triggerContexts.values()) {
         ctx.triggerCount = 0;
-      }
-    }
-
-    if (message.kind === "user" && !hasAssignmentMarker(message.content, this.knownIds)) {
-      for (const ctx of this.triggerContexts.values()) {
-        if (ctx.triggers.onUnassignedMessage) {
+        if (!hasAssignment && ctx.triggers.onUnassignedMessage) {
           this.tryTrigger(ctx, message);
         }
       }
@@ -173,12 +168,9 @@ function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): bo
 }
 
 function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean, maxTriggers: number): string {
-  const toolReminder = SUPERVISOR_TOOL_REMINDER + "\n\n";
-
   if (isLast) {
     return (
       `[Supervisor Check #${count}/${maxTriggers} — FINAL]\n\n` +
-      toolReminder +
       `This is your last automatic check for this conversation. ` +
       `If work was already assigned and is in progress, acknowledge it. ` +
       `If the overall task is done, conclude with @user: and a final summary. ` +
@@ -188,7 +180,6 @@ function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean,
 
   return (
     `[Supervisor Check #${count}/${maxTriggers}]\n\n` +
-    toolReminder +
     `Evaluate the current state of the conversation. ` +
     `If the overall task needs more work, assign tasks using @agent: markers. ` +
     `If all work is complete, conclude with @user: and a final summary.`

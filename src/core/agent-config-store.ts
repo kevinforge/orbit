@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AgentConfig, AgentId, AgentRole, AgentRuntimeKind } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind } from "../shared/types.ts";
 import { permissionProfile } from "./agent-profiles.ts";
 
 export type { AgentConfig };
@@ -176,6 +176,29 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
         }
       }
     }
+  }
+
+  // Cross-validation: only coordinator-role agents may have active channel-watch triggers
+  const agentsWithActiveTriggers: AgentConfig[] = [];
+  for (const c of configs) {
+    if (c && hasActiveChannelWatchTriggers(c.triggers)) {
+      agentsWithActiveTriggers.push(c);
+      if (c.role !== "coordinator") {
+        errors.push(
+          `Agent "${c.id}" has active channel watch triggers but its role is "${c.role}". ` +
+            "Only coordinator-role agents can act as supervisor. Change the role to coordinator or disable the triggers.",
+        );
+      }
+    }
+  }
+
+  // Cross-validation: at most one supervisor (agent with active triggers) per conversation
+  if (agentsWithActiveTriggers.length > 1) {
+    errors.push(
+      `Only one supervisor is allowed per conversation, but ${agentsWithActiveTriggers.length} agents have active channel watch triggers: ` +
+        `${agentsWithActiveTriggers.map((c) => c.id).join(", ")}. ` +
+        "Disable triggers on all but one agent.",
+    );
   }
 
   // Cross-validation: supervisor requires at least one other agent enabled

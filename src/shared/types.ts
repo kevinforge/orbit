@@ -63,6 +63,7 @@ export type AgentState = {
   runtime: AgentRuntimeKind;
   status: AgentStatus;
   role: AgentRole;
+  triggers?: ChannelWatchTriggers;
   selected?: boolean;
   runtimeAvailable?: boolean;
 };

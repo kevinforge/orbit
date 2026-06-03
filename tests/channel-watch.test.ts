@@ -40,14 +40,14 @@ function makeSupervisorProfile(id = "supervisor"): AgentProfile {
   return {
     id,
     name: "Supervisor",
-    role: "general",
+    role: "coordinator",
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: "You are a supervisor.",
     permissionProfile: {
-      canReadFiles: true,
+      canReadFiles: false,
       canWriteFiles: false,
-      canRunCommands: true,
+      canRunCommands: false,
       canInstallDependencies: false,
       canGitCommit: false,
       allowedDirectories: [],
@@ -193,8 +193,6 @@ test("run.completed without @agent: triggers supervisor when channel idle", asyn
   assert.equal(enqueueCalls.length, 1);
   assert.equal(enqueueCalls[0].agentId, "supervisor");
   assert.ok(enqueueCalls[0].prompt.includes("Supervisor Check"));
-  assert.ok(enqueueCalls[0].prompt.includes("you CANNOT read files"), "trigger prompt should include tool reminder");
-  assert.ok(enqueueCalls[0].prompt.includes("conversation history"), "trigger prompt should reference conversation history");
 
   service.dispose();
 });

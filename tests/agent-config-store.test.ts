@@ -537,10 +537,11 @@ test("rejects triggers with non-boolean onAgentBlocked", () => {
 test("accepts valid triggers with both flags set", () => {
   const configs: AgentConfig[] = [
     {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
+      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
       systemPrompt: "do stuff", enabled: true,
       triggers: { onUnassignedMessage: true, onAgentBlocked: false },
     },
+    { id: "b", name: "B", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);
@@ -649,6 +650,55 @@ test("rejects supervisor enabled alone (single config)", () => {
 test("accepts supervisor disabled when alone", () => {
   const configs: AgentConfig[] = [
     { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: false },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+// --- Single supervisor enforcement ---
+
+test("rejects multiple agents with active channel watch triggers", () => {
+  const configs: AgentConfig[] = [
+    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true,
+      triggers: { onUnassignedMessage: true },
+    },
+    { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "watch", enabled: true,
+      triggers: { onAgentBlocked: true },
+    },
+    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("Only one supervisor")), `Expected single-supervisor error, got: ${JSON.stringify(errors)}`);
+});
+
+test("accepts at most one agent with active triggers", () => {
+  const configs: AgentConfig[] = [
+    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true,
+      triggers: { onUnassignedMessage: true, onAgentBlocked: true },
+    },
+    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("rejects non-coordinator agent with active triggers", () => {
+  const configs: AgentConfig[] = [
+    { id: "watcher", name: "Watcher", role: "general", runtime: "claude-code", systemPrompt: "watch", enabled: true,
+      triggers: { onUnassignedMessage: true },
+    },
+    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("role is") && e.includes("coordinator")), `Expected non-coordinator triggers error, got: ${JSON.stringify(errors)}`);
+});
+
+test("accepts non-coordinator with inactive triggers (both false)", () => {
+  const configs: AgentConfig[] = [
+    { id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "do stuff", enabled: true,
+      triggers: { onUnassignedMessage: false, onAgentBlocked: false },
+    },
+    { id: "b", name: "B", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);

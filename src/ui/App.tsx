@@ -151,7 +151,7 @@ export function App() {
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
-  const hasCoordinator = useMemo(() => state.agents.some((agent) => agent.role === "coordinator"), [state.agents]);
+  const hasCoordinator = useMemo(() => state.agents.some((agent) => agent.role === "coordinator" && hasActiveChannelWatchTriggers(agent.triggers)), [state.agents]);
   const scrollKey = useMemo(
     () =>
       state.messages
