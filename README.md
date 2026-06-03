@@ -110,6 +110,22 @@ rules), so existing workspaces and conversations continue to work unchanged.
 - `GET /api/workspace-config` — get workspace config for the active workspace
 - `PUT /api/workspace-config` — update workspace config (validates field types)
 
+### Storage and Retention
+
+Messages are persisted under `~/.orbit/conversations/<workspace-id>/<conversation-id>/messages/` as daily NDJSON shards plus `manifest.json`. Existing `messages.json` files are migrated automatically when a conversation is opened.
+
+Terminal transcripts are persisted under `~/.orbit/transcripts/<workspace-id>/<conversation-id>/<agent-id>/` as rolling log segments.
+
+The server returns recent messages in `GET /api/state`; older messages can be loaded with `GET /api/messages?before=<message-id>&limit=50`.
+
+Optional environment variables:
+
+- `ORBIT_MESSAGE_RECENT_SHARDS`
+- `ORBIT_HISTORY_RETAIN_DAYS`
+- `ORBIT_TRANSCRIPT_RETAIN_DAYS`
+- `ORBIT_TRANSCRIPT_MAX_BYTES`
+- `ORBIT_TRANSCRIPT_TAIL_BYTES`
+
 To restart the local service on Windows PowerShell and clear the default port first:
 
 ```powershell

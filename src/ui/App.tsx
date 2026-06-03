@@ -2,13 +2,14 @@ import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, us
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
 import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
   conversation: { id: "", name: "" },
   agents: [],
   messages: [],
+  messageHistory: { hasOlderMessages: false, olderCursor: null },
   terminal: {},
   runningSummaries: [],
   runtimeAvailability: [],
@@ -21,6 +22,7 @@ export function App() {
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
   const [isInterrupting, setIsInterrupting] = useState(false);
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [cursorIndex, setCursorIndex] = useState(0);
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
@@ -314,6 +316,27 @@ export function App() {
       }));
     } finally {
       setIsInterrupting(false);
+    }
+  }
+
+  async function loadOlderMessages() {
+    const cursor = state.messageHistory.olderCursor;
+    if (!cursor || isLoadingOlderMessages) return;
+    const requestContext = {
+      workspaceId: state.workspace.id,
+      conversationId: state.conversation.id,
+    };
+
+    setIsLoadingOlderMessages(true);
+    try {
+      const response = await fetch(`/api/messages?before=${encodeURIComponent(cursor)}&limit=50`);
+      if (!response.ok) {
+        throw new Error(`Messages request failed: ${response.status}`);
+      }
+      const page = (await response.json()) as MessagePage;
+      setState((current) => mergeOlderMessagesPage(current, requestContext, page));
+    } finally {
+      setIsLoadingOlderMessages(false);
     }
   }
 
@@ -790,6 +813,16 @@ export function App() {
         </header>
 
         <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="消息列表" onScroll={handleMessagesScroll}>
+          {state.messageHistory.hasOlderMessages ? (
+            <button
+              className="loadOlderMessagesBtn"
+              type="button"
+              onClick={loadOlderMessages}
+              disabled={isLoadingOlderMessages}
+            >
+              {isLoadingOlderMessages ? "Loading..." : "Load earlier messages"}
+            </button>
+          ) : null}
           {state.messages.length === 0 ? (
             <div className="emptyState">
               <div className="emptyOrbital" aria-hidden="true">
@@ -1728,6 +1761,7 @@ function normalizeState(nextState: AppState): AppState {
       ? nextState.agents.map((agent) => ({ ...agent, runtime: agent.runtime ?? "claude-code" }))
       : initialState.agents,
     messages: nextState.messages ?? [],
+    messageHistory: nextState.messageHistory ?? initialState.messageHistory,
     terminal: {
       ...(nextState.terminal ?? {}),
     },
@@ -1843,5 +1877,26 @@ function createLocalSystemMessage(content: string): ChatMessage {
     content,
     createdAt: new Date().toISOString(),
     status: "error",
+  };
+}
+
+export function mergeOlderMessagesPage(
+  current: AppState,
+  requestContext: { workspaceId: string; conversationId: string },
+  page: MessagePage,
+): AppState {
+  if (current.workspace.id !== requestContext.workspaceId || current.conversation.id !== requestContext.conversationId) {
+    return current;
+  }
+
+  const existing = new Set(current.messages.map((message) => message.id));
+  const olderMessages = page.messages.filter((message) => !existing.has(message.id));
+  return {
+    ...current,
+    messages: [...olderMessages, ...current.messages],
+    messageHistory: {
+      hasOlderMessages: page.hasOlderMessages,
+      olderCursor: page.olderCursor,
+    },
   };
 }

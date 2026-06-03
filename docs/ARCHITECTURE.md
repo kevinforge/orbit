@@ -43,10 +43,11 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/agent-history-builder.ts` | Builds scoped channel history for each agent run |
 | `src/core/workspace-config-store.ts` | Load/save per-workspace configuration (systemPrompt, rules) |
 | `src/core/conversation-store.ts` | Conversation metadata persistence per workspace |
-| `src/core/message-store.ts` | Workspace-persisted channel messages |
+| `src/core/message-store.ts` | Workspace-persisted channel messages, shard manifests, and pagination |
 | `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
 | `src/core/workspace-store.ts` | Workspace CRUD, isolation, and user directory persistence |
-| `src/core/terminal-transcript-store.ts` | Workspace-persisted runtime activity transcripts |
+| `src/core/terminal-transcript-store.ts` | Workspace-persisted runtime activity transcript segments |
+| `src/core/history-retention.ts` | Best-effort cleanup for old message shards and transcript segments |
 | `src/core/claude-output-detector.ts` | Clean final answer validation and stream event mapping |
 | `src/server/conversation-context.ts` | Bundles per-conversation runtime state (stores, agents, router) |
 | `src/ui/App.tsx` | Chat UI, agent buttons, composer, workspace/conversation selectors |
@@ -160,14 +161,15 @@ Each project directory gets its own isolated workspace via `src/core/workspace-s
 
 - **Workspace ID**: deterministic 12-char hex derived from the project's absolute cwd using SHA-256. On Windows the path is lowercased before hashing to handle case-insensitive filesystems; on Linux/macOS the original case is preserved.
 - **Data directory**: `~/.orbit/` organized by data type, with workspace as an isolation dimension:
-  - `workspaces/<workspace-id>/workspace.json` — metadata (id, name, path, createdAt, lastOpenedAt)
-  - `workspaces/<workspace-id>/agents.json` — per-workspace agent configurations (`AgentConfigStore`)
-  - `sessions/<workspace-id>/<runtime>/<channelId>/<conversationId>/<agentId>.json` — per-agent session records (`SessionStore`)
-  - `conversations/<workspace-id>/<conversationId>/messages.json` — persisted channel messages (`MessageStore`)
-  - `workspaces/<workspace-id>/config.json` — workspace configuration (`WorkspaceConfigStore`)
-  - `conversations/<workspace-id>/conversations.json` — conversation metadata (`ConversationStore`)
-  - `transcripts/<workspace-id>/<channelId>/<conversationId>/<agentId>.log` — per-agent terminal transcripts (`TerminalTranscriptStore`)
-  - `last-active.json` — last active workspace and conversation for restart recovery
+  - `workspaces/<workspace-id>/workspace.json` - metadata (id, name, path, createdAt, lastOpenedAt)
+  - `workspaces/<workspace-id>/agents.json` - per-workspace agent configurations (`AgentConfigStore`)
+  - `sessions/<workspace-id>/<runtime>/<channelId>/<conversationId>/<agentId>.json` - per-agent session records (`SessionStore`)
+  - `conversations/<workspace-id>/<conversationId>/messages/manifest.json` - message shard index (`MessageStore`)
+  - `conversations/<workspace-id>/<conversationId>/messages/<YYYY-MM-DD>.ndjson` - persisted channel message shards (`MessageStore`)
+  - `workspaces/<workspace-id>/config.json` - workspace configuration (`WorkspaceConfigStore`)
+  - `conversations/<workspace-id>/conversations.json` - conversation metadata (`ConversationStore`)
+  - `transcripts/<workspace-id>/<conversationId>/<agentId>/<YYYY-MM-DD>-<sequence>.log` - per-agent terminal transcript segments (`TerminalTranscriptStore`)
+  - `last-active.json` - last active workspace and conversation for restart recovery
 - **Lifecycle**: on startup, the server checks `last-active.json` for the previously active workspace/conversation, falling back to `WorkspaceStore.resolve(cwd)` for first-run. Switching is blocked while agents are running.
 
 ## Workspace & Conversation Management
@@ -224,11 +226,25 @@ The UI keeps running activities expanded and scrolls to the latest event. Comple
 
 Agent statuses and run queues are in memory. Messages and terminal transcripts are persisted to the workspace data directory and survive server restarts.
 
+Messages are stored as daily NDJSON shards with a manifest. `MessageStore` automatically migrates the legacy `messages.json` file when a conversation is opened, loads only the most recent shards on startup, and exposes cursor pagination through `GET /api/messages?before=<message-id>&limit=50`.
+
+Terminal transcripts are stored as per-agent log segments. Segments roll when they exceed `ORBIT_TRANSCRIPT_MAX_BYTES`, and startup only returns the latest tail for each agent to keep `/api/state` bounded.
+
+On startup, `history-retention.ts` runs best-effort cleanup. It skips the active conversation, removes expired message shards while keeping the latest shards, and removes expired transcript segments while keeping each agent's latest segment. Cleanup failures are logged and do not block startup.
+
+Retention and load limits can be tuned with:
+
+- `ORBIT_HISTORY_RETAIN_DAYS`
+- `ORBIT_TRANSCRIPT_RETAIN_DAYS`
+- `ORBIT_TRANSCRIPT_MAX_BYTES`
+- `ORBIT_TRANSCRIPT_TAIL_BYTES`
+- `ORBIT_MESSAGE_RECENT_SHARDS`
+
 This keeps P0 simple. Persistent storage should be added behind existing stores rather than mixed into UI or runtime code.
 
 ## Future Extension Points
 
-- Add persistent SQLite storage behind `MessageStore` and transcript storage (currently JSON/log files).
+- Add persistent SQLite storage behind `MessageStore` and transcript storage if shard files stop scaling.
 - Add runtime adapters for other agent backends.
 - Add richer queue controls: cancel, retry, pause, and priority.
 - Add branch/PR workflow integration as a separate layer, not inside the runtime adapter.
