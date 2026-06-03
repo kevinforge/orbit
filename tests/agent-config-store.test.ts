@@ -45,8 +45,8 @@ test("save then load round-trips configs", () => {
     ];
     store.save("ws1", configs);
     const loaded = store.load("ws1");
-    // auto-migration adds missing default templates (5) to the 1 custom → 6 total
-    assert.equal(loaded.length, 6);
+    // save() persists with current migration version, so load() skips auto-add
+    assert.equal(loaded.length, 1);
     assert.equal(loaded[0].id, "custom");
     assert.equal(loaded[0].name, "Custom Agent");
   } finally {
@@ -378,13 +378,14 @@ test("save persists permissionProfile in agents.json on disk", () => {
     store.save("ws1", configs);
     const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
     const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    assert.ok(raw[0].permissionProfile, "file should contain permissionProfile");
-    assert.equal(raw[0].permissionProfile.canReadFiles, true);
-    assert.equal(raw[0].permissionProfile.canWriteFiles, false);
-    assert.equal(raw[0].permissionProfile.canRunCommands, true);
-    assert.equal(raw[0].permissionProfile.canInstallDependencies, false);
-    assert.equal(raw[0].permissionProfile.canGitCommit, false);
-    assert.deepEqual(raw[0].permissionProfile.allowedDirectories, ["."]);
+    const savedConfigs = raw.configs as AgentConfig[];
+    assert.ok(savedConfigs[0].permissionProfile, "file should contain permissionProfile");
+    assert.equal(savedConfigs[0].permissionProfile.canReadFiles, true);
+    assert.equal(savedConfigs[0].permissionProfile.canWriteFiles, false);
+    assert.equal(savedConfigs[0].permissionProfile.canRunCommands, true);
+    assert.equal(savedConfigs[0].permissionProfile.canInstallDependencies, false);
+    assert.equal(savedConfigs[0].permissionProfile.canGitCommit, false);
+    assert.deepEqual(savedConfigs[0].permissionProfile.allowedDirectories, ["."]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -425,7 +426,7 @@ test("reset outputs configs with permissionProfile", () => {
     // Check file on disk too
     const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
     const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    for (const entry of raw) {
+    for (const entry of (raw.configs as AgentConfig[])) {
       assert.ok(entry.permissionProfile, `${entry.id} on disk should have permissionProfile`);
     }
   } finally {

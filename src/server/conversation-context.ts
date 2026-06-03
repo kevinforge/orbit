@@ -85,7 +85,9 @@ export class ConversationContext {
       },
     });
 
-    const hasActiveSupervisor = profiles.some((p) => hasActiveChannelWatchTriggers(p.triggers));
+    const hasActiveSupervisor = profiles.some(
+      (p) => p.role === "coordinator" && hasActiveChannelWatchTriggers(p.triggers),
+    );
 
     this.messageRouter = new MessageRouter({
       availableAgents: agentIds,
@@ -100,7 +102,10 @@ export class ConversationContext {
         self.runManager.enqueue(agentId, prompt, sourceMessage);
       },
       markMessageRouted: (messageId, routeState) => {
-        self.messages.markRouteState(messageId, routeState);
+        const updated = self.messages.markRouteState(messageId, routeState);
+        if (updated) {
+          eventBus.publish({ type: "message.updated", conversationId, message: updated });
+        }
       },
     });
 
@@ -147,7 +152,9 @@ export class ConversationContext {
       },
     });
 
-    const newHasSupervisor = profiles.some((p) => hasActiveChannelWatchTriggers(p.triggers));
+    const newHasSupervisor = profiles.some(
+      (p) => p.role === "coordinator" && hasActiveChannelWatchTriggers(p.triggers),
+    );
 
     const newMessageRouter = new MessageRouter({
       availableAgents: agentIds,
@@ -162,7 +169,10 @@ export class ConversationContext {
         newRunManager.enqueue(agentId, prompt, sourceMessage);
       },
       markMessageRouted: (messageId, routeState) => {
-        self.messages.markRouteState(messageId, routeState);
+        const updated = self.messages.markRouteState(messageId, routeState);
+        if (updated) {
+          eventBus.publish({ type: "message.updated", conversationId, message: updated });
+        }
       },
     });
 

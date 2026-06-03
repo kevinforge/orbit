@@ -1,13 +1,14 @@
 import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type ChatMessage, type ChannelWatchTriggers } from "../shared/types.ts";
 import { SUPERVISOR_TOOL_REMINDER } from "./agent-context-builder.ts";
+import { assignmentPattern } from "./mention-router.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { AgentRegistry } from "./agent-registry.ts";
 import type { RunManager } from "./run-manager.ts";
 import type { MessageStore } from "./message-store.ts";
 
-const ASSIGNMENT_PATTERN = /@([A-Za-z0-9_-]+)\s*(?::|：)/g;
 const MAX_TRIGGERS_PER_CONVERSATION = 5;
 const DEBOUNCE_MS = 2_000;
+const MAX_ROUTE_DEPTH = 10;
 
 type TriggerContext = {
   agentId: AgentId;
@@ -34,6 +35,7 @@ export class ChannelWatchService {
   ) {
     this.knownIds = new Set(profiles.map((p) => p.id));
     this.knownIds.add("user"); // @user: is the task-closure signal
+    this.knownIds.add("all");  // @all: is the broadcast signal
 
     for (const profile of profiles) {
       if (profile.triggers && hasActiveChannelWatchTriggers(profile.triggers)) {
@@ -59,6 +61,8 @@ export class ChannelWatchService {
 
       if (event.type === "message.created") {
         this.onMessageCreated(event.message);
+      } else if (event.type === "message.updated") {
+        this.onMessageUpdated(event.message);
       } else if (event.type === "run.completed" && "agentId" in event) {
         this.onAgentCompleted(event.agentId as AgentId, (event as { resultMessageId: string }).resultMessageId);
       }
@@ -92,18 +96,20 @@ export class ChannelWatchService {
       }
     }
 
-    if (message.routeState === "blocked") {
-      for (const ctx of this.triggerContexts.values()) {
-        if (ctx.triggers.onAgentBlocked) {
-          this.tryTrigger(ctx, message);
-        }
-      }
-      return;
-    }
-
     if (message.kind === "user" && !hasAssignmentMarker(message.content, this.knownIds)) {
       for (const ctx of this.triggerContexts.values()) {
         if (ctx.triggers.onUnassignedMessage) {
+          this.tryTrigger(ctx, message);
+        }
+      }
+    }
+  }
+
+  private onMessageUpdated(message: ChatMessage): void {
+    // Listen for routeState transitions to "blocked" (published via message.updated)
+    if (message.routeState === "blocked") {
+      for (const ctx of this.triggerContexts.values()) {
+        if (ctx.triggers.onAgentBlocked) {
           this.tryTrigger(ctx, message);
         }
       }
@@ -125,6 +131,10 @@ export class ChannelWatchService {
   }
 
   private tryTrigger(ctx: TriggerContext, sourceMessage: ChatMessage): void {
+    // Honour the same route-depth limit as MessageRouter
+    const nextDepth = (sourceMessage.routeDepth ?? 0) + 1;
+    if (nextDepth > MAX_ROUTE_DEPTH) return;
+
     if (!this.isChannelTrulyIdle(ctx.agentId)) return;
 
     if (!this.agentRegistry.has(ctx.agentId)) return;
@@ -154,9 +164,9 @@ export class ChannelWatchService {
 }
 
 function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): boolean {
-  ASSIGNMENT_PATTERN.lastIndex = 0;
+  const pattern = new RegExp(assignmentPattern.source, "g");
   let m: RegExpExecArray | null;
-  while ((m = ASSIGNMENT_PATTERN.exec(content)) !== null) {
+  while ((m = pattern.exec(content)) !== null) {
     if (knownIds.has(m[1])) return true;
   }
   return false;

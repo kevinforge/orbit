@@ -2,7 +2,7 @@ import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, us
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
 import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
-import type { AgentActivityEvent, AgentConfig, AgentId, AgentRole, AgentRuntimeKind, AgentState, AppState, ChatMessage, Conversation, ConversationInfo, PermissionProfile, RunningSummary, RuntimeEvent, Workspace } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
@@ -1470,7 +1470,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                       <span className="configCardName">{config.name || config.id}</span>
                       <span className="configCardPill configCardRole">{config.role}</span>
                       <span className="configCardPill configCardRuntime">{config.runtime}</span>
-                      {config.triggers && config.role === "coordinator" ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
+                      {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
                     </div>
                     <div className="configCardActions">
                       <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="删除">&times;</button>
@@ -1500,7 +1500,17 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                           <span className="pillLabel">Role <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
                           <div className="pillOptions">
                             {ROLES.map((r) => (
-                              <button key={r} type="button" className={`pillBtn ${config.role === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { role: r, permissionProfile: permissionProfile(r) })}>{r}</button>
+                              <button
+                                key={r}
+                                type="button"
+                                className={`pillBtn ${config.role === r ? "pillActive" : ""}`}
+                                onClick={() => {
+                                  if (config.role === r) return;
+                                  updateConfig(i, { role: r, permissionProfile: permissionProfile(r) });
+                                }}
+                              >
+                                {r}
+                              </button>
                             ))}
                           </div>
                         </div>
@@ -1533,7 +1543,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                             })}
                           </div>
                         </div>
-                        {config.triggers && config.role === "coordinator" ? <SupervisorBanner /> : null}
+                        {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <SupervisorBanner maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5} hasUnassigned={config.triggers?.onUnassignedMessage === true} hasBlocked={config.triggers?.onAgentBlocked === true} /> : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给智能体的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -1557,16 +1567,20 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
   );
 }
 
-function SupervisorBanner() {
+function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked }: { maxTriggers: number; hasUnassigned: boolean; hasBlocked: boolean }) {
   return (
     <div className="supervisorBanner">
       <p><span aria-hidden="true">🔍</span> <strong>会话监督已启用</strong></p>
       <p>此智能体会在以下情况自动介入：</p>
       <ul>
-        <li><span aria-hidden="true">⚡</span> <strong>消息未分配</strong> — 消息中没有 @agent: 标记时，自动分析需求并分配任务</li>
-        <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他智能体的消息被路由拒绝时，介入兜底处理</li>
+        {hasUnassigned ? (
+          <li><span aria-hidden="true">⚡</span> <strong>消息未分配</strong> — 消息中没有 @agent: 标记时，自动分析需求并分配任务</li>
+        ) : null}
+        {hasBlocked ? (
+          <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他智能体的消息被路由拒绝时，介入兜底处理</li>
+        ) : null}
       </ul>
-      <p>⏱ 单轮对话最多自动触发 5 次，或在任务闭环后自动停止。关闭 enabled 开关可暂停监督。</p>
+      <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭 enabled 开关可暂停监督。</p>
     </div>
   );
 }

@@ -10,6 +10,7 @@ const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester"
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const CURRENT_MIGRATION_VERSION = 1;
 
 export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
@@ -203,7 +204,21 @@ export class AgentConfigStore {
     const filePath = this.configPath(workspaceId);
     try {
       const data = fs.readFileSync(filePath, "utf8");
-      const configs = JSON.parse(data) as AgentConfig[];
+      const parsed = JSON.parse(data) as AgentConfig[] | { configs: AgentConfig[]; _meta?: { migrationVersion?: number } };
+
+      let configs: AgentConfig[];
+      let storedVersion = 0;
+
+      if (Array.isArray(parsed)) {
+        // Legacy format: plain array
+        configs = parsed;
+      } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { configs: AgentConfig[] }).configs)) {
+        configs = (parsed as { configs: AgentConfig[] }).configs;
+        storedVersion = (parsed as { _meta?: { migrationVersion?: number } })._meta?.migrationVersion ?? 0;
+      } else {
+        return structuredClone(DEFAULT_AGENT_CONFIGS);
+      }
+
       if (!Array.isArray(configs) || configs.length === 0) {
         return structuredClone(DEFAULT_AGENT_CONFIGS);
       }
@@ -221,12 +236,14 @@ export class AgentConfigStore {
         }
       }
 
-      // Auto-add new default templates not present in saved configs
-      const savedIds = new Set(configs.map((c) => c.id));
-      for (const def of DEFAULT_AGENT_CONFIGS) {
-        if (!savedIds.has(def.id)) {
-          configs.push(structuredClone(def));
-          migrated = true;
+      // Auto-add new default templates only when migration version is behind
+      if (storedVersion < CURRENT_MIGRATION_VERSION) {
+        const savedIds = new Set(configs.map((c) => c.id));
+        for (const def of DEFAULT_AGENT_CONFIGS) {
+          if (!savedIds.has(def.id)) {
+            configs.push(structuredClone(def));
+            migrated = true;
+          }
         }
       }
 
@@ -250,7 +267,8 @@ export class AgentConfigStore {
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmpFile = filePath + ".tmp";
-    fs.writeFileSync(tmpFile, JSON.stringify(configs, null, 2) + os.EOL);
+    const payload = { configs, _meta: { migrationVersion: CURRENT_MIGRATION_VERSION } };
+    fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2) + os.EOL);
     fs.renameSync(tmpFile, filePath);
   }
 

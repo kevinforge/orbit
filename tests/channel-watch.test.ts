@@ -810,7 +810,7 @@ test("blocked message triggers supervisor via onAgentBlocked", async () => {
   );
 
   eventBus.publish({
-    type: "message.created",
+    type: "message.updated",
     conversationId: "conv-1",
     message: createBlockedMessage("dev"),
   });
