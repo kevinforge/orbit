@@ -30,6 +30,8 @@ export type ManagedRun = {
   startedAt?: string;
   completedAt?: string;
   activity: AgentActivityEvent[];
+  /** When true, skip run.completed/run.failed events and onRunCompleted callback on finish. */
+  suppressFollowupRouting?: boolean;
 };
 
 export type RunManagerOptions = {
@@ -101,6 +103,36 @@ export class RunManager {
     this.active.set(agentId, run);
     this.start(run);
     return run;
+  }
+
+  /**
+   * Interrupt the current automatic collaboration chain without killing running processes.
+   * - All queued runs are cancelled (same as cancel()).
+   * - All running runs are marked suppressFollowupRouting=true so their completion
+   *   does NOT trigger run.completed events or onRunCompleted callbacks.
+   * Returns the IDs of cancelled and suppressed runs.
+   */
+  interruptCurrentChain(): { cancelledQueuedRunIds: string[]; suppressedRunningRunIds: string[] } {
+    const cancelledQueuedRunIds: string[] = [];
+    const suppressedRunningRunIds: string[] = [];
+
+    for (const run of this.runs.values()) {
+      if (run.suppressFollowupRouting) continue; // already handled (idempotent)
+
+      if (run.status === "queued") {
+        cancelledQueuedRunIds.push(run.id);
+        // Remove from queue so startNext doesn't pick it up
+        const queue = this.getQueue(run.agentId);
+        const idx = queue.findIndex((r) => r.id === run.id);
+        if (idx !== -1) queue.splice(idx, 1);
+        this.markCancelled(run);
+      } else if (run.status === "running") {
+        suppressedRunningRunIds.push(run.id);
+        run.suppressFollowupRouting = true;
+      }
+    }
+
+    return { cancelledQueuedRunIds, suppressedRunningRunIds };
   }
 
   cancel(runId: string): { ok: boolean; reason?: "not_found" | "not_cancellable" | "already_running" } {
@@ -202,15 +234,23 @@ export class RunManager {
       sessionId: runResult.sessionId,
       runIndex: runResult.runIndex,
     });
+    // Always publish message.updated so the UI shows results
     this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
-    this.options.eventBus.publish({
-      type: "run.completed",
-      conversationId: this.options.conversationId,
-      agentId: run.agentId,
-      runId: run.id,
-      resultMessageId: updated.id,
-    });
-    this.options.onRunCompleted(updated);
+
+    if (run.suppressFollowupRouting) {
+      // Suppressed: skip run.completed event and onRunCompleted callback
+      // to prevent MessageRouter and ChannelWatch from triggering new chains.
+      // startNext() still runs — queued tasks (from new user messages) proceed.
+    } else {
+      this.options.eventBus.publish({
+        type: "run.completed",
+        conversationId: this.options.conversationId,
+        agentId: run.agentId,
+        runId: run.id,
+        resultMessageId: updated.id,
+      });
+      this.options.onRunCompleted(updated);
+    }
     this.startNext(run.agentId);
   }
 
@@ -234,8 +274,15 @@ export class RunManager {
       completedAt: run.completedAt,
       startedAt: run.startedAt,
     });
+    // Always publish message.updated so the UI shows the error
     this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
-    this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary });
+
+    if (run.suppressFollowupRouting) {
+      // Suppressed: skip run.failed event and onRunCompleted callback
+    } else {
+      this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary });
+      this.options.onRunCompleted(updated);
+    }
     this.startNext(run.agentId);
   }
 

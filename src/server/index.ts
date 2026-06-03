@@ -467,6 +467,22 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Interrupt current chain
+    if (req.method === "POST" && url.pathname === "/api/conversation/interrupt") {
+      if (!activeWorkspaceId || !activeConversationId) {
+        sendJson(res, 409, { ok: false, message: "No active conversation." });
+        return;
+      }
+      const ctx = getActiveContext();
+      if (!ctx) {
+        sendJson(res, 409, { ok: false, message: "No active context." });
+        return;
+      }
+      const result = ctx.interrupt();
+      sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+
     // Agents
     if (req.method === "GET" && url.pathname === "/api/agents") {
       sendJson(res, 200, allConfigs);

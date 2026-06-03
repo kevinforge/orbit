@@ -20,6 +20,7 @@ export function App() {
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
+  const [isInterrupting, setIsInterrupting] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [cursorIndex, setCursorIndex] = useState(0);
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
@@ -47,6 +48,7 @@ export function App() {
   const isNearBottomRef = useRef(true);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
+  const hasActiveRuns = isAnyAgentRunning || state.messages.some((m) => m.runStatus === "queued");
   const hasWorkspace = Boolean(state.workspace.id);
 
   const refreshWorkspaces = () => {
@@ -291,6 +293,29 @@ export function App() {
       }));
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function interruptChain() {
+    if (isInterrupting) return;
+    setIsInterrupting(true);
+    try {
+      const response = await fetch("/api/conversation/interrupt", { method: "POST" });
+      if (response.ok) {
+        // State will be refreshed via SSE events
+      } else {
+        setState((current) => ({
+          ...current,
+          messages: [...current.messages, createLocalSystemMessage("打断操作失败。")],
+        }));
+      }
+    } catch {
+      setState((current) => ({
+        ...current,
+        messages: [...current.messages, createLocalSystemMessage("打断请求失败，请检查本地服务是否正在运行。")],
+      }));
+    } finally {
+      setIsInterrupting(false);
     }
   }
 
@@ -863,6 +888,11 @@ export function App() {
               />
             ) : null}
           </div>
+          {hasActiveRuns ? (
+            <button type="button" className="interruptBtn" disabled={isInterrupting} onClick={interruptChain}>
+              {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
+            </button>
+          ) : null}
           <button type="submit" disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
             {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
           </button>

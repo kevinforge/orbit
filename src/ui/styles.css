@@ -1436,6 +1436,27 @@ button:active:not(:disabled) {
   transform: translateY(-1px);
 }
 
+.interruptBtn {
+  min-width: 52px;
+  min-height: 42px;
+  align-self: start;
+  color: var(--text-inverse);
+  border: none;
+  border-radius: 14px;
+  background: var(--secondary);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  box-shadow: var(--shadow-sm), 0 0 0 1px rgba(194, 65, 12, 0.3);
+  transition: all var(--transition-base);
+}
+
+.interruptBtn:hover:not(:disabled) {
+  background: #b33b0a;
+  box-shadow: var(--shadow-md), 0 0 0 1px rgba(194, 65, 12, 0.4);
+  transform: translateY(-1px);
+}
+
 .sendSpinner {
   display: inline-block;
   width: 16px;

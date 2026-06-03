@@ -104,6 +104,20 @@ export class ConversationContext {
     return this.agents.states().some((s) => s.status === "running");
   }
 
+  interrupt(): { cancelledQueuedRunIds: string[]; suppressedRunningRunIds: string[] } {
+    const result = this.runManager.interruptCurrentChain();
+
+    // Add a system message explaining the interrupt
+    this.messages.add({
+      kind: "system",
+      content:
+        "用户已打断当前自动协作链。已启动的智能体会继续完成当前任务，但其后续指派和自动触发将被忽略。你可以直接发送新的任务。",
+      status: "done",
+    });
+
+    return result;
+  }
+
   refreshProfiles(profiles: readonly AgentProfile[]): void {
     this.agents.stopAll();
     this.runManager.dispose();
