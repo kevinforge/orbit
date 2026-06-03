@@ -126,12 +126,12 @@ function renderSupervisorConstraintsSection(): string {
 function renderWorkspaceContextSection(config: WorkspaceRuntimeConfig): string {
   const inner: string[] = [];
   if (config.systemPrompt) {
-    inner.push("Workspace prompt:", config.systemPrompt);
+    inner.push("Workspace prompt:", escapeDynamicContent(config.systemPrompt));
   }
   if (config.rules.length > 0) {
     inner.push("Workspace rules:");
     for (const rule of config.rules) {
-      inner.push(`- ${rule}`);
+      inner.push(`- ${escapeDynamicContent(rule)}`);
     }
   }
   // Omit the entire section when there is nothing to inject
@@ -143,7 +143,7 @@ function renderAgentRoleSection(profile: AgentProfile | undefined): string {
   if (!profile?.systemPrompt) return "";
   return [
     "<agent-role>",
-    `Role instruction: ${profile.systemPrompt}`,
+    `Role instruction: ${escapeDynamicContent(profile.systemPrompt)}`,
     "</agent-role>",
   ].join("\n");
 }
