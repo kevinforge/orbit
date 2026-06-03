@@ -1469,7 +1469,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                       <span className="configCardName">{config.name || config.id}</span>
                       <span className="configCardPill configCardRole">{config.role}</span>
                       <span className="configCardPill configCardRuntime">{config.runtime}</span>
-                      {config.triggers ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
+                      {config.triggers && config.role === "coordinator" ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
                     </div>
                     <div className="configCardActions">
                       <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="删除">&times;</button>
@@ -1532,7 +1532,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                             })}
                           </div>
                         </div>
-                        {config.triggers ? <SupervisorBanner /> : null}
+                        {config.triggers && config.role === "coordinator" ? <SupervisorBanner /> : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给智能体的指令。定义其角色、专业能力和行为约束。">?</span>

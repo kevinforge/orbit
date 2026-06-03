@@ -85,7 +85,7 @@ export class ChannelWatchService {
     if (message.routeState === "blocked") {
       for (const ctx of this.triggerContexts.values()) {
         if (ctx.triggers.onAgentBlocked) {
-          this.tryTrigger(ctx, "blocked", message);
+          this.tryTrigger(ctx, message);
         }
       }
       return;
@@ -94,7 +94,7 @@ export class ChannelWatchService {
     if (message.kind === "user" && !hasAssignmentMarker(message.content, this.knownIds)) {
       for (const ctx of this.triggerContexts.values()) {
         if (ctx.triggers.onUnassignedMessage) {
-          this.tryTrigger(ctx, "unassigned_message", message);
+          this.tryTrigger(ctx, message);
         }
       }
     }
@@ -109,12 +109,12 @@ export class ChannelWatchService {
     for (const ctx of this.triggerContexts.values()) {
       if (ctx.agentId === agentId) continue;
       if (ctx.triggers.onUnassignedMessage) {
-        this.tryTrigger(ctx, "agent_completed", message);
+        this.tryTrigger(ctx, message);
       }
     }
   }
 
-  private tryTrigger(ctx: TriggerContext, _reason: string, sourceMessage: ChatMessage): void {
+  private tryTrigger(ctx: TriggerContext, sourceMessage: ChatMessage): void {
     if (!this.isChannelTrulyIdle(ctx.agentId)) return;
 
     let supervisorSession;
