@@ -63,7 +63,10 @@ export class ChannelWatchService {
       } else if (event.type === "message.updated") {
         this.onMessageUpdated(event.message);
       } else if (event.type === "run.completed" && "agentId" in event) {
-        this.onAgentCompleted(event.agentId as AgentId, (event as { resultMessageId: string }).resultMessageId);
+        const completedEvent = event as { agentId: AgentId; resultMessageId: string; suppressFollowupRouting?: boolean };
+        if (!completedEvent.suppressFollowupRouting) {
+          this.onAgentCompleted(completedEvent.agentId, completedEvent.resultMessageId);
+        }
       }
     });
   }

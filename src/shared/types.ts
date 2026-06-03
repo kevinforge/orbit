@@ -123,7 +123,7 @@ export type RuntimeEvent =
   | { type: "agent.status"; conversationId: string; agentId: AgentId; status: AgentStatus }
   | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "terminal.chunk"; conversationId: string; agentId: AgentId; runId?: string; text: string }
-  | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
+  | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string; suppressFollowupRouting?: boolean }
   | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string }
   | { type: "run.cancelled"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
   | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }

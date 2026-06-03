@@ -20,6 +20,7 @@ export function App() {
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
+  const [isInterrupting, setIsInterrupting] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [cursorIndex, setCursorIndex] = useState(0);
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
@@ -47,6 +48,8 @@ export function App() {
   const isNearBottomRef = useRef(true);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
+  const hasAnyQueuedRun = state.messages.some((m) => m.runStatus === "queued");
+  const hasRunningOrQueued = isAnyAgentRunning || hasAnyQueuedRun;
   const hasWorkspace = Boolean(state.workspace.id);
 
   const refreshWorkspaces = () => {
@@ -292,6 +295,25 @@ export function App() {
       }));
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function interruptChain() {
+    if (isInterrupting) return;
+    setIsInterrupting(true);
+    try {
+      const response = await fetch("/api/conversation/interrupt", { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`Interrupt request failed: ${response.status}`);
+      }
+      // State will update via SSE events
+    } catch {
+      setState((current) => ({
+        ...current,
+        messages: [...current.messages, createLocalSystemMessage("打断操作失败，请检查本地服务是否正在运行。")],
+      }));
+    } finally {
+      setIsInterrupting(false);
     }
   }
 
@@ -864,9 +886,22 @@ export function App() {
               />
             ) : null}
           </div>
-          <button type="submit" disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
-            {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
-          </button>
+          <div className="composerActions">
+            {hasRunningOrQueued ? (
+              <button
+                type="button"
+                className="interruptBtn"
+                onClick={interruptChain}
+                disabled={isInterrupting}
+                title="打断当前自动协作链，已启动的智能体会继续完成当前任务但其后续指派将被忽略"
+              >
+                {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
+              </button>
+            ) : null}
+            <button type="submit" disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
+              {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
+            </button>
+          </div>
         </form>
       </section>
       {showSettings ? (
