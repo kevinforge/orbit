@@ -1160,7 +1160,7 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
 }
 
 const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
-const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
+const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
 const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
   { key: "canReadFiles", label: "读取文件", hint: "允许智能体读取工作区中的文件内容。" },
   { key: "canWriteFiles", label: "写入文件", hint: "允许智能体创建、修改或删除工作区中的文件。" },
@@ -1496,10 +1496,10 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                           <span className="fieldHint" title="智能体能力的简短描述。其他智能体发现可协作成员时会看到此内容。">?</span>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">Role <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义。">?</span></span>
+                          <span className="pillLabel">Role <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
                           <div className="pillOptions">
                             {ROLES.map((r) => (
-                              <button key={r} type="button" className={`pillBtn ${config.role === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { role: r })}>{r}</button>
+                              <button key={r} type="button" className={`pillBtn ${config.role === r ? "pillActive" : ""}`} onClick={() => updateConfig(i, { role: r, permissionProfile: permissionProfile(r) })}>{r}</button>
                             ))}
                           </div>
                         </div>
