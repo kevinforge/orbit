@@ -19,6 +19,8 @@ type AgentRunner = {
 
 export type ManagedRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
+export type RunOrigin = "user" | "agent" | "supervisor";
+
 export type ManagedRun = {
   id: string;
   agentId: AgentId;
@@ -30,6 +32,10 @@ export type ManagedRun = {
   startedAt?: string;
   completedAt?: string;
   activity: AgentActivityEvent[];
+  /** When true, this run's completion will not trigger follow-up @agent: routing or supervisor. */
+  suppressFollowupRouting?: boolean;
+  /** Who initiated this run: a user message, an agent's @mention, or the supervisor. */
+  origin?: RunOrigin;
 };
 
 export type RunManagerOptions = {
@@ -65,7 +71,7 @@ export class RunManager {
     return false;
   }
 
-  enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage): ManagedRun {
+  enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage, origin?: RunOrigin): ManagedRun {
     const runId = createRunId(agentId);
     const routeDepth = (sourceMessage.routeDepth ?? 0) + 1;
     const isBusy = this.active.has(agentId);
@@ -87,6 +93,8 @@ export class RunManager {
     } satisfies NewChatMessage);
     this.options.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
 
+    const resolvedOrigin: RunOrigin = origin ?? (sourceMessage.kind === "system" ? "supervisor" : sourceMessage.kind === "agent" ? "agent" : "user");
+
     const run: ManagedRun = {
       id: runId,
       agentId,
@@ -97,6 +105,7 @@ export class RunManager {
       createdAt: now,
       startedAt: isBusy ? undefined : now,
       activity,
+      origin: resolvedOrigin,
     };
     this.runs.set(run.id, run);
 
@@ -160,6 +169,39 @@ export class RunManager {
     });
   }
 
+  /** Interrupt the current auto-collaboration chain without killing running CLI processes.
+   *
+   * - All queued runs are cancelled immediately.
+   * - All running runs are marked with `suppressFollowupRouting`, so their
+   *   completions won't trigger further @agent: routing or supervisor checks.
+   * - Running runs continue to stream output and complete normally.
+   * - New messages sent after the interrupt route normally.
+   */
+  interruptCurrentChain(): {
+    cancelledQueuedRunIds: string[];
+    suppressedRunningRunIds: string[];
+  } {
+    const cancelledQueuedRunIds: string[] = [];
+    const suppressedRunningRunIds: string[] = [];
+
+    // Cancel all queued runs
+    for (const [agentId, queue] of this.queues) {
+      while (queue.length > 0) {
+        const run = queue.shift()!;
+        this.markCancelled(run);
+        cancelledQueuedRunIds.push(run.id);
+      }
+    }
+
+    // Suppress follow-up routing for all running runs
+    for (const [agentId, run] of this.active) {
+      run.suppressFollowupRouting = true;
+      suppressedRunningRunIds.push(run.id);
+    }
+
+    return { cancelledQueuedRunIds, suppressedRunningRunIds };
+  }
+
   private start(run: ManagedRun): void {
     run.status = "running";
     run.startedAt = new Date().toISOString();
@@ -216,11 +258,19 @@ export class RunManager {
       agentId: run.agentId,
       runId: run.id,
       resultMessageId: updated.id,
+      suppressFollowupRouting: run.suppressFollowupRouting,
     });
-    this.options.onRunCompleted(updated);
+    if (!run.suppressFollowupRouting) {
+      this.options.onRunCompleted(updated);
+    }
     this.startNext(run.agentId);
   }
 
+  // Design note: fail() intentionally does NOT check suppressFollowupRouting.
+  // Unlike complete(), fail() never calls onRunCompleted (error content should not
+  // be auto-routed), and run.failed events are not subscribed to by
+  // ChannelWatchService. If a future change adds routing subscribers to run.failed,
+  // add the suppressFollowupRouting check here to match complete().
   private fail(run: ManagedRun, error: string): void {
     if (run.status === "cancelled") {
       return;

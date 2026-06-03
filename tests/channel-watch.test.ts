@@ -896,6 +896,48 @@ test("hasAssignmentMarker only matches known agent IDs — @agent: reference tex
   service.dispose();
 });
 
+test("suppressed run.completed (suppressFollowupRouting=true) does NOT trigger supervisor", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", dev: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // Dev completes with no @agent: but the run is suppressed (interrupted)
+  const agentReply = messages.add({
+    kind: "agent",
+    agentId: "dev",
+    content: "Done implementing. Need review.",
+    status: "done",
+    runId: "run_suppressed",
+    runStatus: "completed",
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "dev",
+    runId: "run_suppressed",
+    resultMessageId: agentReply.id,
+    suppressFollowupRouting: true,
+  });
+
+  // Should NOT trigger supervisor because the run was suppressed
+  assert.equal(enqueueCalls.length, 0);
+
+  service.dispose();
+});
+
 test("hasAssignmentMarker matches @user: as known ID — @user: in reply suppresses trigger", async () => {
   const eventBus = new EventBus();
   const messages = new MessageStore();

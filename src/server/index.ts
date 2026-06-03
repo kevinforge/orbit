@@ -430,6 +430,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Interrupt current auto-collaboration chain
+    if (req.method === "POST" && url.pathname === "/api/conversation/interrupt") {
+      const ctx = getActiveContext();
+      if (!ctx) {
+        sendJson(res, 409, { ok: false, message: "No active conversation." });
+        return;
+      }
+      const result = ctx.interrupt();
+      sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+
     // Cancel run (queued runs only)
     if (req.method === "POST" && url.pathname.startsWith("/api/runs/") && url.pathname.endsWith("/cancel")) {
       const parts = url.pathname.split("/");

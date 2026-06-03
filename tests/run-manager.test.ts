@@ -808,3 +808,208 @@ test("run failures store a concise error instead of raw stream output", async ()
   assert.equal(lastActivity?.type, "status");
   assert.ok(lastActivity?.type === "status" && lastActivity.text.length < 2_100);
 });
+
+test("interruptCurrentChain cancels all queued runs", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const third = deferred();
+  const pending = [first, second, third];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.shift()!.promise; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const running = manager.enqueue("developer", "first", source);
+  const queuedRun = manager.enqueue("developer", "second", source);
+  const queuedRun2 = manager.enqueue("developer", "third", source);
+
+  assert.equal(running.status, "running");
+  assert.equal(queuedRun.status, "queued");
+  assert.equal(queuedRun2.status, "queued");
+
+  const result = manager.interruptCurrentChain();
+  assert.equal(result.cancelledQueuedRunIds.length, 2);
+  assert.ok(result.cancelledQueuedRunIds.includes(queuedRun.id));
+  assert.ok(result.cancelledQueuedRunIds.includes(queuedRun2.id));
+  assert.equal(result.suppressedRunningRunIds.length, 1);
+  assert.ok(result.suppressedRunningRunIds.includes(running.id));
+
+  // Queued messages should be cancelled
+  assert.equal(messages.get(queuedRun.resultMessageId)?.status, "cancelled");
+  assert.equal(messages.get(queuedRun2.resultMessageId)?.status, "cancelled");
+
+  // Running run should be marked with suppressFollowupRouting
+  assert.equal(running.suppressFollowupRouting, true);
+
+  // Complete the running run — should not crash
+  first.resolve({ content: "first done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(messages.get(running.resultMessageId)?.status, "done");
+});
+
+test("interruptCurrentChain does not suppress when no running runs", () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return { send() { return Promise.resolve({ content: "ok" }); } };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  // No runs at all
+  const result = manager.interruptCurrentChain();
+  assert.equal(result.cancelledQueuedRunIds.length, 0);
+  assert.equal(result.suppressedRunningRunIds.length, 0);
+});
+
+test("completed suppressed run does NOT call onRunCompleted but still publishes run.completed", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  let onRunCompletedCalls = 0;
+  const completedEvents: Array<{ suppressFollowupRouting?: boolean }> = [];
+
+  eventBus.subscribe((event) => {
+    const e = event as { type: string; suppressFollowupRouting?: boolean };
+    if (e.type === "run.completed") {
+      completedEvents.push({ suppressFollowupRouting: e.suppressFollowupRouting });
+    }
+  });
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return first.promise; } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() { onRunCompletedCalls++; },
+  });
+
+  const source = createSourceMessage();
+  const run = manager.enqueue("developer", "work", source);
+  assert.equal(run.status, "running");
+
+  // Interrupt — marks running run as suppressed
+  manager.interruptCurrentChain();
+  assert.equal(run.suppressFollowupRouting, true);
+
+  // Complete the running run
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // onRunCompleted should NOT be called
+  assert.equal(onRunCompletedCalls, 0, "suppressed run should not trigger onRunCompleted");
+
+  // But run.completed should still be published with suppressFollowupRouting flag
+  assert.equal(completedEvents.length, 1);
+  assert.equal(completedEvents[0]?.suppressFollowupRouting, true);
+});
+
+test("normal (non-suppressed) runs still call onRunCompleted", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  let onRunCompletedCalls = 0;
+  const completedMessages: string[] = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return first.promise; } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted(msg) {
+      onRunCompletedCalls++;
+      completedMessages.push(msg.content);
+    },
+  });
+
+  const source = createSourceMessage();
+  const run = manager.enqueue("developer", "work", source);
+  assert.equal(run.status, "running");
+  assert.equal(run.suppressFollowupRouting, undefined);
+
+  // Complete normally without interrupting
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(onRunCompletedCalls, 1, "non-suppressed run should call onRunCompleted");
+  assert.equal(completedMessages[0], "done");
+});
+
+test("enqueue sets origin based on sourceMessage kind", () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const deferreds = [deferred(), deferred(), deferred()];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return deferreds.shift()!.promise; } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const userMsg: ChatMessage = { id: "u1", kind: "user", content: "hello", createdAt: new Date().toISOString(), status: "sent" };
+  const agentMsg: ChatMessage = { id: "a1", kind: "agent", agentId: "developer", content: "result", createdAt: new Date().toISOString(), status: "done" };
+  const systemMsg: ChatMessage = { id: "s1", kind: "system", content: "trigger", createdAt: new Date().toISOString() };
+
+  const userRun = manager.enqueue("developer", "user", userMsg);
+  const agentRun = manager.enqueue("tester", "agent", agentMsg);
+  const supervisorRun = manager.enqueue("supervisor", "supervisor", systemMsg);
+
+  assert.equal(userRun.origin, "user");
+  assert.equal(agentRun.origin, "agent");
+  assert.equal(supervisorRun.origin, "supervisor");
+});
+
+test("enqueue respects explicit origin parameter over sourceMessage kind", () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return Promise.resolve({ content: "ok" }); } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const userMsg: ChatMessage = { id: "u1", kind: "user", content: "hello", createdAt: new Date().toISOString(), status: "sent" };
+
+  // Explicit origin should override the inferred one
+  const run = manager.enqueue("developer", "work", userMsg, "supervisor");
+  assert.equal(run.origin, "supervisor");
+});
