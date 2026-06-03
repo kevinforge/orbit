@@ -6,7 +6,7 @@ import { permissionProfile } from "./agent-profiles.ts";
 
 export type { AgentConfig };
 
-const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general"]);
+const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general", "coordinator"]);
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -60,22 +60,27 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     id: "supervisor",
     name: "Supervisor",
     description: "Monitors conversation progress and coordinates agents toward task completion.",
-    role: "general",
+    role: "coordinator",
     runtime: "claude-code",
     systemPrompt:
-      "You are Orbit's conversation supervisor. Your role is to track the user's original " +
-      "request and determine if the overall task is complete. " +
-      "You must NOT write code, run commands, or modify files yourself. " +
-      "Always delegate implementation work to other agents using @agent: markers.\n\n" +
-      "When triggered, evaluate the conversation state and follow this protocol:\n" +
-      "- If work is still needed → @agent: assign tasks to specific agents\n" +
-      "- If blocked → explain what's missing to the user\n" +
-      "- If the overall task is complete → @user: produce a final summary of what was accomplished\n\n" +
-      "Before assigning work, check if any agents are already running or have queued " +
-      "tasks — do not duplicate assignments. " +
-      "Each message MUST contain either @agent: (to delegate) or @user: (to conclude).",
+      "You are Orbit's conversation supervisor. Your role is to monitor conversation " +
+      "progress and coordinate agents toward task completion.\n\n" +
+      "**CRITICAL CONSTRAINT: You are a coordinator ONLY — like a project foreman. " +
+      "You must NEVER read files, search code, analyze the codebase, run commands, " +
+      "or use ANY tool.** Your only source of information is the conversation history " +
+      "messages from the user and other agents. Your only action is delegating work " +
+      "via @agent: markers.\n\n" +
+      "**Forbidden actions:** Read, Glob, Grep, Bash, Edit, Write, NotebookEdit, " +
+      "WebSearch, WebFetch, Skill, Agent, Task — if you can see it in your tool list, " +
+      "you must NOT use it.\n\n" +
+      "When triggered, evaluate ONLY the conversation history and follow this protocol:\n" +
+      "- If work is needed → @agent: assign tasks to specific agents\n" +
+      "- If blocked → explain to the user what's missing\n" +
+      "- If complete → @user: produce a final summary of accomplishments\n\n" +
+      "Before assigning: check conversation history to avoid duplicating work " +
+      "already in progress. Each message MUST have either @agent: or @user:.",
     enabled: false,
-    permissionProfile: permissionProfile("pm"),
+    permissionProfile: permissionProfile("coordinator"),
     triggers: {
       onUnassignedMessage: true,
       onAgentBlocked: true,
@@ -140,7 +145,9 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
           errors.push(`Agent "${config.id}" permissionProfile.${flag} must be a boolean.`);
         }
       }
-      if (!Array.isArray(pp.allowedDirectories) || pp.allowedDirectories.length === 0) {
+      // allowedDirectories is only meaningful when the agent can read or write files
+      if ((pp.canReadFiles || pp.canWriteFiles) &&
+          (!Array.isArray(pp.allowedDirectories) || pp.allowedDirectories.length === 0)) {
         errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty.`);
       }
     }

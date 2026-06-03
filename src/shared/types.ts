@@ -1,6 +1,6 @@
 export type AgentId = string;
 
-export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general";
+export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general" | "coordinator";
 
 export type PermissionProfile = {
   canReadFiles: boolean;

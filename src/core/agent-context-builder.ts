@@ -34,6 +34,27 @@ function renderWorkspaceConfig(config: WorkspaceRuntimeConfig): string[] {
   return lines;
 }
 
+function renderSupervisorConstraints(): string[] {
+  return [
+    "[Supervisor Constraints]",
+    "You operate under STRICT tool restrictions as a pure coordinator:",
+    "- ❌ Read — YOU CANNOT READ FILES",
+    "- ❌ Glob — YOU CANNOT SEARCH FOR FILES",
+    "- ❌ Grep — YOU CANNOT SEARCH CODE",
+    "- ❌ Bash — YOU CANNOT RUN COMMANDS",
+    "- ❌ Edit / Write — YOU CANNOT MODIFY FILES",
+    "- ❌ WebSearch / WebFetch — YOU CANNOT ACCESS EXTERNAL RESOURCES",
+    "- ✅ Your ONLY capability: reading conversation history and routing to agents",
+    "",
+    "Delegation guide:",
+    "- Need code analysis? → @architect: analyze ...",
+    "- Need implementation? → @developer: implement ...",
+    "- Need testing? → @tester: validate ...",
+    "",
+    "Violating these constraints corrupts the supervision mechanism.",
+  ];
+}
+
 export function buildAgentContext(input: AgentContextInput): string {
   const profile = input.profiles.find((agent) => agent.id === input.agentId);
   const availableAgents = input.profiles.map((agent) => {
@@ -97,6 +118,8 @@ export function buildAgentContext(input: AgentContextInput): string {
     "- Do not include terminal UI noise, hook output, API errors, or thinking/status text.",
     "- If the task is complete, provide a concise final answer and stop.",
     "",
+    // Inject supervisor constraints for coordinator agents with triggers
+    ...(profile?.role === "coordinator" ? [...renderSupervisorConstraints(), ""] : []),
     // Workspace config goes after app fixed rules, before agent role instruction
     ...(input.workspaceConfig ? renderWorkspaceConfig(input.workspaceConfig) : []),
     // Agent role instruction goes after workspace config

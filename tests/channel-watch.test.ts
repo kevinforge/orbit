@@ -192,6 +192,8 @@ test("run.completed without @agent: triggers supervisor when channel idle", asyn
   assert.equal(enqueueCalls.length, 1);
   assert.equal(enqueueCalls[0].agentId, "supervisor");
   assert.ok(enqueueCalls[0].prompt.includes("Supervisor Check"));
+  assert.ok(enqueueCalls[0].prompt.includes("you CANNOT read files"), "trigger prompt should include tool reminder");
+  assert.ok(enqueueCalls[0].prompt.includes("conversation history"), "trigger prompt should reference conversation history");
 
   service.dispose();
 });

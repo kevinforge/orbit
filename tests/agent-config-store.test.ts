@@ -354,7 +354,10 @@ test("DEFAULT_AGENT_CONFIGS include permissionProfile for each agent", () => {
     assert.equal(typeof config.permissionProfile!.canInstallDependencies, "boolean", `${config.id} canInstallDependencies`);
     assert.equal(typeof config.permissionProfile!.canGitCommit, "boolean", `${config.id} canGitCommit`);
     assert.ok(Array.isArray(config.permissionProfile!.allowedDirectories), `${config.id} allowedDirectories`);
-    assert.ok(config.permissionProfile!.allowedDirectories.length > 0, `${config.id} allowedDirectories non-empty`);
+    // coordinator agents have no file access, so empty allowedDirectories is valid
+    if (config.role !== "coordinator") {
+      assert.ok(config.permissionProfile!.allowedDirectories.length > 0, `${config.id} allowedDirectories non-empty`);
+    }
   }
 });
 
@@ -433,6 +436,48 @@ test("reset outputs configs with permissionProfile", () => {
 test("validate still permits configs without permissionProfile (backward compat)", () => {
   const configs: AgentConfig[] = [
     { id: "old", name: "Old", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("supervisor uses coordinator role with all-false permissionProfile", () => {
+  const supervisor = DEFAULT_AGENT_CONFIGS.find((c) => c.id === "supervisor");
+  assert.ok(supervisor, "supervisor should exist in defaults");
+  assert.equal(supervisor!.role, "coordinator");
+  const pp = supervisor!.permissionProfile!;
+  assert.equal(pp.canReadFiles, false, "supervisor cannot read files");
+  assert.equal(pp.canWriteFiles, false, "supervisor cannot write files");
+  assert.equal(pp.canRunCommands, false, "supervisor cannot run commands");
+  assert.equal(pp.canInstallDependencies, false, "supervisor cannot install dependencies");
+  assert.equal(pp.canGitCommit, false, "supervisor cannot git commit");
+});
+
+test("supervisor systemPrompt forbids reading files and using tools", () => {
+  const supervisor = DEFAULT_AGENT_CONFIGS.find((c) => c.id === "supervisor");
+  assert.ok(supervisor);
+  const prompt = supervisor!.systemPrompt;
+  assert.ok(prompt.includes("NEVER read files"), "should forbid reading files");
+  assert.ok(prompt.includes("NEVER"), "should use strong CANNOT language");
+  assert.ok(prompt.includes("coordinator ONLY"), "should emphasize coordinator role");
+  assert.ok(prompt.includes("conversation history"), "should reference conversation history as only source");
+});
+
+test("coordinator is a valid role accepted by validation", () => {
+  const configs: AgentConfig[] = [
+    { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
+      permissionProfile: { canReadFiles: false, canWriteFiles: false, canRunCommands: false, canInstallDependencies: false, canGitCommit: false, allowedDirectories: [] },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.deepEqual(errors, []);
+});
+
+test("coordinator permissionProfile with empty allowedDirectories is valid", () => {
+  const configs: AgentConfig[] = [
+    { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
+      permissionProfile: { canReadFiles: false, canWriteFiles: false, canRunCommands: false, canInstallDependencies: false, canGitCommit: false, allowedDirectories: [] },
+    },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);

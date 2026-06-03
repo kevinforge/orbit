@@ -227,6 +227,52 @@ test("empty workspace config does not inject markers", () => {
   assert.ok(!context.includes("Workspace rules:"));
 });
 
+test("supervisor context includes strict tool constraint block", () => {
+  const profiles = [
+    ...createDefaultAgentProfiles("D:/project"),
+    {
+      id: "supervisor",
+      name: "Supervisor",
+      description: "Coordinates agents.",
+      role: "coordinator" as const,
+      runtime: "claude-code" as const,
+      cwd: "D:/project",
+      systemPrompt: "You coordinate.",
+      permissionProfile: {
+        canReadFiles: false,
+        canWriteFiles: false,
+        canRunCommands: false,
+        canInstallDependencies: false,
+        canGitCommit: false,
+        allowedDirectories: [],
+      },
+    },
+  ];
+
+  const context = buildAgentContext({
+    agentId: "supervisor",
+    profiles,
+    agentMessage: "Evaluate the conversation state.",
+  });
+
+  assert.ok(context.includes("[Supervisor Constraints]"), "supervisor context should include constraints block");
+  assert.ok(context.includes("YOU CANNOT READ FILES"), "should explicitly forbid reading files");
+  assert.ok(context.includes("YOU CANNOT RUN COMMANDS"), "should explicitly forbid running commands");
+  assert.ok(context.includes("YOU CANNOT SEARCH CODE"), "should explicitly forbid searching code");
+  assert.ok(context.includes("Delegation guide:"), "should provide delegation guidance");
+});
+
+test("non-supervisor context does not include supervisor constraints block", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: implement feature",
+  });
+
+  assert.ok(!context.includes("[Supervisor Constraints]"), "non-coordinator agents should not see supervisor constraints");
+});
+
 test("context is still valid with workspace config (regression check)", () => {
   const profiles = createDefaultAgentProfiles("D:/project");
   const context = buildAgentContext({

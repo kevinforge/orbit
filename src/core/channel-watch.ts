@@ -161,9 +161,14 @@ function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): bo
 }
 
 function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean): string {
+  const toolReminder =
+    "Remember: you CANNOT read files or use any tools. " +
+    "Only coordinate based on messages already in the conversation history.\n\n";
+
   if (isLast) {
     return (
       `[Supervisor Check #${count}/${MAX_TRIGGERS_PER_CONVERSATION} — FINAL]\n\n` +
+      toolReminder +
       `This is your last automatic check for this conversation. ` +
       `If work was already assigned and is in progress, acknowledge it. ` +
       `If the overall task is done, conclude with @user: and a final summary. ` +
@@ -173,6 +178,7 @@ function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean)
 
   return (
     `[Supervisor Check #${count}/${MAX_TRIGGERS_PER_CONVERSATION}]\n\n` +
+    toolReminder +
     `Evaluate the current state of the conversation. ` +
     `If the overall task needs more work, assign tasks using @agent: markers. ` +
     `If all work is complete, conclude with @user: and a final summary.`
