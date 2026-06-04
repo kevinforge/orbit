@@ -450,3 +450,68 @@ test("persisted store writes each message on its own line", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("persisted store retries transient Windows shard rename failures", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const originalRenameSync = fs.renameSync;
+  let shardRenameAttempts = 0;
+  try {
+    const store = new MessageStore(filePath);
+    const msg = store.append({ kind: "agent", agentId: "dev", content: "running", status: "running" });
+
+    fs.renameSync = ((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+      if (String(newPath).endsWith(".ndjson")) {
+        shardRenameAttempts += 1;
+        if (shardRenameAttempts <= 2) {
+          const error = new Error("operation not permitted, rename") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        }
+      }
+      return originalRenameSync(oldPath, newPath);
+    }) as typeof fs.renameSync;
+
+    store.update(msg.id, { content: "done", status: "done" });
+
+    const loaded = new MessageStore(filePath);
+    assert.equal(loaded.get(msg.id)?.content, "done");
+    assert.equal(shardRenameAttempts, 3);
+  } finally {
+    fs.renameSync = originalRenameSync;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("persisted store does not crash when shard rename stays locked", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const originalRenameSync = fs.renameSync;
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  try {
+    const store = new MessageStore(filePath);
+    const msg = store.append({ kind: "agent", agentId: "dev", content: "running", status: "running" });
+
+    fs.renameSync = ((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+      if (String(newPath).endsWith(".ndjson")) {
+        const error = new Error("operation not permitted, rename") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      }
+      return originalRenameSync(oldPath, newPath);
+    }) as typeof fs.renameSync;
+    console.warn = (message?: unknown) => {
+      warnings.push(String(message));
+    };
+
+    assert.doesNotThrow(() => store.update(msg.id, { content: "done", status: "done" }));
+    assert.equal(store.get(msg.id)?.content, "done");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /failed to persist message shard/);
+  } finally {
+    fs.renameSync = originalRenameSync;
+    console.warn = originalWarn;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

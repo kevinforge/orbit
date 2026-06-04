@@ -136,7 +136,7 @@ export class ConversationContext {
     if (result.cancelledQueuedRunIds.length > 0 || result.suppressedRunningRunIds.length > 0) {
       const msg = this.messages.add({
         kind: "system",
-        content: "用户已打断当前自动协作链。已启动的智能体会继续完成当前 run，但其后续指派和 supervisor 自动触发将被忽略。你可以直接发送新的任务。",
+        content: "用户已打断当前自动协作链。已启动的数字员工会继续完成当前 run，但其后续指派和 supervisor 自动触发将被忽略。你可以直接发送新的任务。",
         status: "done",
       });
       this.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: msg });

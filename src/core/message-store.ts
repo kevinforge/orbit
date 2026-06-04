@@ -27,6 +27,8 @@ export type MessageStoreOptions = {
 
 const MANIFEST_FILE = "manifest.json";
 const DEFAULT_RECENT_SHARDS = parsePositiveIntEnv("ORBIT_MESSAGE_RECENT_SHARDS", 3);
+const FILE_REPLACE_RETRIES = 5;
+const FILE_REPLACE_RETRY_DELAY_MS = 25;
 
 export class MessageStore {
   private messages: ChatMessage[] = [];
@@ -35,6 +37,7 @@ export class MessageStore {
   private readonly filePath?: string;
   private readonly recentShardCount: number;
   private readonly now: () => Date;
+  private readonly warnedPersistenceTargets = new Set<string>();
 
   constructor(filePath?: string, options: MessageStoreOptions = {}) {
     this.filePath = filePath;
@@ -227,19 +230,25 @@ export class MessageStore {
     if (!this.filePath) return;
     const shardName = shardNameFor(message.createdAt);
     const shardPath = this.shardPath(shardName);
-    fs.mkdirSync(path.dirname(shardPath), { recursive: true });
-    const line = JSON.stringify(message) + os.EOL;
-    fs.appendFileSync(shardPath, line);
-    this.incrementShardMetadata(shardName, message, Buffer.byteLength(line));
-    this.saveManifest();
+    try {
+      fs.mkdirSync(path.dirname(shardPath), { recursive: true });
+      const line = JSON.stringify(message) + os.EOL;
+      fs.appendFileSync(shardPath, line);
+      this.clearPersistenceWarning(shardPath);
+      this.incrementShardMetadata(shardName, message, Buffer.byteLength(line));
+      this.saveManifest();
+    } catch (error) {
+      this.warnPersistenceFailure("message shard", shardPath, error);
+    }
   }
 
   private rewriteMessageShard(message: ChatMessage): void {
     if (!this.filePath) return;
     const shardName = this.findShardForMessage(message.id) ?? shardNameFor(message.createdAt);
     const messages = this.readShard(shardName).map((candidate) => (candidate.id === message.id ? message : candidate));
-    this.writeShard(shardName, sortMessages(messages));
-    this.saveManifest();
+    if (this.writeShard(shardName, sortMessages(messages))) {
+      this.saveManifest();
+    }
   }
 
   private writeAllMessages(messages: ChatMessage[]): void {
@@ -255,14 +264,22 @@ export class MessageStore {
     this.saveManifest();
   }
 
-  private writeShard(shardName: string, messages: ChatMessage[]): void {
-    if (!this.filePath) return;
+  private writeShard(shardName: string, messages: ChatMessage[]): boolean {
+    if (!this.filePath) return false;
     const shardPath = this.shardPath(shardName);
-    fs.mkdirSync(path.dirname(shardPath), { recursive: true });
-    const tmp = shardPath + ".tmp";
-    fs.writeFileSync(tmp, messages.map((message) => JSON.stringify(message)).join(os.EOL) + (messages.length ? os.EOL : ""));
-    fs.renameSync(tmp, shardPath);
-    this.upsertShardMetadata(shardName, messages);
+    try {
+      fs.mkdirSync(path.dirname(shardPath), { recursive: true });
+      const tmp = shardPath + ".tmp";
+      fs.writeFileSync(tmp, messages.map((message) => JSON.stringify(message)).join(os.EOL) + (messages.length ? os.EOL : ""));
+      if (!this.replaceFileWithRetry(tmp, shardPath, "message shard")) {
+        return false;
+      }
+      this.upsertShardMetadata(shardName, messages);
+      return true;
+    } catch (error) {
+      this.warnPersistenceFailure("message shard", shardPath, error);
+      return false;
+    }
   }
 
   private listBeforeFromShards(beforeId: string | null | undefined, limit: number): MessagePage {
@@ -422,10 +439,45 @@ export class MessageStore {
   private saveManifest(): void {
     if (!this.filePath) return;
     const manifestPath = this.manifestPath();
-    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
-    const tmp = manifestPath + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(this.manifest, null, 2) + os.EOL);
-    fs.renameSync(tmp, manifestPath);
+    try {
+      fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+      const tmp = manifestPath + ".tmp";
+      fs.writeFileSync(tmp, JSON.stringify(this.manifest, null, 2) + os.EOL);
+      this.replaceFileWithRetry(tmp, manifestPath, "message manifest");
+    } catch (error) {
+      this.warnPersistenceFailure("message manifest", manifestPath, error);
+    }
+  }
+
+  private replaceFileWithRetry(tmpPath: string, targetPath: string, kind: string): boolean {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt <= FILE_REPLACE_RETRIES; attempt += 1) {
+      try {
+        fs.renameSync(tmpPath, targetPath);
+        this.clearPersistenceWarning(targetPath);
+        return true;
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableFileLockError(error) || attempt === FILE_REPLACE_RETRIES) {
+          break;
+        }
+        sleepSync(FILE_REPLACE_RETRY_DELAY_MS);
+      }
+    }
+
+    this.warnPersistenceFailure(kind, targetPath, lastError);
+    return false;
+  }
+
+  private warnPersistenceFailure(kind: string, targetPath: string, error: unknown): void {
+    if (this.warnedPersistenceTargets.has(targetPath)) return;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[orbit] failed to persist ${kind} ${targetPath}: ${message}`);
+    this.warnedPersistenceTargets.add(targetPath);
+  }
+
+  private clearPersistenceWarning(targetPath: string): void {
+    this.warnedPersistenceTargets.delete(targetPath);
   }
 
   private shardDir(): string {
@@ -468,4 +520,13 @@ function nextIdFromMessages(messages: ChatMessage[]): number {
     }
   }
   return max + 1;
+}
+
+function isRetryableFileLockError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "EPERM" || code === "EBUSY";
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
