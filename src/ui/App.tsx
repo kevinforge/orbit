@@ -820,7 +820,7 @@ export function App() {
               onClick={loadOlderMessages}
               disabled={isLoadingOlderMessages}
             >
-              {isLoadingOlderMessages ? "Loading..." : "Load earlier messages"}
+              {isLoadingOlderMessages ? "加载中..." : "加载更早的消息"}
             </button>
           ) : null}
           {state.messages.length === 0 ? (
