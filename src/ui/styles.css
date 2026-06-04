@@ -1225,6 +1225,13 @@ button:active:not(:disabled) {
 .markdown {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.markdown > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .markdown h1,
@@ -1273,6 +1280,8 @@ button:active:not(:disabled) {
   text-decoration: none;
   border-bottom: 1px solid var(--accent-border);
   transition: all var(--transition-fast);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown a:hover {
@@ -1291,6 +1300,7 @@ button:active:not(:disabled) {
   padding: 16px 20px;
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   overflow-x: auto;
+  max-width: 100%;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.65;
@@ -1304,6 +1314,8 @@ button:active:not(:disabled) {
   border-radius: var(--radius-md);
   overflow: hidden;
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .codeBlock pre {
@@ -1376,6 +1388,7 @@ button:active:not(:disabled) {
   font-family: var(--font-mono);
   font-size: 0.88em;
   font-weight: 600;
+  word-break: break-word;
 }
 
 .markdownTableWrap {
