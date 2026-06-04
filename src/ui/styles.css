@@ -300,10 +300,10 @@ button:active:not(:disabled) {
 
 .agentButton {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
+  grid-template-columns: 10px minmax(0, 1fr) auto;
   grid-template-areas:
-    "dot text"
-    ". status";
+    "dot text actions"
+    ". status actions";
   gap: 3px 12px;
   width: 100%;
   min-height: 46px;
@@ -330,6 +330,37 @@ button:active:not(:disabled) {
   border-left-color: var(--accent);
   background: var(--bg-surface);
   box-shadow: var(--shadow-xs);
+}
+
+.agentButtonActions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+}
+
+.agentConfigIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-base), background var(--transition-base), color var(--transition-base);
+}
+
+.agentButton:hover .agentConfigIcon,
+.agentConfigIcon:focus-visible {
+  opacity: 1;
+}
+
+.agentConfigIcon:hover {
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--accent);
 }
 
 .agentRunningLabel {

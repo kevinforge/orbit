@@ -35,6 +35,7 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, Conversation[]>>({});
   const [showAgentManager, setShowAgentManager] = useState(false);
+  const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
   const [editingWorkspaceName, setEditingWorkspaceName] = useState("");
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
@@ -755,6 +756,7 @@ export function App() {
                   agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", role: "general", status: "idle" }}
                   selected={selectedAgent === agentId}
                   onClick={() => chooseAgent(agentId)}
+                  onConfig={() => { setFocusedAgentId(agentId); setShowAgentManager(true); }}
                 />
               ))
             )}
@@ -945,8 +947,9 @@ export function App() {
       ) : null}
       {showAgentManager ? (
         <AgentManagerPanel
-          onClose={() => setShowAgentManager(false)}
-          onSaved={() => { setShowAgentManager(false); window.location.reload(); }}
+          focusedAgentId={focusedAgentId}
+          onClose={() => { setShowAgentManager(false); setFocusedAgentId(null); }}
+          onSaved={() => { setShowAgentManager(false); setFocusedAgentId(null); window.location.reload(); }}
           runtimeAvailability={state.runtimeAvailability}
         />
       ) : null}
@@ -1042,7 +1045,7 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
   );
 }
 
-function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void }) {
+function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void; onConfig?: () => void }) {
   const isRunning = props.agent.status === "running" || props.agent.status === "starting";
   const isRuntimeMissing = props.agent.runtimeAvailable === false;
   return (
@@ -1061,8 +1064,25 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
         </strong>
         <small>{props.agent.id}{isRuntimeMissing ? " · unavailable" : ""}</small>
       </span>
-      <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
-        {isRuntimeMissing ? "missing" : props.agent.status}
+      <span className="agentButtonActions">
+        {props.onConfig && (
+          <span
+            className="agentConfigIcon"
+            role="button"
+            tabIndex={0}
+            title="配置此数字员工"
+            onClick={(e) => { e.stopPropagation(); props.onConfig!(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); props.onConfig!(); } }}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8" cy="8" r="2.5" />
+              <path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" />
+            </svg>
+          </span>
+        )}
+        <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
+          {isRuntimeMissing ? "missing" : props.agent.status}
+        </span>
       </span>
     </button>
   );
@@ -1410,12 +1430,13 @@ function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; h
   );
 }
 
-function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose: () => void; onSaved: () => void; runtimeAvailability: AppState["runtimeAvailability"] }) {
+function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgentId }: { onClose: () => void; onSaved: () => void; runtimeAvailability: AppState["runtimeAvailability"]; focusedAgentId?: string | null }) {
   const [configs, setConfigs] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const focusedAgentApplied = useRef(false);
 
   const availByRuntime = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -1442,6 +1463,16 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
       .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
       .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
   }, []);
+
+  // Auto-expand the focused agent once configs are loaded
+  useEffect(() => {
+    if (!focusedAgentId || loading || focusedAgentApplied.current) return;
+    const idx = (configs as AgentConfig[]).findIndex((c) => c.id === focusedAgentId);
+    if (idx >= 0) {
+      setExpandedIndex(idx);
+      focusedAgentApplied.current = true;
+    }
+  }, [focusedAgentId, loading, configs]);
 
   function updateConfig(index: number, patch: Partial<AgentConfig>) {
     setConfigs((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
