@@ -138,6 +138,7 @@ export function extractCodexCliFinalAnswer(output: string): { text: string; sess
   let taskCompleteMessage: string | undefined;
   let hasExplicitPhase = false;
   const textParts: string[] = [];
+  const agentMessageTexts: string[] = [];
 
   for (const event of parseJsonObjects(output)) {
     sessionId ??= sessionIdFromEvent(event) ?? undefined;
@@ -157,6 +158,11 @@ export function extractCodexCliFinalAnswer(output: string): { text: string; sess
     const text = textFromEvent(event);
     if (text) {
       textParts.push(text);
+
+      // Track agent_message texts separately for accurate no-phase fallback
+      if (isAgentMessageEvent(event)) {
+        agentMessageTexts.push(text);
+      }
     }
   }
 
@@ -173,7 +179,11 @@ export function extractCodexCliFinalAnswer(output: string): { text: string; sess
   // Fallback: no task_complete, no phase markers → take only the last agent_message.
   // Real Codex CLI outputs multiple agent_message events without phase fields;
   // intermediate messages are commentary, only the last one is the final answer.
-  const text = textParts.length > 0 ? textParts[textParts.length - 1] : "";
+  // Prefer the last agent_message specifically; only fall back to other text
+  // (result, top-level text) when no agent_message events exist at all.
+  const text = agentMessageTexts.length > 0
+    ? agentMessageTexts[agentMessageTexts.length - 1]
+    : (textParts.length > 0 ? textParts[textParts.length - 1] : "");
   return { text, sessionId };
 }
 
@@ -277,6 +287,17 @@ function eventHasPhase(event: unknown): boolean {
   if (!container || typeof container !== "object") return false;
   const msg = container as { phase?: unknown };
   return msg.phase !== undefined;
+}
+
+function isAgentMessageEvent(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const record = event as { item?: unknown; message?: unknown };
+
+  const container = record.item ?? record.message;
+  if (!container || typeof container !== "object") return false;
+  const msg = container as { role?: unknown; type?: unknown };
+
+  return msg.role === "assistant" || msg.type === "message" || msg.type === "agent_message";
 }
 
 function textFromEvent(event: unknown): string {

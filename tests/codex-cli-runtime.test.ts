@@ -389,3 +389,64 @@ test("single agent_message without phase returns that message", () => {
   assert.equal(result.text, "Only one message.");
   assert.equal(result.sessionId, "thread-single");
 });
+
+test("with no phase markers, prefers last agent_message over trailing result event", () => {
+  // Regression: last event is a non-agent_message (result), but there are agent_messages before it.
+  // The last agent_message should be the final answer, not the result text.
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-result-trailing" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Let me check the diff.",
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "**Final answer from agent.**",
+      },
+    }),
+    JSON.stringify({ type: "result", result: "Summary: task completed" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "**Final answer from agent.**");
+  assert.equal(result.sessionId, "thread-result-trailing");
+});
+
+test("with no phase markers, prefers last agent_message over trailing top-level text event", () => {
+  // Regression: last event has top-level text field, but agent_messages exist before it.
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-text-trailing" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Real agent answer.",
+      },
+    }),
+    JSON.stringify({ type: "info", text: "Some informational text that is not the answer" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "Real agent answer.");
+  assert.equal(result.sessionId, "thread-text-trailing");
+});
+
+test("with no phase and no agent_messages, falls back to last text part", () => {
+  // When there are truly no agent_messages, fall back to the last readable text.
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-fallback" }),
+    JSON.stringify({ type: "result", result: "Only result text available" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "Only result text available");
+  assert.equal(result.sessionId, "thread-fallback");
+});
