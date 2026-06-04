@@ -136,7 +136,8 @@ test("ignores plain non-JSON text between valid events", () => {
 
   const result = extractCodexCliFinalAnswer(output);
 
-  assert.equal(result.text, "first\nsecond");
+  // No phase markers → take only the last agent_message
+  assert.equal(result.text, "second");
 });
 
 test("handles braces inside JSON string values", () => {
@@ -188,6 +189,108 @@ test("extracts only structured final answer, ignoring tool events in same stream
   assert.equal(result.sessionId, "thread-456");
 });
 
+test("excludes commentary phase from final answer, keeps final_answer phase", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-phase" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "I will first confirm the current branch and workspace state...",
+        phase: "commentary",
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "**Review conclusion: changes are needed before merge.**",
+        phase: "final_answer",
+      },
+    }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "**Review conclusion: changes are needed before merge.**");
+  assert.equal(result.sessionId, "thread-phase");
+});
+
+test("prefers task_complete.payload.last_agent_message over event text", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-tc" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Some intermediate text that should be ignored",
+        phase: "commentary",
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Final answer from event",
+        phase: "final_answer",
+      },
+    }),
+    JSON.stringify({
+      type: "task_complete",
+      payload: {
+        last_agent_message: "Final answer from task_complete",
+      },
+    }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "Final answer from task_complete");
+  assert.equal(result.sessionId, "thread-tc");
+});
+
+test("returns empty text when only commentary events exist (no final_answer or task_complete)", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-commentary-only" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Just thinking out loud...",
+        phase: "commentary",
+      },
+    }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "");
+  assert.equal(result.sessionId, "thread-commentary-only");
+});
+
+test("task_complete without last_agent_message falls back to filtered events", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-tc-no-msg" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Final from event",
+        phase: "final_answer",
+      },
+    }),
+    JSON.stringify({
+      type: "task_complete",
+      payload: {},
+    }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "Final from event");
+  assert.equal(result.sessionId, "thread-tc-no-msg");
+});
+
 test("ignores tool output, stderr, and reconnect events when extracting final answer", () => {
   const output = [
     JSON.stringify({ type: "item.completed", item: { type: "command_execution", aggregated_output: "npm ERR! failed" } }),
@@ -199,4 +302,151 @@ test("ignores tool output, stderr, and reconnect events when extracting final an
   const result = extractCodexCliFinalAnswer(output);
 
   assert.equal(result.text, "The build failed due to a type error.");
+});
+
+test("with no phase markers, takes only the last agent_message as final answer", () => {
+  // Real Codex CLI behavior: multiple agent_message events without phase/task_complete
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-no-phase" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "I will first confirm the current branch and workspace state...",
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Let me check the diff to see what changed.",
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "**Review conclusion: code is ready for merge.**",
+      },
+    }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "**Review conclusion: code is ready for merge.**");
+  assert.equal(result.sessionId, "thread-no-phase");
+});
+
+test("with explicit phase markers, still filters commentary and keeps final_answer", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-with-phase" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Thinking out loud...",
+        phase: "commentary",
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "More reasoning...",
+        phase: "commentary",
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Here is the answer.",
+        phase: "final_answer",
+      },
+    }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "Here is the answer.");
+  assert.equal(result.sessionId, "thread-with-phase");
+});
+
+test("single agent_message without phase returns that message", () => {
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-single" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Only one message.",
+      },
+    }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "Only one message.");
+  assert.equal(result.sessionId, "thread-single");
+});
+
+test("with no phase markers, prefers last agent_message over trailing result event", () => {
+  // Regression: last event is a non-agent_message (result), but there are agent_messages before it.
+  // The last agent_message should be the final answer, not the result text.
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-result-trailing" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Let me check the diff.",
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "**Final answer from agent.**",
+      },
+    }),
+    JSON.stringify({ type: "result", result: "Summary: task completed" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "**Final answer from agent.**");
+  assert.equal(result.sessionId, "thread-result-trailing");
+});
+
+test("with no phase markers, prefers last agent_message over trailing top-level text event", () => {
+  // Regression: last event has top-level text field, but agent_messages exist before it.
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-text-trailing" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Real agent answer.",
+      },
+    }),
+    JSON.stringify({ type: "info", text: "Some informational text that is not the answer" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "Real agent answer.");
+  assert.equal(result.sessionId, "thread-text-trailing");
+});
+
+test("with no phase and no agent_messages, falls back to last text part", () => {
+  // When there are truly no agent_messages, fall back to the last readable text.
+  const output = [
+    JSON.stringify({ type: "thread.started", thread_id: "thread-fallback" }),
+    JSON.stringify({ type: "result", result: "Only result text available" }),
+  ].join("\n");
+
+  const result = extractCodexCliFinalAnswer(output);
+
+  assert.equal(result.text, "Only result text available");
+  assert.equal(result.sessionId, "thread-fallback");
 });

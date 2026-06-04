@@ -135,17 +135,56 @@ export function buildCodexCliCommand(
 
 export function extractCodexCliFinalAnswer(output: string): { text: string; sessionId?: string } {
   let sessionId: string | undefined;
+  let taskCompleteMessage: string | undefined;
+  let hasExplicitPhase = false;
   const textParts: string[] = [];
+  const agentMessageTexts: string[] = [];
 
   for (const event of parseJsonObjects(output)) {
     sessionId ??= sessionIdFromEvent(event) ?? undefined;
+
+    // Priority 1: task_complete.payload.last_agent_message
+    const taskMsg = lastAgentMessageFromTaskComplete(event);
+    if (taskMsg) {
+      taskCompleteMessage = taskMsg;
+    }
+
+    // Track whether any message has explicit phase markers
+    if (eventHasPhase(event)) {
+      hasExplicitPhase = true;
+    }
+
+    // Priority 2: only non-commentary events (final_answer or no phase)
     const text = textFromEvent(event);
     if (text) {
       textParts.push(text);
+
+      // Track agent_message texts separately for accurate no-phase fallback
+      if (isAgentMessageEvent(event)) {
+        agentMessageTexts.push(text);
+      }
     }
   }
 
-  return { text: textParts.join("\n").trim(), sessionId };
+  // Use task_complete message if available
+  if (taskCompleteMessage) {
+    return { text: taskCompleteMessage, sessionId };
+  }
+
+  // If events have explicit phase markers, use filtered text parts (commentary already excluded)
+  if (hasExplicitPhase) {
+    return { text: textParts.join("\n").trim(), sessionId };
+  }
+
+  // Fallback: no task_complete, no phase markers → take only the last agent_message.
+  // Real Codex CLI outputs multiple agent_message events without phase fields;
+  // intermediate messages are commentary, only the last one is the final answer.
+  // Prefer the last agent_message specifically; only fall back to other text
+  // (result, top-level text) when no agent_message events exist at all.
+  const text = agentMessageTexts.length > 0
+    ? agentMessageTexts[agentMessageTexts.length - 1]
+    : (textParts.length > 0 ? textParts[textParts.length - 1] : "");
+  return { text, sessionId };
 }
 
 export function extractCodexSessionId(output: string): string | null {
@@ -230,6 +269,37 @@ function sessionIdFromEvent(event: unknown): string | null {
   return null;
 }
 
+function lastAgentMessageFromTaskComplete(event: unknown): string | null {
+  if (!event || typeof event !== "object") return null;
+  const record = event as { type?: unknown; payload?: unknown };
+  if (record.type !== "task_complete" || !record.payload || typeof record.payload !== "object") return null;
+  const payload = record.payload as { last_agent_message?: unknown };
+  if (typeof payload.last_agent_message === "string" && payload.last_agent_message.trim()) {
+    return payload.last_agent_message.trim();
+  }
+  return null;
+}
+
+function eventHasPhase(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const record = event as { item?: unknown; message?: unknown };
+  const container = record.item ?? record.message;
+  if (!container || typeof container !== "object") return false;
+  const msg = container as { phase?: unknown };
+  return msg.phase !== undefined;
+}
+
+function isAgentMessageEvent(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const record = event as { item?: unknown; message?: unknown };
+
+  const container = record.item ?? record.message;
+  if (!container || typeof container !== "object") return false;
+  const msg = container as { role?: unknown; type?: unknown };
+
+  return msg.role === "assistant" || msg.type === "message" || msg.type === "agent_message";
+}
+
 function textFromEvent(event: unknown): string {
   if (!event || typeof event !== "object") {
     return "";
@@ -272,11 +342,17 @@ function textFromMessage(value: unknown): string {
   const message = value as {
     role?: unknown;
     type?: unknown;
+    phase?: unknown;
     content?: unknown;
     text?: unknown;
   };
 
   if (message.role !== "assistant" && message.type !== "message" && message.type !== "agent_message") {
+    return "";
+  }
+
+  // Skip commentary phase events — these are intermediate reasoning, not final answers
+  if (message.phase === "commentary") {
     return "";
   }
 

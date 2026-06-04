@@ -43,7 +43,7 @@ export type RunManagerOptions = {
   agents: AgentRunner;
   messages: MessageStore;
   eventBus: EventBus;
-  buildPrompt: (agentId: AgentId, prompt: string) => string;
+  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string) => string;
   onRunCompleted: (message: ChatMessage) => void;
 };
 
@@ -216,7 +216,7 @@ export class RunManager {
 
     this.appendActivity(run, "Run started.");
 
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt);
+    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, run.sourceMessage.id);
     let result: Promise<RunResult>;
     try {
       result = this.options.agents.get(run.agentId).send(run.id, runtimePrompt);
