@@ -324,6 +324,44 @@ test("persisted store tail truncation preserves multi-byte UTF-8 characters", ()
   }
 });
 
+test("dispose flushes pending buffers before closing handles", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const originalWriteSync = fs.writeSync;
+  let writeAttempts = 0;
+  const stores: TerminalTranscriptStore[] = [];
+  try {
+    // Make the first writeSync fail so data stays in pendingBuffers
+    fs.writeSync = ((...args: Parameters<typeof fs.writeSync>) => {
+      writeAttempts += 1;
+      if (writeAttempts === 1) {
+        const error = new Error("resource busy or locked") as NodeJS.ErrnoException;
+        error.code = "EBUSY";
+        throw error;
+      }
+      return originalWriteSync(...args);
+    }) as typeof fs.writeSync;
+
+    const store = new TerminalTranscriptStore(dir);
+    stores.push(store);
+    store.append("developer", "should survive dispose");
+
+    // Data is in pendingBuffers because first write failed
+    // Now call dispose — it should flush before closing
+    store.dispose();
+    // Remove from stores so cleanup doesn't double-dispose
+    stores.length = 0;
+
+    // Reload and verify data was persisted
+    fs.writeSync = originalWriteSync;
+    const loaded = new TerminalTranscriptStore(dir);
+    stores.push(loaded);
+    assert.equal(loaded.get("developer"), "should survive dispose");
+  } finally {
+    fs.writeSync = originalWriteSync;
+    cleanupTranscriptTest(dir, stores);
+  }
+});
+
 test("persisted store ignores non-log files in directory", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
   const stores: TerminalTranscriptStore[] = [];

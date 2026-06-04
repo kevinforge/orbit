@@ -387,6 +387,45 @@ test("manifest nextId is auto-corrected when lower than max existing id in shard
   }
 });
 
+test("append updates manifest metadata without re-reading shard file", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const originalReadFileSync = fs.readFileSync;
+  const ndjsonReads: string[] = [];
+  try {
+    const now = new Date("2026-03-15T12:00:00.000Z");
+    const store = new MessageStore(filePath, { now: () => now });
+
+    // Monkey-patch to track .ndjson reads during append
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      const targetPath = String(args[0]);
+      if (targetPath.endsWith(".ndjson")) {
+        ndjsonReads.push(targetPath);
+      }
+      return originalReadFileSync(...args);
+    }) as typeof fs.readFileSync;
+
+    store.append({ kind: "user", content: "first" });
+    ndjsonReads.length = 0; // reset after initial load/migration
+    store.append({ kind: "user", content: "second" });
+
+    assert.equal(ndjsonReads.length, 0, "append should not re-read .ndjson shard files");
+
+    // Read back manifest and verify metadata fields
+    const manifestPath = path.join(dir, "messages", "manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    assert.equal(manifest.shards.length, 1, "should have one shard for same-day messages");
+    const shard = manifest.shards[0];
+    assert.equal(shard.count, 2, "count should be 2");
+    assert.ok(shard.bytes > 0, "bytes should be positive");
+    assert.equal(shard.firstCreatedAt, "2026-03-15T12:00:00.000Z");
+    assert.equal(shard.lastCreatedAt, "2026-03-15T12:00:00.000Z");
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("persisted store writes each message on its own line", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
   const filePath = path.join(dir, "messages.json");
