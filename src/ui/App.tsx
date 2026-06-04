@@ -1048,41 +1048,49 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
 function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void; onConfig?: () => void }) {
   const isRunning = props.agent.status === "running" || props.agent.status === "starting";
   const isRuntimeMissing = props.agent.runtimeAvailable === false;
+  const meta = runtimeMeta(props.agent.runtime);
   return (
     <button
       className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""}`}
       onClick={props.onClick}
       type="button"
-      title={isRuntimeMissing ? `${props.agent.runtime} not found on PATH — agent cannot run` : undefined}
+      title={isRuntimeMissing ? `${meta.label} 未安装，该数字员工无法运行` : undefined}
     >
       <span className={`statusDot ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
-        <strong>
-          {props.agent.label}
-          {isRunning && <span className="agentRunningLabel">Running</span>}
-          <RuntimeBadge runtime={props.agent.runtime} />
-        </strong>
-        <small>{props.agent.id}{isRuntimeMissing ? " · unavailable" : ""}</small>
-      </span>
-      <span className="agentButtonActions">
-        {props.onConfig && (
-          <span
-            className="agentConfigIcon"
-            role="button"
-            tabIndex={0}
-            title="配置此数字员工"
-            onClick={(e) => { e.stopPropagation(); props.onConfig!(); }}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); props.onConfig!(); } }}
-          >
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="8" cy="8" r="2.5" />
-              <path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" />
-            </svg>
-          </span>
-        )}
-        <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
-          {isRuntimeMissing ? "missing" : props.agent.status}
+        <span className="agentTextRow">
+          <strong>
+            {props.agent.label}
+            {isRunning && <span className="agentRunningLabel">Running</span>}
+            <RuntimeBadge runtime={props.agent.runtime} />
+          </strong>
+          {props.onConfig && (
+            <span
+              className="agentConfigIcon"
+              role="button"
+              tabIndex={0}
+              title="编辑配置"
+              onClick={(e) => { e.stopPropagation(); props.onConfig!(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); props.onConfig!(); } }}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.5 1.5l3 3L5 14H2v-3z" />
+                <path d="M9.5 3.5l3 3" />
+              </svg>
+            </span>
+          )}
         </span>
+        <small>
+          {props.agent.id}
+          {isRuntimeMissing ? (
+            <>
+              {" · "}<a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="agentInstallLink" onClick={(e) => e.stopPropagation()}>安装 ↗</a>
+            </>
+          ) : null}
+        </small>
+      </span>
+      <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
+        {isRuntimeMissing ? "missing" : props.agent.status}
       </span>
     </button>
   );

@@ -300,17 +300,17 @@ button:active:not(:disabled) {
 
 .agentButton {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
+  grid-template-columns: 10px minmax(0, 1fr);
   grid-template-areas:
-    "dot text actions"
-    ". status actions";
-  gap: 3px 12px;
+    "dot text"
+    ". status";
+  gap: 2px 10px;
   width: 100%;
-  min-height: 46px;
+  min-height: 38px;
   border: 1px solid transparent;
   border-left: 3px solid transparent;
   border-radius: 8px;
-  padding: 9px 11px;
+  padding: 6px 11px;
   color: var(--text-secondary);
   background: transparent;
   text-align: left;
@@ -332,35 +332,41 @@ button:active:not(:disabled) {
   box-shadow: var(--shadow-xs);
 }
 
-.agentButtonActions {
-  grid-area: actions;
-  display: flex;
+.agentTextRow {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  align-self: center;
+  gap: 4px;
 }
 
 .agentConfigIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
   color: var(--text-muted);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.4;
   transition: opacity var(--transition-base), background var(--transition-base), color var(--transition-base);
 }
 
-.agentButton:hover .agentConfigIcon,
+.agentConfigIcon:hover,
 .agentConfigIcon:focus-visible {
   opacity: 1;
-}
-
-.agentConfigIcon:hover {
   background: rgba(15, 118, 110, 0.1);
   color: var(--accent);
+}
+
+.agentInstallLink {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.agentInstallLink:hover {
+  text-decoration: underline;
 }
 
 .agentRunningLabel {
