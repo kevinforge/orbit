@@ -1634,13 +1634,19 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
                                     {r}
                                     {isAvail === true ? <span className="pillCheck"> ✓</span> : isAvail === undefined ? <span className="pillUnknown"> ?</span> : null}
                                   </button>
-                                  {isMissing ? (
-                                    <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallLink" title={`安装 ${meta.label}`}>↗</a>
-                                  ) : null}
                                 </span>
                               );
                             })}
                           </div>
+                          {isRuntimeAvailable(config.runtime) === false && (() => {
+                            const meta = runtimeMeta(config.runtime);
+                            return (
+                              <div className="runtimeInstallHint">
+                                <span>⚠ 未检测到 {meta.label}，请先安装。</span>
+                                <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallBtn">查看安装指南 ↗</a>
+                              </div>
+                            );
+                          })()}
                         </div>
                         {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <SupervisorBanner maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5} hasUnassigned={config.triggers?.onUnassignedMessage === true} hasBlocked={config.triggers?.onAgentBlocked === true} /> : null}
                         <div className="fieldWithHint fieldFullWidth">
