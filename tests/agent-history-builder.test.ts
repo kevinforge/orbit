@@ -65,7 +65,7 @@ test("different agents have independent cutoff points", () => {
   assert.equal(archHistory[0].content, "req 2");
 });
 
-test("filters out system, running, and routed agent messages but keeps routed user messages", () => {
+test("filters out system and running messages but keeps routed agent messages", () => {
   const messages: ChatMessage[] = [
     msg({ kind: "user", content: "user msg" }),
     msg({ kind: "system", content: "sys msg", status: "done" }),
@@ -76,10 +76,12 @@ test("filters out system, running, and routed agent messages but keeps routed us
   ];
 
   const history = buildHistoryForAgent("developer", messages);
-  assert.equal(history.length, 3);
+  // Routed agent messages are now kept (was previously filtered)
+  assert.equal(history.length, 4);
   assert.equal(history[0].content, "user msg");
   assert.equal(history[1].content, "routed user msg");
-  assert.equal(history[2].content, "arch done");
+  assert.equal(history[2].content, "routed agent msg");
+  assert.equal(history[3].content, "arch done");
 });
 
 test("truncates total history to MAX_HISTORY_CHARS", () => {
@@ -158,6 +160,52 @@ test("long UX/review message from another agent passes through untruncated when 
   const history = buildHistoryForAgent("developer", messages);
   assert.equal(history.length, 2);
   assert.equal(history[0].content, longReview, "recent agent review should be untruncated");
+});
+
+test("excludeMessageId excludes only the specified message, keeps other routed messages", () => {
+  const sourceId = "msg-source";
+  const messages: ChatMessage[] = [
+    msg({ kind: "user", content: "user msg" }),
+    { id: sourceId, kind: "agent", agentId: "supervisor", content: "supervisor routed msg", routeState: "routed", status: "done", createdAt: new Date().toISOString() } satisfies ChatMessage,
+    msg({ kind: "agent", agentId: "architect", content: "arch routed msg", routeState: "routed", status: "done" }),
+    msg({ kind: "user", content: "next request" }),
+  ];
+
+  const history = buildHistoryForAgent("developer", messages, { excludeMessageId: sourceId });
+  // source message excluded, but other routed messages kept
+  assert.equal(history.length, 3);
+  assert.equal(history[0].content, "user msg");
+  assert.equal(history[1].content, "arch routed msg");
+  assert.equal(history[2].content, "next request");
+});
+
+test("supervisor routed messages are visible to subsequent agents when not excluded", () => {
+  const messages: ChatMessage[] = [
+    msg({ kind: "user", content: "initial request" }),
+    msg({ kind: "agent", agentId: "supervisor", content: "@architect: Please review the changes.", routeState: "routed", status: "done" }),
+    msg({ kind: "agent", agentId: "architect", content: "Review complete.", status: "done" }),
+  ];
+
+  // Developer should see supervisor's routed coordination message
+  const history = buildHistoryForAgent("developer", messages);
+  assert.equal(history.length, 3);
+  assert.equal(history[0].content, "initial request");
+  assert.equal(history[1].content, "@architect: Please review the changes.");
+  assert.equal(history[2].content, "Review complete.");
+});
+
+test("without excludeMessageId, all routed agent messages are included", () => {
+  const messages: ChatMessage[] = [
+    msg({ kind: "agent", agentId: "supervisor", content: "supervisor msg 1", routeState: "routed", status: "done" }),
+    msg({ kind: "agent", agentId: "supervisor", content: "supervisor msg 2", routeState: "routed", status: "done" }),
+    msg({ kind: "user", content: "user request" }),
+  ];
+
+  const history = buildHistoryForAgent("developer", messages);
+  assert.equal(history.length, 3);
+  assert.equal(history[0].content, "supervisor msg 1");
+  assert.equal(history[1].content, "supervisor msg 2");
+  assert.equal(history[2].content, "user request");
 });
 
 test("budget is respected: total chars do not exceed MAX_HISTORY_CHARS", () => {

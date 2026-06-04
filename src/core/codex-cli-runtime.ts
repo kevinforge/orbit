@@ -135,17 +135,28 @@ export function buildCodexCliCommand(
 
 export function extractCodexCliFinalAnswer(output: string): { text: string; sessionId?: string } {
   let sessionId: string | undefined;
+  let taskCompleteMessage: string | undefined;
   const textParts: string[] = [];
 
   for (const event of parseJsonObjects(output)) {
     sessionId ??= sessionIdFromEvent(event) ?? undefined;
+
+    // Priority 1: task_complete.payload.last_agent_message
+    const taskMsg = lastAgentMessageFromTaskComplete(event);
+    if (taskMsg) {
+      taskCompleteMessage = taskMsg;
+    }
+
+    // Priority 2: only non-commentary events (final_answer or no phase)
     const text = textFromEvent(event);
     if (text) {
       textParts.push(text);
     }
   }
 
-  return { text: textParts.join("\n").trim(), sessionId };
+  // Use task_complete message if available, otherwise fall back to filtered events
+  const text = taskCompleteMessage ?? textParts.join("\n").trim();
+  return { text, sessionId };
 }
 
 export function extractCodexSessionId(output: string): string | null {
@@ -230,6 +241,17 @@ function sessionIdFromEvent(event: unknown): string | null {
   return null;
 }
 
+function lastAgentMessageFromTaskComplete(event: unknown): string | null {
+  if (!event || typeof event !== "object") return null;
+  const record = event as { type?: unknown; payload?: unknown };
+  if (record.type !== "task_complete" || !record.payload || typeof record.payload !== "object") return null;
+  const payload = record.payload as { last_agent_message?: unknown };
+  if (typeof payload.last_agent_message === "string" && payload.last_agent_message.trim()) {
+    return payload.last_agent_message.trim();
+  }
+  return null;
+}
+
 function textFromEvent(event: unknown): string {
   if (!event || typeof event !== "object") {
     return "";
@@ -272,11 +294,17 @@ function textFromMessage(value: unknown): string {
   const message = value as {
     role?: unknown;
     type?: unknown;
+    phase?: unknown;
     content?: unknown;
     text?: unknown;
   };
 
   if (message.role !== "assistant" && message.type !== "message" && message.type !== "agent_message") {
+    return "";
+  }
+
+  // Skip commentary phase events — these are intermediate reasoning, not final answers
+  if (message.phase === "commentary") {
     return "";
   }
 

@@ -7,7 +7,12 @@ const OLDER_ENTRY_MAX_CHARS = 500;
 
 export { MAX_HISTORY_CHARS, OLDER_ENTRY_MAX_CHARS, RECENT_UNTRUNCATED_COUNT };
 
-export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[]): AgentHistoryEntry[] {
+export type BuildHistoryOptions = {
+  /** Exclude this specific message (typically the current run's source message) */
+  excludeMessageId?: string;
+};
+
+export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[], options?: BuildHistoryOptions): AgentHistoryEntry[] {
   let cutoffIndex = -1;
   for (let i = allMessages.length - 1; i >= 0; i--) {
     const msg = allMessages[i];
@@ -23,7 +28,9 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
     const msg = allMessages[i];
     if (msg.kind === "system") continue;
     if (msg.status === "running") continue;
-    if (msg.kind === "agent" && msg.routeState === "routed") continue;
+    // Exclude only the specific source message (already injected as <current-task>),
+    // rather than all routed agent messages which may contain valuable context.
+    if (options?.excludeMessageId && msg.id === options.excludeMessageId) continue;
     eligible.push(msg);
   }
 
