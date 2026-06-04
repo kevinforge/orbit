@@ -136,6 +136,7 @@ export function buildCodexCliCommand(
 export function extractCodexCliFinalAnswer(output: string): { text: string; sessionId?: string } {
   let sessionId: string | undefined;
   let taskCompleteMessage: string | undefined;
+  let hasExplicitPhase = false;
   const textParts: string[] = [];
 
   for (const event of parseJsonObjects(output)) {
@@ -147,6 +148,11 @@ export function extractCodexCliFinalAnswer(output: string): { text: string; sess
       taskCompleteMessage = taskMsg;
     }
 
+    // Track whether any message has explicit phase markers
+    if (eventHasPhase(event)) {
+      hasExplicitPhase = true;
+    }
+
     // Priority 2: only non-commentary events (final_answer or no phase)
     const text = textFromEvent(event);
     if (text) {
@@ -154,8 +160,20 @@ export function extractCodexCliFinalAnswer(output: string): { text: string; sess
     }
   }
 
-  // Use task_complete message if available, otherwise fall back to filtered events
-  const text = taskCompleteMessage ?? textParts.join("\n").trim();
+  // Use task_complete message if available
+  if (taskCompleteMessage) {
+    return { text: taskCompleteMessage, sessionId };
+  }
+
+  // If events have explicit phase markers, use filtered text parts (commentary already excluded)
+  if (hasExplicitPhase) {
+    return { text: textParts.join("\n").trim(), sessionId };
+  }
+
+  // Fallback: no task_complete, no phase markers → take only the last agent_message.
+  // Real Codex CLI outputs multiple agent_message events without phase fields;
+  // intermediate messages are commentary, only the last one is the final answer.
+  const text = textParts.length > 0 ? textParts[textParts.length - 1] : "";
   return { text, sessionId };
 }
 
@@ -250,6 +268,15 @@ function lastAgentMessageFromTaskComplete(event: unknown): string | null {
     return payload.last_agent_message.trim();
   }
   return null;
+}
+
+function eventHasPhase(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const record = event as { item?: unknown; message?: unknown };
+  const container = record.item ?? record.message;
+  if (!container || typeof container !== "object") return false;
+  const msg = container as { phase?: unknown };
+  return msg.phase !== undefined;
 }
 
 function textFromEvent(event: unknown): string {
