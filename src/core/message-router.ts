@@ -42,6 +42,8 @@ export class MessageRouter {
           if (!this.options.hasActiveSupervisor) {
             this.options.createSystemMessage(result.message);
           }
+          // With supervisor active, ChannelWatchService handles triggering via relaxIdleCheck;
+          // the supervisor's agent message card provides queue/run status feedback.
         }
         this.options.markMessageRouted(message.id, "ignored");
         break;

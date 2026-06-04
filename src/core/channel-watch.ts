@@ -97,7 +97,7 @@ export class ChannelWatchService {
       for (const ctx of this.triggerContexts.values()) {
         ctx.triggerCount = 0;
         if (!hasAssignment && ctx.triggers.onUnassignedMessage) {
-          this.tryTrigger(ctx, message);
+          this.tryTrigger(ctx, message, { relaxIdleCheck: true });
         }
       }
     }
@@ -128,16 +128,26 @@ export class ChannelWatchService {
     }
   }
 
-  private tryTrigger(ctx: TriggerContext, sourceMessage: ChatMessage): void {
+  private tryTrigger(ctx: TriggerContext, sourceMessage: ChatMessage, options?: { relaxIdleCheck?: boolean }): void {
     // Honour the same route-depth limit as MessageRouter
     const nextDepth = (sourceMessage.routeDepth ?? 0) + 1;
     if (nextDepth > MAX_ROUTE_DEPTH) return;
 
-    if (!this.isChannelTrulyIdle(ctx.agentId)) return;
+    if (!options?.relaxIdleCheck) {
+      if (!this.isChannelTrulyIdle(ctx.agentId)) return;
+    }
 
     if (!this.agentRegistry.has(ctx.agentId)) return;
     const supervisorSession = this.agentRegistry.get(ctx.agentId);
-    if (supervisorSession.getStatus() !== "idle") return;
+
+    if (options?.relaxIdleCheck) {
+      // User-originated: allow queuing even when busy, only skip unrecoverable states
+      const status = supervisorSession.getStatus();
+      if (status === "error" || status === "stopped") return;
+    } else {
+      // Agent-completion triggered: supervisor must be idle
+      if (supervisorSession.getStatus() !== "idle") return;
+    }
 
     const now = Date.now();
     if (now - ctx.lastEnqueueTime < ctx.debounceMs) return;
