@@ -117,6 +117,15 @@ export type RunningSummary = {
   runningAgentIds: AgentId[];
 };
 
+export type MessageHistoryState = {
+  hasOlderMessages: boolean;
+  olderCursor: string | null;
+};
+
+export type MessagePage = MessageHistoryState & {
+  messages: ChatMessage[];
+};
+
 export type RuntimeEvent =
   | { type: "message.created"; conversationId: string; message: ChatMessage }
   | { type: "message.updated"; conversationId: string; message: ChatMessage }
@@ -182,6 +191,7 @@ export type AppState = {
   workspace: WorkspaceInfo;
   conversation: ConversationInfo;
   messages: ChatMessage[];
+  messageHistory: MessageHistoryState;
   agents: AgentState[];
   terminal: TerminalState;
   runningSummaries: RunningSummary[];

@@ -105,6 +105,22 @@ Agent 可以通过智能体区域的 `+` 按钮配置，也可以直接编辑配
 - `GET /api/workspace-config` — 获取当前工作区的配置
 - `PUT /api/workspace-config` — 更新工作区配置（验证字段类型）
 
+### Storage and Retention
+
+Messages are persisted under `~/.orbit/conversations/<workspace-id>/<conversation-id>/messages/` as daily NDJSON shards plus `manifest.json`. Existing `messages.json` files are migrated automatically when a conversation is opened.
+
+Terminal transcripts are persisted under `~/.orbit/transcripts/<workspace-id>/<conversation-id>/<agent-id>/` as rolling log segments.
+
+The server returns recent messages in `GET /api/state`; older messages can be loaded with `GET /api/messages?before=<message-id>&limit=50`.
+
+Optional environment variables:
+
+- `ORBIT_MESSAGE_RECENT_SHARDS`
+- `ORBIT_HISTORY_RETAIN_DAYS`
+- `ORBIT_TRANSCRIPT_RETAIN_DAYS`
+- `ORBIT_TRANSCRIPT_MAX_BYTES`
+- `ORBIT_TRANSCRIPT_TAIL_BYTES`
+
 Windows PowerShell 下可以用下面的命令重启本地服务，并先释放默认端口：
 
 ```powershell

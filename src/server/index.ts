@@ -16,7 +16,8 @@ import { EventBus } from "../core/event-bus.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
-import type { ConversationInfo, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import { cleanupHistory } from "../core/history-retention.ts";
+import type { ConversationInfo, MessagePage, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
@@ -397,6 +398,7 @@ function currentAgentStates() {
 // --- Initialize ---
 migrateChannelLayer();
 initActiveContext();
+runHistoryCleanup();
 
 // --- HTTP Server (created before probe to avoid blocking setup) ---
 const server = http.createServer(async (req, res) => {
@@ -417,6 +419,7 @@ const server = http.createServer(async (req, res) => {
         conversation: activeConversation,
         agents: currentAgentStates(),
         messages: ctx?.messages.list() ?? [],
+        messageHistory: ctx?.messages.historyState() ?? emptyMessageHistory(),
         terminal: ctx?.transcripts.all() ?? {},
         runningSummaries: buildRunningSummaries(),
         runtimeAvailability: getRuntimeAvailabilityArray(),
@@ -425,6 +428,18 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Messages
+    if (req.method === "GET" && url.pathname === "/api/messages") {
+      const ctx = getActiveContext();
+      if (!ctx) {
+        sendJson(res, 200, emptyMessagePage());
+        return;
+      }
+      const before = url.searchParams.get("before");
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      sendJson(res, 200, ctx.messages.listBefore(before, Number.isFinite(limit) ? limit : 50));
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/messages") {
       await handlePostMessage(req, res);
       return;
@@ -863,6 +878,27 @@ function readJson(req: http.IncomingMessage): Promise<unknown> {
 function sendJson(res: http.ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(value));
+}
+
+function emptyMessageHistory() {
+  return { hasOlderMessages: false, olderCursor: null };
+}
+
+function emptyMessagePage(): MessagePage {
+  return { messages: [], hasOlderMessages: false, olderCursor: null };
+}
+
+function runHistoryCleanup(): void {
+  try {
+    cleanupHistory({
+      activeConversations: activeWorkspaceId && activeConversationId
+        ? [{ workspaceId: activeWorkspaceId, conversationId: activeConversationId }]
+        : [],
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[orbit] history cleanup skipped: ${message}`);
+  }
 }
 
 function conversationTitle(content: string): string {

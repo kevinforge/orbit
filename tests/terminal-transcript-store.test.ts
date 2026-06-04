@@ -57,6 +57,92 @@ test("persisted store round-trips transcripts to directory", () => {
   }
 });
 
+test("persisted store rolls transcript segments by size", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const stores: TerminalTranscriptStore[] = [];
+  try {
+    const store = new TerminalTranscriptStore(dir, { maxSegmentBytes: 8, now: () => new Date("2026-01-02T10:00:00.000Z") });
+    stores.push(store);
+
+    store.append("developer", "1234");
+    store.append("developer", "5678");
+    store.append("developer", "90");
+
+    const agentDir = path.join(dir, "developer");
+    const segments = fs.readdirSync(agentDir).filter((entry) => entry.endsWith(".log")).sort();
+    assert.deepEqual(segments, ["2026-01-02-0001.log", "2026-01-02-0002.log"]);
+    assert.equal(fs.readFileSync(path.join(agentDir, segments[0]), "utf8"), "12345678");
+    assert.equal(fs.readFileSync(path.join(agentDir, segments[1]), "utf8"), "90");
+  } finally {
+    cleanupTranscriptTest(dir, stores);
+  }
+});
+
+test("persisted store loads only recent transcript tail", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const stores: TerminalTranscriptStore[] = [];
+  try {
+    const agentDir = path.join(dir, "developer");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "2026-01-01-0001.log"), "older ");
+    fs.writeFileSync(path.join(agentDir, "2026-01-01-0002.log"), "recent-tail");
+
+    const store = new TerminalTranscriptStore(dir, { tailBytes: 6 });
+    stores.push(store);
+
+    assert.equal(store.get("developer"), "t-tail");
+  } finally {
+    cleanupTranscriptTest(dir, stores);
+  }
+});
+
+test("persisted store merges legacy root logs with segmented transcript tail", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const originalReadDirSync = fs.readdirSync;
+  const stores: TerminalTranscriptStore[] = [];
+  try {
+    const agentDir = path.join(dir, "developer");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "developer.log"), "legacy ");
+    fs.writeFileSync(path.join(agentDir, "2026-01-01-0001.log"), "segment");
+    fs.readdirSync = ((target: fs.PathLike) => {
+      if (String(target) === dir) {
+        return ["developer.log", "developer"] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return originalReadDirSync(target);
+    }) as typeof fs.readdirSync;
+
+    const store = new TerminalTranscriptStore(dir);
+    stores.push(store);
+
+    assert.equal(store.get("developer"), "legacy segment");
+  } finally {
+    fs.readdirSync = originalReadDirSync;
+    cleanupTranscriptTest(dir, stores);
+  }
+});
+
+test("persisted store splits a single oversized transcript chunk across segments", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const stores: TerminalTranscriptStore[] = [];
+  try {
+    const store = new TerminalTranscriptStore(dir, { maxSegmentBytes: 5, now: () => new Date("2026-01-02T10:00:00.000Z") });
+    stores.push(store);
+
+    store.append("developer", "abcdefghijkl");
+
+    const agentDir = path.join(dir, "developer");
+    const segments = fs.readdirSync(agentDir).filter((entry) => entry.endsWith(".log")).sort();
+    assert.deepEqual(segments, ["2026-01-02-0001.log", "2026-01-02-0002.log", "2026-01-02-0003.log"]);
+    assert.deepEqual(
+      segments.map((segment) => fs.readFileSync(path.join(agentDir, segment), "utf8")),
+      ["abcde", "fghij", "kl"],
+    );
+  } finally {
+    cleanupTranscriptTest(dir, stores);
+  }
+});
+
 test("persisted store appends to existing transcripts", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
   const stores: TerminalTranscriptStore[] = [];
@@ -165,6 +251,7 @@ test("persisted store keeps an append handle open for realtime log viewing", () 
     assert.equal(store.get("ux"), "first second");
     assert.equal(openCount, 1);
 
+    fs.openSync = originalOpenSync;
     const loaded = new TerminalTranscriptStore(dir);
     stores.push(loaded);
     assert.equal(loaded.get("ux"), "first second");
@@ -208,6 +295,69 @@ test("different directories keep transcripts isolated", () => {
     assert.equal(loadedA.get("developer"), "workspace A");
     assert.equal(loadedB.get("developer"), "workspace B");
   } finally {
+    cleanupTranscriptTest(dir, stores);
+  }
+});
+
+test("persisted store tail truncation preserves multi-byte UTF-8 characters", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const stores: TerminalTranscriptStore[] = [];
+  try {
+    // "你好世界" is 12 bytes in UTF-8 (3 bytes per char × 4 chars)
+    const content = "abc你好世界";
+    const agentDir = path.join(dir, "developer");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "2026-01-01-0001.log"), content);
+
+    // tailBytes = 9 should split in the middle of "你好" (each 3 bytes)
+    // but must not produce a replacement character
+    const store = new TerminalTranscriptStore(dir, { tailBytes: 9 });
+    stores.push(store);
+
+    const result = store.get("developer");
+    // Should NOT contain replacement character � (U+FFFD)
+    assert.ok(!result.includes("�"), `tail should not contain replacement character, got: ${JSON.stringify(result)}`);
+    // Should be a valid suffix of the original
+    assert.ok(content.endsWith(result), `tail "${result}" should be a suffix of "${content}"`);
+  } finally {
+    cleanupTranscriptTest(dir, stores);
+  }
+});
+
+test("dispose flushes pending buffers before closing handles", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-transcript-test-"));
+  const originalWriteSync = fs.writeSync;
+  let writeAttempts = 0;
+  const stores: TerminalTranscriptStore[] = [];
+  try {
+    // Make the first writeSync fail so data stays in pendingBuffers
+    fs.writeSync = ((...args: Parameters<typeof fs.writeSync>) => {
+      writeAttempts += 1;
+      if (writeAttempts === 1) {
+        const error = new Error("resource busy or locked") as NodeJS.ErrnoException;
+        error.code = "EBUSY";
+        throw error;
+      }
+      return originalWriteSync(...args);
+    }) as typeof fs.writeSync;
+
+    const store = new TerminalTranscriptStore(dir);
+    stores.push(store);
+    store.append("developer", "should survive dispose");
+
+    // Data is in pendingBuffers because first write failed
+    // Now call dispose — it should flush before closing
+    store.dispose();
+    // Remove from stores so cleanup doesn't double-dispose
+    stores.length = 0;
+
+    // Reload and verify data was persisted
+    fs.writeSync = originalWriteSync;
+    const loaded = new TerminalTranscriptStore(dir);
+    stores.push(loaded);
+    assert.equal(loaded.get("developer"), "should survive dispose");
+  } finally {
+    fs.writeSync = originalWriteSync;
     cleanupTranscriptTest(dir, stores);
   }
 });
