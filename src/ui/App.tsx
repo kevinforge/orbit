@@ -1522,7 +1522,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
           <div className="settingsBody">
             <div className="agentManagerIntro">
               <strong>默认数字员工模板</strong>
-              <span>五个内置模板默认不启用。Product Manager、Architect、Developer、Tester 负责规划与实现，Supervisor 负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
+              <span>五个内置模板默认不启用。产品经理、架构师、开发、测试 负责规划与实现，监督员 负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
             </div>
             <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义数字员工</button>
             {configs.map((config, i) => {
@@ -1558,7 +1558,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                         </div>
                         <div className="fieldWithHint">
                           <input placeholder="显示标签（可选）" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
-                          <span className="fieldHint" title="侧边栏显示的标签，为空则使用 Name 字段。">?</span>
+                          <span className="fieldHint" title="侧边栏显示的标签，为空则使用名称字段。">?</span>
                         </div>
                         <div className="fieldWithHint">
                           <input placeholder="描述" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
@@ -1648,7 +1648,7 @@ function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked }: { maxTrigg
           <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他数字员工的消息被路由拒绝时，介入兜底处理</li>
         ) : null}
       </ul>
-      <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭 enabled 开关可暂停监督。</p>
+      <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭启用开关可暂停监督。</p>
     </div>
   );
 }
