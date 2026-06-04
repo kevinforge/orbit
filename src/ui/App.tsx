@@ -737,16 +737,16 @@ export function App() {
           </div>
         </section>
 
-        <section className="navSection compactAgents" aria-label="智能体">
+        <section className="navSection compactAgents" aria-label="数字员工">
           <div className="navSectionHeader">
-            <span><NavIcon kind="agents" />智能体</span>
-            <button type="button" onClick={() => setShowAgentManager(true)} disabled={!hasWorkspace} title="添加或启用智能体">+</button>
+            <span><NavIcon kind="agents" />数字员工</span>
+            <button type="button" onClick={() => setShowAgentManager(true)} disabled={!hasWorkspace} title="添加或启用数字员工">+</button>
           </div>
-          <nav className="agentList" aria-label="选择智能体">
+          <nav className="agentList" aria-label="选择数字员工">
             {agentIds.length === 0 ? (
               <div className="emptyAgentsHint">
-                <strong>还没有启用智能体</strong>
-                <span>点击右上角 +，启用默认模板或添加自定义智能体。</span>
+                <strong>还没有启用数字员工</strong>
+                <span>点击右上角 +，启用默认模板或添加自定义数字员工。</span>
               </div>
             ) : (
               agentIds.map((agentId) => (
@@ -839,7 +839,7 @@ export function App() {
               <ol className="emptySteps">
                 {hasWorkspace ? (
                   <>
-                    <li><strong>1</strong> 启用或添加智能体</li>
+                    <li><strong>1</strong> 启用或添加数字员工</li>
                     <li><strong>2</strong> 使用 <code>@agent:</code> 输入任务</li>
                     <li><strong>3</strong> 首句话会成为会话名称</li>
                   </>
@@ -905,7 +905,7 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @agent: 指派具体智能体" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用智能体"}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @agent: 指派具体数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -926,7 +926,7 @@ export function App() {
                 className="interruptBtn"
                 onClick={interruptChain}
                 disabled={isInterrupting}
-                title="打断当前自动协作链，已启动的智能体会继续完成当前任务但其后续指派将被忽略"
+                title="打断当前自动协作链，已启动的数字员工会继续完成当前任务但其后续指派将被忽略"
               >
                 {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
               </button>
@@ -1231,11 +1231,11 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
 const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
 const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
 const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
-  { key: "canReadFiles", label: "读取文件", hint: "允许智能体读取工作区中的文件内容。" },
-  { key: "canWriteFiles", label: "写入文件", hint: "允许智能体创建、修改或删除工作区中的文件。" },
-  { key: "canRunCommands", label: "运行命令", hint: "允许智能体执行终端命令（如构建、测试等）。" },
-  { key: "canInstallDependencies", label: "安装依赖", hint: "允许智能体安装项目依赖包（如 npm install）。" },
-  { key: "canGitCommit", label: "Git 提交", hint: "允许智能体执行 git commit 和 git push 操作。" },
+  { key: "canReadFiles", label: "读取文件", hint: "允许数字员工读取工作区中的文件内容。" },
+  { key: "canWriteFiles", label: "写入文件", hint: "允许数字员工创建、修改或删除工作区中的文件。" },
+  { key: "canRunCommands", label: "运行命令", hint: "允许数字员工执行终端命令（如构建、测试等）。" },
+  { key: "canInstallDependencies", label: "安装依赖", hint: "允许数字员工安装项目依赖包（如 npm install）。" },
+  { key: "canGitCommit", label: "Git 提交", hint: "允许数字员工执行 git commit 和 git push 操作。" },
 ];
 
 function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange: (pp: PermissionProfile) => void }) {
@@ -1261,7 +1261,7 @@ function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange:
               value={pp.allowedDirectories.join(", ")}
               onChange={(e) => onChange({ ...pp, allowedDirectories: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
             />
-            <span className="fieldHint" title="限制智能体只能访问指定目录。留空表示允许访问整个工作区。多个目录用逗号分隔。">?</span>
+            <span className="fieldHint" title="限制数字员工只能访问指定目录。留空表示允许访问整个工作区。多个目录用逗号分隔。">?</span>
           </div>
         </div>
       ) : null}
@@ -1440,7 +1440,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
     fetch("/api/agents")
       .then((r) => r.json())
       .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
-      .catch(() => { setError("加载智能体配置失败。"); setLoading(false); });
+      .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
   }, []);
 
   function updateConfig(index: number, patch: Partial<AgentConfig>) {
@@ -1515,16 +1515,16 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader">
-          <h2>智能体</h2>
+          <h2>数字员工</h2>
           <button type="button" onClick={onClose}>&times;</button>
         </div>
         {loading ? <p className="settingsLoading">加载中...</p> : (
           <div className="settingsBody">
             <div className="agentManagerIntro">
-              <strong>默认智能体模板</strong>
-              <span>五个内置模板默认不启用。Product Manager、Architect、Developer、Tester 负责规划与实现，Supervisor 负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的智能体。</span>
+              <strong>默认数字员工模板</strong>
+              <span>五个内置模板默认不启用。Product Manager、Architect、Developer、Tester 负责规划与实现，Supervisor 负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
             </div>
-            <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义智能体</button>
+            <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义数字员工</button>
             {configs.map((config, i) => {
               const isExpanded = expandedIndex === i;
               return (
@@ -1549,23 +1549,23 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                     <div className="configCardBody">
                       <div className="configFields">
                         <div className="fieldWithHint">
-                          <input placeholder="ID" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
-                          <span className="fieldHint" title="智能体的唯一标识符，用于 @mention 语法（如 @developer:）。只能用小写字母，不能有空格。">?</span>
+                          <input placeholder="标识符" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
+                          <span className="fieldHint" title="数字员工的唯一标识符，用于 @mention 语法（如 @developer:）。只能用小写字母，不能有空格。">?</span>
                         </div>
                         <div className="fieldWithHint">
-                          <input placeholder="Name" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
+                          <input placeholder="名称" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
                           <span className="fieldHint" title="显示在侧边栏和消息头中的可读名称。">?</span>
                         </div>
                         <div className="fieldWithHint">
-                          <input placeholder="Display label (optional)" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
+                          <input placeholder="显示标签（可选）" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
                           <span className="fieldHint" title="侧边栏显示的标签，为空则使用 Name 字段。">?</span>
                         </div>
                         <div className="fieldWithHint">
-                          <input placeholder="Description" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
-                          <span className="fieldHint" title="智能体能力的简短描述。其他智能体发现可协作成员时会看到此内容。">?</span>
+                          <input placeholder="描述" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
+                          <span className="fieldHint" title="数字员工能力的简短描述。其他数字员工发现可协作成员时会看到此内容。">?</span>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">Role <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
+                          <span className="pillLabel">角色 <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
                           <div className="pillOptions">
                             {ROLES.map((r) => (
                               <button
@@ -1583,7 +1583,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                           </div>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">Runtime <span className="fieldHint" title="驱动该智能体的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
+                          <span className="pillLabel">运行时 <span className="fieldHint" title="驱动该数字员工的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
                           <div className="pillOptions">
                             {RUNTIMES.map((r) => {
                               const isAvail = isRuntimeAvailable(r);
@@ -1613,8 +1613,8 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                         </div>
                         {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <SupervisorBanner maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5} hasUnassigned={config.triggers?.onUnassignedMessage === true} hasBlocked={config.triggers?.onAgentBlocked === true} /> : null}
                         <div className="fieldWithHint fieldFullWidth">
-                          <textarea placeholder="System prompt" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
-                          <span className="fieldHint fieldHintTop" title="每次运行时发送给智能体的指令。定义其角色、专业能力和行为约束。">?</span>
+                          <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
+                          <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
                         </div>
                         <PermissionEditor config={config} onChange={(pp) => updateConfig(i, { permissionProfile: pp })} />
                       </div>
@@ -1639,13 +1639,13 @@ function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked }: { maxTrigg
   return (
     <div className="supervisorBanner">
       <p><span aria-hidden="true">🔍</span> <strong>会话监督已启用</strong></p>
-      <p>此智能体会在以下情况自动介入：</p>
+      <p>此数字员工会在以下情况自动介入：</p>
       <ul>
         {hasUnassigned ? (
           <li><span aria-hidden="true">⚡</span> <strong>消息未分配</strong> — 消息中没有 @agent: 标记时，自动分析需求并分配任务</li>
         ) : null}
         {hasBlocked ? (
-          <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他智能体的消息被路由拒绝时，介入兜底处理</li>
+          <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他数字员工的消息被路由拒绝时，介入兜底处理</li>
         ) : null}
       </ul>
       <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭 enabled 开关可暂停监督。</p>
