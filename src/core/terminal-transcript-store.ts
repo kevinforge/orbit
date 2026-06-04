@@ -63,6 +63,9 @@ export class TerminalTranscriptStore {
   }
 
   dispose(): void {
+    for (const agentId of this.pendingBuffers.keys()) {
+      this.flushAgent(agentId);
+    }
     for (const timer of this.retryTimers.values()) {
       clearTimeout(timer);
     }

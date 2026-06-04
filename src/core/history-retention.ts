@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { MessageManifest } from "./message-store.ts";
 
 export type ActiveConversationRef = {
   workspaceId: string;
@@ -18,12 +19,6 @@ export type HistoryRetentionOptions = {
 export type HistoryRetentionResult = {
   deletedMessageShards: number;
   deletedTranscriptSegments: number;
-};
-
-type MessageManifest = {
-  version: 1;
-  nextId: number;
-  shards: Array<{ name: string; firstCreatedAt: string; lastCreatedAt: string; count: number; bytes: number }>;
 };
 
 const DEFAULT_MESSAGE_RETAIN_DAYS = parsePositiveIntEnv("ORBIT_HISTORY_RETAIN_DAYS", 90);

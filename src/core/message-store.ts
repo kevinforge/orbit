@@ -6,7 +6,7 @@ import { parsePositiveIntEnv } from "./history-retention.ts";
 
 type PersistedData = { messages: ChatMessage[]; nextId: number };
 
-type MessageShard = {
+export type MessageShard = {
   name: string;
   firstCreatedAt: string;
   lastCreatedAt: string;
@@ -14,7 +14,7 @@ type MessageShard = {
   bytes: number;
 };
 
-type MessageManifest = {
+export type MessageManifest = {
   version: 1;
   nextId: number;
   shards: MessageShard[];
@@ -228,8 +228,9 @@ export class MessageStore {
     const shardName = shardNameFor(message.createdAt);
     const shardPath = this.shardPath(shardName);
     fs.mkdirSync(path.dirname(shardPath), { recursive: true });
-    fs.appendFileSync(shardPath, JSON.stringify(message) + os.EOL);
-    this.upsertShardMetadata(shardName, this.readShard(shardName));
+    const line = JSON.stringify(message) + os.EOL;
+    fs.appendFileSync(shardPath, line);
+    this.incrementShardMetadata(shardName, message, Buffer.byteLength(line));
     this.saveManifest();
   }
 
@@ -356,6 +357,25 @@ export class MessageStore {
       }
     }
     return null;
+  }
+
+  private incrementShardMetadata(shardName: string, message: ChatMessage, lineBytes: number): void {
+    const existing = this.manifest.shards.find((s) => s.name === shardName);
+    if (existing) {
+      if (message.createdAt < existing.firstCreatedAt) existing.firstCreatedAt = message.createdAt;
+      if (message.createdAt > existing.lastCreatedAt) existing.lastCreatedAt = message.createdAt;
+      existing.count += 1;
+      existing.bytes += lineBytes;
+    } else {
+      this.manifest.shards = sortShards([...this.manifest.shards, {
+        name: shardName,
+        firstCreatedAt: message.createdAt,
+        lastCreatedAt: message.createdAt,
+        count: 1,
+        bytes: lineBytes,
+      }]);
+    }
+    this.manifest.nextId = Math.max(this.manifest.nextId, this.nextId);
   }
 
   private upsertShardMetadata(shardName: string, messages: ChatMessage[]): void {
