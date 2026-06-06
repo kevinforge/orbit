@@ -526,6 +526,31 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // GET draft attachments for preview in composer
+    if (req.method === "GET" && url.pathname.startsWith("/api/attachments/drafts/")) {
+      const parts = url.pathname.split("/");
+      // /api/attachments/drafts/:workspaceId/:conversationId/:id
+      const wsId = parts[4];
+      const convId = parts[5];
+      const draftId = parts[6];
+      if (!wsId || !convId || !draftId) {
+        sendJson(res, 400, { ok: false, message: "Missing draft parameters." });
+        return;
+      }
+      const draft = await attachmentStore.getDraft(wsId, convId, draftId);
+      if (!draft) {
+        sendJson(res, 404, { ok: false, message: "Draft not found." });
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": draft.mimeType,
+        "Content-Disposition": `inline; filename="${draft.filename}"`,
+        "Cache-Control": "private, max-age=86400",
+      });
+      res.end(draft.data);
+      return;
+    }
+
     if (req.method === "GET" && url.pathname.startsWith("/api/attachments/")) {
       const parts = url.pathname.split("/");
       // /api/attachments/:workspaceId/:conversationId/:id

@@ -65,6 +65,31 @@ export class AttachmentStore {
     return true;
   }
 
+  async getDraft(
+    workspaceId: string,
+    conversationId: string,
+    draftId: string,
+  ): Promise<{ data: Buffer; mimeType: string; filename: string } | null> {
+    AttachmentStore.validateId(draftId);
+    const draftBase = this.safePath("tmp", "attachments", workspaceId, conversationId, draftId);
+    if (!fs.existsSync(draftBase)) return null;
+
+    // Find the file with matching id in the draft directory
+    for (const ext of KNOWN_EXTENSIONS) {
+      const candidate = path.join(draftBase, `${draftId}.${ext}`);
+      if (fs.existsSync(candidate)) {
+        const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        return {
+          data: fs.readFileSync(candidate),
+          mimeType,
+          filename: `${draftId}.${ext}`,
+        };
+      }
+    }
+
+    return null;
+  }
+
   // --- Permanent attachment operations ---
 
   async commitDrafts(params: {
