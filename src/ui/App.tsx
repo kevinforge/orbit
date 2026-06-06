@@ -2,7 +2,7 @@ import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, us
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
 import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, ATTACHMENT_LIMITS } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
@@ -51,6 +51,7 @@ export function App() {
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const isNearBottomRef = useRef(true);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
@@ -138,6 +139,12 @@ export function App() {
   // Load workspace and conversation lists
   useEffect(() => {
     refreshWorkspaces();
+  }, [state.workspace.id, state.conversation.id]);
+
+  // Clear pending attachments when workspace or conversation changes
+  // to avoid preview URL pointing to wrong workspace/conversation path
+  useEffect(() => {
+    setPendingAttachments([]);
   }, [state.workspace.id, state.conversation.id]);
 
   // Auto-expand the active workspace on initial load
@@ -333,7 +340,7 @@ export function App() {
     // Prevent default to avoid the image being pasted as text; images are handled separately
     event.preventDefault();
 
-    const maxFiles = 5;
+    const maxFiles = ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE;
     if (pendingAttachments.length + imageFiles.length > maxFiles) {
       setAttachmentToast(`最多只能添加 ${maxFiles} 张图片`);
       window.setTimeout(() => setAttachmentToast(null), 3000);
@@ -973,7 +980,13 @@ export function App() {
               <div className="attachmentPreviewBar">
                 {pendingAttachments.map((att) => (
                   <div key={att.id} className="attachmentPreviewItem">
-                    <img src={att.previewUrl} alt={att.filename} className="attachmentPreviewThumb" />
+                    <img
+                      src={att.previewUrl}
+                      alt={att.filename}
+                      className="attachmentPreviewThumb"
+                      onClick={() => setPreviewAttachment(att)}
+                      title="点击预览"
+                    />
                     <button
                       type="button"
                       className="attachmentPreviewRemove"
@@ -1057,6 +1070,20 @@ export function App() {
           onSaved={() => { setShowAgentManager(false); setFocusedAgentId(null); window.location.reload(); }}
           runtimeAvailability={state.runtimeAvailability}
         />
+      ) : null}
+      {previewAttachment ? (
+        <div className="imagePreviewOverlay" onClick={() => setPreviewAttachment(null)}>
+          <div className="imagePreviewModal" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="imagePreviewClose"
+              onClick={() => setPreviewAttachment(null)}
+              title="关闭"
+            >&times;</button>
+            <img src={previewAttachment.previewUrl} alt={previewAttachment.filename} className="imagePreviewImg" />
+            <div className="imagePreviewInfo">{previewAttachment.filename}</div>
+          </div>
+        </div>
       ) : null}
     </main>
   );
