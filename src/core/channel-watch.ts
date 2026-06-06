@@ -165,6 +165,8 @@ export class ChannelWatchService {
       kind: "system",
       content: prompt,
       createdAt: new Date().toISOString(),
+      // Preserve attachments from the original message so supervisor can see images
+      attachments: sourceMessage.attachments?.length ? sourceMessage.attachments : undefined,
     };
 
     this.runManager.enqueue(ctx.agentId, prompt, syntheticSource);
