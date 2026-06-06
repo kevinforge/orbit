@@ -5,8 +5,8 @@ import path from "node:path";
 
 /**
  * Issue #70: Interrupting the auto-collaboration chain should NOT produce
- * a user-visible system message in the chat. The button state change and
- * actual run cancellation provide sufficient feedback.
+ * a user-visible system message in the chat. Instead, a non-persistent
+ * toast notification provides feedback to the user.
  */
 
 const contextSource = fs.readFileSync(
@@ -16,6 +16,11 @@ const contextSource = fs.readFileSync(
 
 const appSource = fs.readFileSync(
   path.resolve(import.meta.dirname, "../src/ui/App.tsx"),
+  "utf-8",
+);
+
+const stylesSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/ui/styles.css"),
   "utf-8",
 );
 
@@ -57,56 +62,50 @@ describe("interrupt produces no system message (#70)", () => {
   });
 
   test("interrupt button tooltip is user-friendly", () => {
-    // Both normal and post-interrupt tooltips should be free of internal terms
-    const tooltipMatches = appSource.matchAll(/title=\{hasInterruptedCurrentChain \? "([^"]*)" : "([^"]*)"\}/g);
-    for (const match of tooltipMatches) {
-      const [_, postInterruptTooltip, normalTooltip] = match;
-      const tooltips = [postInterruptTooltip, normalTooltip];
-      const forbiddenTerms = ["run", "supervisor", "自动触发", "数字员工", "协作链", "指派"];
+    const tooltipMatch = appSource.match(/title="([^"]*停止[^"]*协作[^"]*)"/);
+    assert.ok(tooltipMatch, "Interrupt button must have a tooltip containing '停止' and '协作'");
 
-      for (const tooltip of tooltips) {
-        for (const term of forbiddenTerms) {
-          assert.ok(
-            !tooltip.includes(term),
-            `Tooltip must not contain internal term "${term}", got: "${tooltip}"`,
-          );
-        }
-      }
+    const tooltip = tooltipMatch[1];
+    const forbiddenTerms = ["run", "supervisor", "自动触发", "数字员工", "协作链", "指派"];
+    for (const term of forbiddenTerms) {
+      assert.ok(
+        !tooltip.includes(term),
+        `Tooltip must not contain internal term "${term}", got: "${tooltip}"`,
+      );
     }
   });
 
-  test("interrupt button has disabled state after successful interrupt", () => {
+  test("successful interrupt shows a non-persistent toast, not a chat message", () => {
+    // Must have toast state
     assert.ok(
-      appSource.includes("hasInterruptedCurrentChain"),
-      "App must track hasInterruptedCurrentChain state",
+      appSource.includes("interruptToast"),
+      "App must have interruptToast state for non-persistent feedback",
     );
 
-    // Button must be disabled when interrupted
-    const disabledMatch = appSource.match(/disabled=\{isInterrupting \|\| ([^}]+)\}/);
+    // Toast must auto-dismiss via setTimeout
     assert.ok(
-      disabledMatch && disabledMatch[1].includes("hasInterruptedCurrentChain"),
-      "Interrupt button must be disabled when hasInterruptedCurrentChain is true",
+      appSource.includes("setInterruptToast(null)"),
+      "Toast must auto-dismiss after a timeout",
     );
 
-    // Button text must change to "已打断"
+    // Toast must be rendered in the UI
     assert.ok(
-      appSource.includes('hasInterruptedCurrentChain ? "已打断"'),
-      "Button must show '已打断' after successful interrupt",
-    );
-  });
-
-  test("interrupted state resets when no runs remain and on new message", () => {
-    // useEffect reset when hasRunningOrQueued becomes false
-    const useEffectPattern = /useEffect\(\(\) => \{[\s\S]*?if \(!hasRunningOrQueued && hasInterruptedCurrentChain\)/;
-    assert.ok(
-      useEffectPattern.test(appSource),
-      "hasInterruptedCurrentChain must reset via useEffect when hasRunningOrQueued becomes false",
+      appSource.includes("interruptToast"),
+      "Toast must be rendered as a non-message UI element",
     );
 
-    // Reset on new message send
+    // Must NOT add to chat messages on success (catch block for errors is OK)
+    const interruptTryBlock = appSource.match(/async function interruptChain\(\)[\s\S]*?try\s*\{([\s\S]*?)\}\s*catch/);
+    assert.ok(interruptTryBlock, "Could not find interruptChain try block");
     assert.ok(
-      appSource.includes("setHasInterruptedCurrentChain(false)"),
-      "hasInterruptedCurrentChain must reset when sending a new message",
+      !interruptTryBlock[1].includes("createLocalSystemMessage"),
+      "interruptChain must not add local system messages on success path",
+    );
+
+    // Must have toast CSS
+    assert.ok(
+      stylesSource.includes("interruptToast"),
+      "styles.css must have .interruptToast styles",
     );
   });
 });
