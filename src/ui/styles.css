@@ -1476,11 +1476,9 @@ button:active:not(:disabled) {
   transition: all var(--transition-base);
 }
 
-/* When attachments are present, textarea adapts to accommodate preview bar */
+/* When attachments are present, add padding-top to accommodate preview bar */
 .composerInputWrap.hasAttachments textarea {
-  /* Calculate: top offset (6px) + thumb height (48px) + gap (4px) + text line (22px) + bottom padding (8px) */
-  min-height: calc(6px + 48px + 4px + 22px + 8px);
-  padding-top: calc(6px + 48px + 4px);
+  padding-top: 58px;
 }
 
 .composer textarea::placeholder {
