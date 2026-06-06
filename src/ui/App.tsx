@@ -2,7 +2,7 @@ import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, us
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
 import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, ATTACHMENT_LIMITS } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
@@ -49,6 +49,9 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
+  const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const isNearBottomRef = useRef(true);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
@@ -136,6 +139,12 @@ export function App() {
   // Load workspace and conversation lists
   useEffect(() => {
     refreshWorkspaces();
+  }, [state.workspace.id, state.conversation.id]);
+
+  // Clear pending attachments when workspace or conversation changes
+  // to avoid preview URL pointing to wrong workspace/conversation path
+  useEffect(() => {
+    setPendingAttachments([]);
   }, [state.workspace.id, state.conversation.id]);
 
   // Auto-expand the active workspace on initial load
@@ -277,10 +286,21 @@ export function App() {
 
     setIsSending(true);
     try {
+      const body: { content: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
+        content: trimmed,
+      };
+      if (pendingAttachments.length > 0) {
+        body.draftAttachments = pendingAttachments.map((a) => ({
+          id: a.id,
+          mimeType: a.mimeType,
+          filename: a.filename,
+          size: a.size,
+        }));
+      }
       const response = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: trimmed }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
@@ -288,6 +308,7 @@ export function App() {
       }
 
       setContent("");
+      setPendingAttachments([]);
       isNearBottomRef.current = true;
       setIsNearBottom(true);
       setShowNewMessageHint(false);
@@ -300,6 +321,74 @@ export function App() {
     } finally {
       setIsSending(false);
     }
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item?.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length === 0) return;
+
+    // Prevent default to avoid the image being pasted as text; images are handled separately
+    event.preventDefault();
+
+    const maxFiles = ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE;
+    if (pendingAttachments.length + imageFiles.length > maxFiles) {
+      setAttachmentToast(`最多只能添加 ${maxFiles} 张图片`);
+      window.setTimeout(() => setAttachmentToast(null), 3000);
+      return;
+    }
+
+    for (const file of imageFiles.slice(0, maxFiles - pendingAttachments.length)) {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = (reader.result as string).split(",")[1];
+        if (!base64) return;
+
+        try {
+          const response = await fetch("/api/attachments/drafts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              data: base64,
+              mimeType: file.type,
+              filename: file.name || "pasted-image.png",
+            }),
+          });
+          if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            setAttachmentToast((err as { message?: string }).message ?? "图片上传失败");
+            window.setTimeout(() => setAttachmentToast(null), 3000);
+            return;
+          }
+          const result = await response.json();
+          if (result.ok && result.attachment) {
+            setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
+          }
+        } catch {
+          setAttachmentToast("图片上传失败");
+          window.setTimeout(() => setAttachmentToast(null), 3000);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  async function removePendingAttachment(id: string) {
+    try {
+      await fetch(`/api/attachments/drafts/${state.workspace.id}/${state.conversation.id}/${id}`, {
+        method: "DELETE",
+      });
+    } catch { /* best effort */ }
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   }
 
   async function interruptChain() {
@@ -884,12 +973,35 @@ export function App() {
         </div>
 
         {interruptToast ? <div className="interruptToast">{interruptToast}</div> : null}
+        {attachmentToast ? <div className="attachmentToast">{attachmentToast}</div> : null}
         <form className="composer" onSubmit={sendMessage}>
-          <div className="composerInputWrap">
+          <div className={`composerInputWrap${pendingAttachments.length > 0 ? " hasAttachments" : ""}`}>
+            {pendingAttachments.length > 0 && (
+              <div className="attachmentPreviewBar">
+                {pendingAttachments.map((att) => (
+                  <div key={att.id} className="attachmentPreviewItem">
+                    <img
+                      src={att.previewUrl}
+                      alt={att.filename}
+                      className="attachmentPreviewThumb"
+                      onClick={() => setPreviewAttachment(att)}
+                      title="点击预览"
+                    />
+                    <button
+                      type="button"
+                      className="attachmentPreviewRemove"
+                      onClick={() => removePendingAttachment(att.id)}
+                      title="移除图片"
+                    >&times;</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               ref={inputRef}
               value={content}
               rows={1}
+              onPaste={handlePaste}
               onBlur={() => window.setTimeout(() => setInputFocused(false), 120)}
               onChange={(event) => {
                 setContent(event.target.value);
@@ -958,6 +1070,20 @@ export function App() {
           onSaved={() => { setShowAgentManager(false); setFocusedAgentId(null); window.location.reload(); }}
           runtimeAvailability={state.runtimeAvailability}
         />
+      ) : null}
+      {previewAttachment ? (
+        <div className="imagePreviewOverlay" onClick={() => setPreviewAttachment(null)}>
+          <div className="imagePreviewModal" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="imagePreviewClose"
+              onClick={() => setPreviewAttachment(null)}
+              title="关闭"
+            >&times;</button>
+            <img src={previewAttachment.previewUrl} alt={previewAttachment.filename} className="imagePreviewImg" />
+            <div className="imagePreviewInfo">{previewAttachment.filename}</div>
+          </div>
+        </div>
       ) : null}
     </main>
   );
@@ -1154,6 +1280,26 @@ function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentSta
       <div className="messageBody">
         {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} /> : null}
         {message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
+        {message.attachments?.length ? (
+          <div className="messageAttachments">
+            {message.attachments.map((att) => (
+              <a
+                key={att.id}
+                href={att.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="messageAttachmentLink"
+              >
+                <img
+                  src={att.url}
+                  alt={att.filename}
+                  className="messageAttachmentThumb"
+                  loading="lazy"
+                />
+              </a>
+            ))}
+          </div>
+        ) : null}
       </div>
     </article>
   );

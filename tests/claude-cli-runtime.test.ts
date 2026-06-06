@@ -115,3 +115,8 @@ test("extractSessionId returns first init event match", () => {
   ].join("\n");
   assert.equal(extractSessionId(output), "real-session");
 });
+
+test("Claude CLI does not support --image flag (images passed via prompt injection)", () => {
+  const args = buildClaudeCliArgs();
+  assert.equal(args.includes("--image"), false, "Claude CLI should not have --image flag");
+});

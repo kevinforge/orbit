@@ -18,6 +18,8 @@ import { WorkspaceStore } from "../core/workspace-store.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
 import type { ConversationInfo, MessagePage, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import { ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { AttachmentStore } from "../core/attachment-store.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
@@ -34,6 +36,7 @@ const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const configStore = new AgentConfigStore();
 const workspaceConfigStore = new WorkspaceConfigStore();
+const attachmentStore = new AttachmentStore(path.join(os.homedir(), ".orbit"));
 
 // --- Runtime availability ---
 const PROBE_INTERVAL_MS = Number(process.env.ORBIT_RUNTIME_PROBE_INTERVAL_MS ?? 60000);
@@ -399,6 +402,7 @@ function currentAgentStates() {
 migrateChannelLayer();
 initActiveContext();
 runHistoryCleanup();
+runAttachmentDraftCleanup();
 
 // --- HTTP Server (created before probe to avoid blocking setup) ---
 const server = http.createServer(async (req, res) => {
@@ -454,6 +458,120 @@ const server = http.createServer(async (req, res) => {
       }
       const result = ctx.interrupt();
       sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+
+    // --- Attachment endpoints ---
+
+    if (req.method === "POST" && url.pathname === "/api/attachments/drafts") {
+      if (!activeWorkspaceId || !activeConversationId) {
+        sendJson(res, 409, { ok: false, message: "No active conversation." });
+        return;
+      }
+      const input = (await readJson(req)) as {
+        data?: unknown;
+        mimeType?: unknown;
+        filename?: unknown;
+      };
+      const base64Data = typeof input.data === "string" ? input.data : "";
+      const mimeType = typeof input.mimeType === "string" ? input.mimeType : "";
+      const filename = typeof input.filename === "string" ? input.filename : "image.png";
+
+      if (!base64Data) {
+        sendJson(res, 400, { ok: false, message: "Missing image data." });
+        return;
+      }
+
+      const buffer = Buffer.from(base64Data, "base64");
+      const validation = AttachmentStore.validateImageFile(buffer, mimeType, filename);
+      if (!validation.valid) {
+        sendJson(res, 400, { ok: false, message: validation.error });
+        return;
+      }
+
+      const saved = await attachmentStore.saveDraft({
+        workspaceId: activeWorkspaceId,
+        conversationId: activeConversationId,
+        data: buffer,
+        mimeType,
+        filename,
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        attachment: {
+          id: saved.id,
+          kind: "image",
+          mimeType,
+          filename,
+          size: saved.size,
+          previewUrl: `/api/attachments/drafts/${activeWorkspaceId}/${activeConversationId}/${saved.id}`,
+        },
+      });
+      return;
+    }
+
+    if (req.method === "DELETE" && url.pathname.startsWith("/api/attachments/drafts/")) {
+      const parts = url.pathname.split("/");
+      // /api/attachments/drafts/:workspaceId/:conversationId/:id
+      const wsId = parts[4];
+      const convId = parts[5];
+      const draftId = parts[6];
+      if (!wsId || !convId || !draftId) {
+        sendJson(res, 400, { ok: false, message: "Missing draft parameters." });
+        return;
+      }
+      const deleted = await attachmentStore.deleteDraft(wsId, convId, draftId);
+      sendJson(res, 200, { ok: true, deleted });
+      return;
+    }
+
+    // GET draft attachments for preview in composer
+    if (req.method === "GET" && url.pathname.startsWith("/api/attachments/drafts/")) {
+      const parts = url.pathname.split("/");
+      // /api/attachments/drafts/:workspaceId/:conversationId/:id
+      const wsId = parts[4];
+      const convId = parts[5];
+      const draftId = parts[6];
+      if (!wsId || !convId || !draftId) {
+        sendJson(res, 400, { ok: false, message: "Missing draft parameters." });
+        return;
+      }
+      const draft = await attachmentStore.getDraft(wsId, convId, draftId);
+      if (!draft) {
+        sendJson(res, 404, { ok: false, message: "Draft not found." });
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": draft.mimeType,
+        "Content-Disposition": `inline; filename="${draft.filename}"`,
+        "Cache-Control": "private, max-age=86400",
+      });
+      res.end(draft.data);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/api/attachments/")) {
+      const parts = url.pathname.split("/");
+      // /api/attachments/:workspaceId/:conversationId/:id
+      const wsId = parts[3];
+      const convId = parts[4];
+      const attachId = parts[5];
+      if (!wsId || !convId || !attachId) {
+        sendJson(res, 400, { ok: false, message: "Missing attachment parameters." });
+        return;
+      }
+      const attachment = await attachmentStore.getAttachment(wsId, convId, attachId);
+      if (!attachment) {
+        sendJson(res, 404, { ok: false, message: "Attachment not found." });
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": attachment.mimeType,
+        "Content-Disposition": `inline; filename="${attachId}"`,
+        "Cache-Control": "private, max-age=86400",
+      });
+      res.end(attachment.data);
       return;
     }
 
@@ -752,6 +870,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const wasActiveConversation = wsId === activeWorkspaceId && convId === activeConversationId;
         disposeContext(wsId, convId);
+        attachmentStore.deleteConversationAttachments(wsId, convId).catch(() => { /* best effort */ });
         const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
         store.delete(wsId, convId);
         if (wasActiveConversation) {
@@ -815,7 +934,10 @@ const server = http.createServer(async (req, res) => {
 // --- Helpers ---
 
 async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const input = (await readJson(req)) as { content?: unknown };
+  const input = (await readJson(req)) as {
+    content?: unknown;
+    draftAttachments?: unknown;
+  };
   const content = typeof input.content === "string" ? input.content.trim() : "";
 
   if (!content) {
@@ -849,18 +971,48 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  const userMessage = context.messages.add({ kind: "user", content, status: "sent" });
+  // Commit draft attachments if present
+  let attachments: import("../shared/types.ts").MessageAttachment[] | undefined;
+  const draftAttachments = Array.isArray(input.draftAttachments)
+    ? input.draftAttachments as Array<{ id: string; mimeType: string; filename: string; size: number }>
+    : [];
+
+  if (draftAttachments.length > 0) {
+    // Enforce max files per message
+    if (draftAttachments.length > ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE) {
+      sendJson(res, 400, {
+        ok: false,
+        message: `Too many attachments (${draftAttachments.length}). Maximum is ${ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE}.`,
+      });
+      return;
+    }
+    attachments = await attachmentStore.commitDrafts({
+      workspaceId: activeWorkspaceId,
+      conversationId: activeConversationId,
+      draftAttachments,
+    });
+  }
+
+  const userMessage = context.messages.add({ kind: "user", content, status: "sent", attachments });
   eventBus.publish({ type: "message.created", conversationId: activeConversationId, message: userMessage });
   context.messageRouter.process(userMessage);
 
   sendJson(res, 200, { ok: true, messageId: userMessage.id });
 }
 
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
+
 function readJson(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let body = "";
+    let bodySize = 0;
     req.setEncoding("utf8");
-    req.on("data", (chunk) => {
+    req.on("data", (chunk: string) => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        req.destroy(new Error("Request body too large"));
+        return;
+      }
       body += chunk;
     });
     req.on("end", () => {
@@ -902,6 +1054,24 @@ function runHistoryCleanup(): void {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[orbit] history cleanup skipped: ${message}`);
+  }
+}
+
+function runAttachmentDraftCleanup(): void {
+  attachmentStore.cleanupExpiredDrafts().then((count) => {
+    if (count > 0) {
+      console.log(`[orbit] cleaned up ${count} expired attachment draft(s)`);
+    }
+  }).catch((err) => {
+    console.warn("[orbit] attachment draft cleanup failed:", err instanceof Error ? err.message : String(err));
+  });
+
+  // Periodic cleanup every hour
+  const interval = setInterval(() => {
+    attachmentStore.cleanupExpiredDrafts().catch(() => { /* best effort */ });
+  }, 60 * 60 * 1000);
+  if (typeof interval === "object" && "unref" in interval) {
+    (interval as NodeJS.Timeout).unref();
   }
 }
 

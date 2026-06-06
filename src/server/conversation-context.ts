@@ -76,9 +76,20 @@ export class ConversationContext {
       agents: this.agents,
       messages: this.messages,
       eventBus,
-      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string) => {
+      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
         const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
-        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig });
+        // Only inject <current-attachments> for Claude CLI (which doesn't support --image flag)
+        // Codex CLI uses native --image parameter, so no prompt injection needed
+        const agentProfile = profiles.find((p) => p.id === agentId);
+        const shouldInjectImagePaths = imagePaths?.length && agentProfile?.runtime !== "codex";
+        return buildAgentContext({
+          agentId,
+          profiles,
+          agentMessage: prompt,
+          history,
+          workspaceConfig: self._workspaceConfig,
+          imagePaths: shouldInjectImagePaths ? imagePaths : undefined,
+        });
       },
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
@@ -151,9 +162,20 @@ export class ConversationContext {
       agents: newAgents,
       messages: this.messages,
       eventBus,
-      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string) => {
+      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
         const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
-        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig });
+        // Only inject <current-attachments> for Claude CLI (which doesn't support --image flag)
+        // Codex CLI uses native --image parameter, so no prompt injection needed
+        const agentProfile = profiles.find((p) => p.id === agentId);
+        const shouldInjectImagePaths = imagePaths?.length && agentProfile?.runtime !== "codex";
+        return buildAgentContext({
+          agentId,
+          profiles,
+          agentMessage: prompt,
+          history,
+          workspaceConfig: self._workspaceConfig,
+          imagePaths: shouldInjectImagePaths ? imagePaths : undefined,
+        });
       },
       onRunCompleted: (message) => {
         self.messageRouter.process(message);

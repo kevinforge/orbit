@@ -2,6 +2,7 @@ import type {
   AgentActivityEvent,
   AgentId,
   ChatMessage,
+  MessageAttachment,
   NewChatMessage,
   RunResult,
   RuntimeEvent,
@@ -13,7 +14,7 @@ import { parseJsonObjects } from "./json-stream-parser.ts";
 
 type AgentRunner = {
   get(agentId: AgentId): {
-    send(runId: string, prompt: string): Promise<RunResult>;
+    send(runId: string, prompt: string, imagePaths?: string[]): Promise<RunResult>;
   };
 };
 
@@ -36,6 +37,8 @@ export type ManagedRun = {
   suppressFollowupRouting?: boolean;
   /** Who initiated this run: a user message, an agent's @mention, or the supervisor. */
   origin?: RunOrigin;
+  /** Image attachments from the source message, passed to the runtime. */
+  sourceAttachments?: MessageAttachment[];
 };
 
 export type RunManagerOptions = {
@@ -43,7 +46,7 @@ export type RunManagerOptions = {
   agents: AgentRunner;
   messages: MessageStore;
   eventBus: EventBus;
-  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string) => string;
+  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => string;
   onRunCompleted: (message: ChatMessage) => void;
 };
 
@@ -106,6 +109,7 @@ export class RunManager {
       startedAt: isBusy ? undefined : now,
       activity,
       origin: resolvedOrigin,
+      sourceAttachments: sourceMessage.attachments?.length ? sourceMessage.attachments : undefined,
     };
     this.runs.set(run.id, run);
 
@@ -216,10 +220,11 @@ export class RunManager {
 
     this.appendActivity(run, "Run started.");
 
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, run.sourceMessage.id);
+    const imagePaths = run.sourceAttachments?.map((a) => a.path);
+    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, run.sourceMessage.id, imagePaths);
     let result: Promise<RunResult>;
     try {
-      result = this.options.agents.get(run.agentId).send(run.id, runtimePrompt);
+      result = this.options.agents.get(run.agentId).send(run.id, runtimePrompt, imagePaths);
     } catch (error: unknown) {
       this.fail(run, error instanceof Error ? error.message : String(error));
       return;

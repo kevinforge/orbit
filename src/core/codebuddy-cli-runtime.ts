@@ -13,6 +13,8 @@ export type CodeBuddyCliRunOptions = {
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;
+  /** Kept for type compatibility with AgentRuntime interface. CodeBuddy does not support native image parameters; images are passed via prompt injection. */
+  imagePaths?: string[];
 };
 
 export type CodeBuddyCliRunHandle = {

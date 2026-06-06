@@ -6,6 +6,12 @@ import type { AgentRuntime } from "./agent-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
 import { parseJsonObjects } from "./json-stream-parser.ts";
 
+/**
+ * Claude CLI run options.
+ * Note: Claude CLI does not support native --image parameter for passing images.
+ * Images are injected via prompt through <current-attachments> XML block in agent-context-builder.ts.
+ * The imagePaths parameter is omitted here since it's handled at the prompt construction level.
+ */
 export type ClaudeCliRunOptions = {
   agentId: AgentId;
   cwd: string;

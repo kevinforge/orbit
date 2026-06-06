@@ -49,7 +49,11 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
     const msg = recent[i];
     const sender = msg.kind === "user" ? "user" : (msg.agentId ?? "agent");
     if (recentChars + msg.content.length > MAX_HISTORY_CHARS) break;
-    recentEntries.unshift({ sender, content: msg.content });
+    recentEntries.unshift({
+      sender,
+      content: msg.content,
+      attachments: msg.attachments?.length ? msg.attachments : undefined,
+    });
     recentChars += msg.content.length;
   }
 
@@ -68,7 +72,11 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
     }
 
     if (olderChars + text.length > remainingBudget) break;
-    olderEntries.unshift({ sender, content: text });
+    olderEntries.unshift({
+      sender,
+      content: text,
+      attachments: msg.attachments?.length ? msg.attachments : undefined,
+    });
     olderChars += text.length;
   }
 

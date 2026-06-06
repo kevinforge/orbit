@@ -69,7 +69,7 @@ test("includes <permissions> section with all permission flags", () => {
   assert.ok(context.includes("</permissions>"), "should have </permissions> closing tag");
   assert.ok(context.includes("read files: yes"));
   assert.ok(context.includes("write files: yes"));
-  assert.ok(context.includes("git commit: no"));
+  assert.ok(context.includes("git commit: yes"));
 });
 
 // --- <available-agents> section ---
@@ -95,7 +95,7 @@ test("includes description in available agents list", () => {
   });
 
   assert.ok(context.includes("@pm: Product Manager - Clarifies requirements, defines scope and acceptance criteria."));
-  assert.ok(context.includes("@architect: Architect - Designs technical boundaries, reviews implementation risk."));
+  assert.ok(context.includes("@architect: Architect - Designs technical boundaries, reviews code and implementation risk."));
   assert.ok(context.includes("@developer: Developer - Implements features with TDD, creates branches and draft PRs."));
 });
 
@@ -530,4 +530,62 @@ test("all sections present with workspace config (regression check)", () => {
   assert.ok(context.includes("<current-task>"));
   assert.ok(context.includes("</orbit-context>"));
   assert.ok(context.includes("@developer: test"));
+});
+
+// --- <current-attachments> section ---
+
+test("includes <current-attachments> section when imagePaths provided", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: analyze screenshot",
+    imagePaths: ["/home/.orbit/conversations/ws1/conv1/attachments/img1.png"],
+  });
+
+  assert.ok(context.includes("<current-attachments>"), "should have <current-attachments> opening tag");
+  assert.ok(context.includes("</current-attachments>"), "should have </current-attachments> closing tag");
+  assert.ok(context.includes("IMPORTANT: The current task includes image attachments"), "should emphasize importance");
+  assert.ok(context.includes("You MUST view these images FIRST"), "should have explicit MUST instruction");
+  assert.ok(context.includes("Choose the appropriate tool"), "should mention tool choice");
+  assert.ok(context.includes("Read tool"), "should mention Read tool option");
+  assert.ok(context.includes("MCP image analysis tools"), "should mention MCP tools option");
+  assert.ok(context.includes("/home/.orbit/conversations/ws1/conv1/attachments/img1.png"));
+});
+
+test("no <current-attachments> when imagePaths is empty", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    imagePaths: [],
+  });
+
+  assert.ok(!context.includes("<current-attachments>"));
+});
+
+test("no <current-attachments> when imagePaths is not provided", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+  });
+
+  assert.ok(!context.includes("<current-attachments>"));
+});
+
+test("<current-attachments> appears after <current-task>", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    imagePaths: ["/path/img.png"],
+  });
+
+  const taskIdx = context.indexOf("<current-task>");
+  const attachIdx = context.indexOf("<current-attachments>");
+  assert.ok(taskIdx < attachIdx, "<current-task> should come before <current-attachments>");
 });
