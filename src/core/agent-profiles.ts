@@ -30,7 +30,7 @@ export function permissionProfile(role: AgentRole): PermissionProfile {
         canWriteFiles: true,
         canRunCommands: true,
         canInstallDependencies: true,
-        canGitCommit: false,
+        canGitCommit: true,
         allowedDirectories: ["."],
       };
     case "tester":
