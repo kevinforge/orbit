@@ -304,13 +304,13 @@ button:active:not(:disabled) {
   grid-template-areas:
     "dot text"
     ". status";
-  gap: 3px 12px;
+  gap: 2px 10px;
   width: 100%;
-  min-height: 46px;
+  min-height: 38px;
   border: 1px solid transparent;
   border-left: 3px solid transparent;
   border-radius: 8px;
-  padding: 9px 11px;
+  padding: 6px 11px;
   color: var(--text-secondary);
   background: transparent;
   text-align: left;
@@ -330,6 +330,43 @@ button:active:not(:disabled) {
   border-left-color: var(--accent);
   background: var(--bg-surface);
   box-shadow: var(--shadow-xs);
+}
+
+.agentTextRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agentConfigIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity var(--transition-base), background var(--transition-base), color var(--transition-base);
+}
+
+.agentConfigIcon:hover,
+.agentConfigIcon:focus-visible {
+  opacity: 1;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--accent);
+}
+
+.agentInstallLink {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.agentInstallLink:hover {
+  text-decoration: underline;
 }
 
 .agentRunningLabel {
@@ -1194,6 +1231,13 @@ button:active:not(:disabled) {
 .markdown {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.markdown > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .markdown h1,
@@ -1242,6 +1286,8 @@ button:active:not(:disabled) {
   text-decoration: none;
   border-bottom: 1px solid var(--accent-border);
   transition: all var(--transition-fast);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown a:hover {
@@ -1260,6 +1306,7 @@ button:active:not(:disabled) {
   padding: 16px 20px;
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   overflow-x: auto;
+  max-width: 100%;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.65;
@@ -1273,6 +1320,8 @@ button:active:not(:disabled) {
   border-radius: var(--radius-md);
   overflow: hidden;
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .codeBlock pre {
@@ -1345,6 +1394,7 @@ button:active:not(:disabled) {
   font-family: var(--font-mono);
   font-size: 0.88em;
   font-weight: 600;
+  word-break: break-word;
 }
 
 .markdownTableWrap {
@@ -2725,15 +2775,37 @@ button:active:not(:disabled) {
   font-size: 11px;
 }
 
-.runtimeInstallLink {
-  margin-left: 2px;
-  color: var(--accent);
-  text-decoration: none;
+.runtimeInstallHint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(194, 65, 12, 0.08);
+  border: 1px solid rgba(194, 65, 12, 0.2);
   font-size: 12px;
+  color: var(--secondary);
 }
 
-.runtimeInstallLink:hover {
-  text-decoration: underline;
+.runtimeInstallBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 10px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--transition-base);
+}
+
+.runtimeInstallBtn:hover {
+  background: var(--accent-hover);
+  text-decoration: none;
 }
 
 .configFields {

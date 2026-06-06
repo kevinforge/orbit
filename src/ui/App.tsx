@@ -35,6 +35,7 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, Conversation[]>>({});
   const [showAgentManager, setShowAgentManager] = useState(false);
+  const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
   const [editingWorkspaceName, setEditingWorkspaceName] = useState("");
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
@@ -755,6 +756,7 @@ export function App() {
                   agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", role: "general", status: "idle" }}
                   selected={selectedAgent === agentId}
                   onClick={() => chooseAgent(agentId)}
+                  onConfig={() => { setFocusedAgentId(agentId); setShowAgentManager(true); }}
                 />
               ))
             )}
@@ -945,8 +947,9 @@ export function App() {
       ) : null}
       {showAgentManager ? (
         <AgentManagerPanel
-          onClose={() => setShowAgentManager(false)}
-          onSaved={() => { setShowAgentManager(false); window.location.reload(); }}
+          focusedAgentId={focusedAgentId}
+          onClose={() => { setShowAgentManager(false); setFocusedAgentId(null); }}
+          onSaved={() => { setShowAgentManager(false); setFocusedAgentId(null); window.location.reload(); }}
           runtimeAvailability={state.runtimeAvailability}
         />
       ) : null}
@@ -1042,24 +1045,49 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
   );
 }
 
-function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void }) {
+function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void; onConfig?: () => void }) {
   const isRunning = props.agent.status === "running" || props.agent.status === "starting";
   const isRuntimeMissing = props.agent.runtimeAvailable === false;
+  const meta = runtimeMeta(props.agent.runtime);
   return (
     <button
       className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""}`}
       onClick={props.onClick}
       type="button"
-      title={isRuntimeMissing ? `${props.agent.runtime} not found on PATH — agent cannot run` : undefined}
+      title={isRuntimeMissing ? `${meta.label} 未安装，该数字员工无法运行` : undefined}
     >
       <span className={`statusDot ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`} aria-hidden="true" />
       <span className="agentText">
-        <strong>
-          {props.agent.label}
-          {isRunning && <span className="agentRunningLabel">Running</span>}
-          <RuntimeBadge runtime={props.agent.runtime} />
-        </strong>
-        <small>{props.agent.id}{isRuntimeMissing ? " · unavailable" : ""}</small>
+        <span className="agentTextRow">
+          <strong>
+            {props.agent.label}
+            {isRunning && <span className="agentRunningLabel">Running</span>}
+            <RuntimeBadge runtime={props.agent.runtime} />
+          </strong>
+          {props.onConfig && (
+            <span
+              className="agentConfigIcon"
+              role="button"
+              tabIndex={0}
+              title="编辑配置"
+              onClick={(e) => { e.stopPropagation(); props.onConfig!(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); props.onConfig!(); } }}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.5 1.5l3 3L5 14H2v-3z" />
+                <path d="M9.5 3.5l3 3" />
+              </svg>
+            </span>
+          )}
+        </span>
+        <small>
+          {props.agent.id}
+          {isRuntimeMissing ? (
+            <>
+              {" · "}<a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="agentInstallLink" onClick={(e) => e.stopPropagation()}>安装 ↗</a>
+            </>
+          ) : null}
+        </small>
       </span>
       <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
         {isRuntimeMissing ? "missing" : props.agent.status}
@@ -1410,12 +1438,13 @@ function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; h
   );
 }
 
-function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose: () => void; onSaved: () => void; runtimeAvailability: AppState["runtimeAvailability"] }) {
+function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgentId }: { onClose: () => void; onSaved: () => void; runtimeAvailability: AppState["runtimeAvailability"]; focusedAgentId?: string | null }) {
   const [configs, setConfigs] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const focusedAgentApplied = useRef(false);
 
   const availByRuntime = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -1442,6 +1471,16 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
       .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
       .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
   }, []);
+
+  // Auto-expand the focused agent once configs are loaded
+  useEffect(() => {
+    if (!focusedAgentId || loading || focusedAgentApplied.current) return;
+    const idx = (configs as AgentConfig[]).findIndex((c) => c.id === focusedAgentId);
+    if (idx >= 0) {
+      setExpandedIndex(idx);
+      focusedAgentApplied.current = true;
+    }
+  }, [focusedAgentId, loading, configs]);
 
   function updateConfig(index: number, patch: Partial<AgentConfig>) {
     setConfigs((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
@@ -1603,13 +1642,19 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability }: { onClose:
                                     {r}
                                     {isAvail === true ? <span className="pillCheck"> ✓</span> : isAvail === undefined ? <span className="pillUnknown"> ?</span> : null}
                                   </button>
-                                  {isMissing ? (
-                                    <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallLink" title={`安装 ${meta.label}`}>↗</a>
-                                  ) : null}
                                 </span>
                               );
                             })}
                           </div>
+                          {isRuntimeAvailable(config.runtime) === false && (() => {
+                            const meta = runtimeMeta(config.runtime);
+                            return (
+                              <div className="runtimeInstallHint">
+                                <span>⚠ 未检测到 {meta.label}，请先安装。</span>
+                                <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallBtn">查看安装指南 ↗</a>
+                              </div>
+                            );
+                          })()}
                         </div>
                         {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <SupervisorBanner maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5} hasUnassigned={config.triggers?.onUnassignedMessage === true} hasBlocked={config.triggers?.onAgentBlocked === true} /> : null}
                         <div className="fieldWithHint fieldFullWidth">

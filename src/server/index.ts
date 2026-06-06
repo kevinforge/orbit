@@ -570,8 +570,12 @@ const server = http.createServer(async (req, res) => {
     // --- Workspace endpoints ---
 
     if (req.method === "POST" && url.pathname === "/api/workspaces/pick-directory") {
-      const directory = await pickWindowsDirectory();
-      sendJson(res, 200, { path: directory });
+      try {
+        const directory = await pickDirectory();
+        sendJson(res, 200, { path: directory });
+      } catch {
+        sendJson(res, 200, { path: null });
+      }
       return;
     }
 
@@ -910,10 +914,6 @@ function conversationTitle(content: string): string {
 }
 
 async function pickWindowsDirectory(): Promise<string> {
-  if (process.platform !== "win32") {
-    throw new Error("Directory picker is currently only supported on Windows.");
-  }
-
   const script = [
     "Add-Type -AssemblyName System.Windows.Forms",
     "Add-Type -AssemblyName System.Drawing",
@@ -937,6 +937,25 @@ async function pickWindowsDirectory(): Promise<string> {
     windowsHide: false,
   });
   return stdout.trim();
+}
+
+async function pickMacDirectory(): Promise<string> {
+  const { stdout } = await execFileAsync("osascript", [
+    "-e",
+    'POSIX path of (choose folder with prompt "Select workspace folder")',
+  ]);
+  return stdout.trim();
+}
+
+async function pickDirectory(): Promise<string> {
+  switch (process.platform) {
+    case "win32":
+      return pickWindowsDirectory();
+    case "darwin":
+      return pickMacDirectory();
+    default:
+      throw new Error(`Directory picker is not supported on ${process.platform}.`);
+  }
 }
 
 async function handlePutAgents(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

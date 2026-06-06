@@ -258,7 +258,7 @@ test("empty assignment does not start agent run", () => {
 
 // --- hasActiveSupervisor behavior ---
 
-test("plain mention with supervisor active is silently ignored (no system message)", () => {
+test("plain mention with supervisor active creates no system message (ChannelWatchService handles it)", () => {
   const { router, systemMessages, agentRuns, routeStates } = createRouter({ hasActiveSupervisor: true });
   router.process(createUserMessage("hello world"));
 
