@@ -154,9 +154,9 @@ function renderHistorySection(history: AgentHistoryEntry[]): string {
   if (history.length === 0) return "";
   const entries = history.map((entry) => {
     let text = `[${entry.sender}]: ${escapeDynamicContent(entry.content)}`;
-    // Add attachment info if present
+    // Add attachment paths if present (Agent needs the full path to read the image)
     if (entry.attachments?.length) {
-      const attachLines = entry.attachments.map((a) => `  [attachment: ${a.filename}]`);
+      const attachLines = entry.attachments.map((a) => `  [attachment: ${a.path}]`);
       text += `\n${attachLines.join("\n")}`;
     }
     return text;
