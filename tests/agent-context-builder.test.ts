@@ -69,7 +69,7 @@ test("includes <permissions> section with all permission flags", () => {
   assert.ok(context.includes("</permissions>"), "should have </permissions> closing tag");
   assert.ok(context.includes("read files: yes"));
   assert.ok(context.includes("write files: yes"));
-  assert.ok(context.includes("git commit: no"));
+  assert.ok(context.includes("git commit: yes"));
 });
 
 // --- <available-agents> section ---
@@ -95,7 +95,7 @@ test("includes description in available agents list", () => {
   });
 
   assert.ok(context.includes("@pm: Product Manager - Clarifies requirements, defines scope and acceptance criteria."));
-  assert.ok(context.includes("@architect: Architect - Designs technical boundaries, reviews implementation risk."));
+  assert.ok(context.includes("@architect: Architect - Designs technical boundaries, reviews code and implementation risk."));
   assert.ok(context.includes("@developer: Developer - Implements features with TDD, creates branches and draft PRs."));
 });
 
