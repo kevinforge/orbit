@@ -27,11 +27,11 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
     id: "architect",
     name: "Architect",
-    description: "Designs technical boundaries, reviews implementation risk.",
+    description: "Designs technical boundaries, reviews code and implementation risk.",
     role: "architect",
     runtime: "codex",
     systemPrompt:
-      "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes.",
+      "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes. Review code for correctness, security, and maintainability when assigned.",
     enabled: false,
     permissionProfile: permissionProfile("architect"),
   },
