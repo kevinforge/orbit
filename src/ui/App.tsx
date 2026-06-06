@@ -968,22 +968,22 @@ export function App() {
         {interruptToast ? <div className="interruptToast">{interruptToast}</div> : null}
         {attachmentToast ? <div className="attachmentToast">{attachmentToast}</div> : null}
         <form className="composer" onSubmit={sendMessage}>
-          {pendingAttachments.length > 0 && (
-            <div className="attachmentPreviewBar">
-              {pendingAttachments.map((att) => (
-                <div key={att.id} className="attachmentPreviewItem">
-                  <img src={att.previewUrl} alt={att.filename} className="attachmentPreviewThumb" />
-                  <button
-                    type="button"
-                    className="attachmentPreviewRemove"
-                    onClick={() => removePendingAttachment(att.id)}
-                    title="移除图片"
-                  >&times;</button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="composerInputWrap">
+          <div className={`composerInputWrap${pendingAttachments.length > 0 ? " hasAttachments" : ""}`}>
+            {pendingAttachments.length > 0 && (
+              <div className="attachmentPreviewBar">
+                {pendingAttachments.map((att) => (
+                  <div key={att.id} className="attachmentPreviewItem">
+                    <img src={att.previewUrl} alt={att.filename} className="attachmentPreviewThumb" />
+                    <button
+                      type="button"
+                      className="attachmentPreviewRemove"
+                      onClick={() => removePendingAttachment(att.id)}
+                      title="移除图片"
+                    >&times;</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               ref={inputRef}
               value={content}

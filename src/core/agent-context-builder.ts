@@ -171,11 +171,19 @@ function renderCurrentTaskSection(agentMessage: string): string {
 
 function renderCurrentAttachmentsSection(imagePaths: string[]): string {
   if (imagePaths.length === 0) return "";
-  const lines = imagePaths.map((p) => `- ${escapeDynamicContent(p)}`);
+  const lines = imagePaths.map((p) => `  - ${escapeDynamicContent(p)}`);
   return [
     "<current-attachments>",
-    "The current task includes image attachments. Use the Read tool to view these images.",
+    "IMPORTANT: The current task includes image attachments. You MUST view these images FIRST before responding.",
+    "",
+    "Image files:",
     ...lines,
+    "",
+    "Choose the appropriate tool to view images:",
+    "  - Use Read tool to view image content directly",
+    "  - Use MCP image analysis tools (e.g., analyze_image) if available for detailed analysis",
+    "",
+    "After viewing all images, proceed with the task using the visual context.",
     "</current-attachments>",
   ].join("\n");
 }

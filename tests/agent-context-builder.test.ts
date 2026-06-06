@@ -545,7 +545,11 @@ test("includes <current-attachments> section when imagePaths provided", () => {
 
   assert.ok(context.includes("<current-attachments>"), "should have <current-attachments> opening tag");
   assert.ok(context.includes("</current-attachments>"), "should have </current-attachments> closing tag");
-  assert.ok(context.includes("image attachments"));
+  assert.ok(context.includes("IMPORTANT: The current task includes image attachments"), "should emphasize importance");
+  assert.ok(context.includes("You MUST view these images FIRST"), "should have explicit MUST instruction");
+  assert.ok(context.includes("Choose the appropriate tool"), "should mention tool choice");
+  assert.ok(context.includes("Read tool"), "should mention Read tool option");
+  assert.ok(context.includes("MCP image analysis tools"), "should mention MCP tools option");
   assert.ok(context.includes("/home/.orbit/conversations/ws1/conv1/attachments/img1.png"));
 });
 
