@@ -1258,13 +1258,13 @@ function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentSta
             {message.attachments.map((att) => (
               <a
                 key={att.id}
-                href={`/api/attachments/${att.path.split("conversations/").slice(-1)[0]?.split("/").slice(0, 2).join("/")}/${att.id}`}
+                href={att.url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="messageAttachmentLink"
               >
                 <img
-                  src={`/api/attachments/${att.path.split("conversations/").slice(-1)[0]?.split("/").slice(0, 2).join("/")}/${att.id}`}
+                  src={att.url}
                   alt={att.filename}
                   className="messageAttachmentThumb"
                   loading="lazy"

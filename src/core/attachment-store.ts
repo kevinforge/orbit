@@ -93,26 +93,42 @@ export class AttachmentStore {
         params.workspaceId, params.conversationId, draft.id,
       );
 
-      // Find the actual file in the draft directory using exact extension match
-      const ext = MIME_TO_EXT[draft.mimeType] ?? (path.extname(draft.filename).slice(1) || "bin");
-      const draftFile = path.join(draftDir, `${draft.id}.${ext}`);
-
-      const permPath = path.join(permDir, `${draft.id}.${ext}`);
-
-      if (fs.existsSync(draftFile)) {
-        // Move the file (copy + delete for cross-device safety)
-        fs.copyFileSync(draftFile, permPath);
-        fs.rmSync(draftFile, { force: true });
-        // Clean up draft directory
-        try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
+      // Find the actual file in draft directory by scanning known extensions
+      // (don't trust client-provided mimeType — it may differ from the saved file)
+      let draftFile: string | null = null;
+      let actualExt: string | null = null;
+      for (const ext of KNOWN_EXTENSIONS) {
+        const candidate = path.join(draftDir, `${draft.id}.${ext}`);
+        if (fs.existsSync(candidate)) {
+          draftFile = candidate;
+          actualExt = ext;
+          break;
+        }
       }
+
+      if (!draftFile || !actualExt) {
+        // Draft file was cleaned up or never existed — skip with warning
+        console.warn(`[orbit] draft file not found for attachment ${draft.id}, skipping`);
+        try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
+        continue;
+      }
+
+      const mimeType = actualExt === "jpg" ? "image/jpeg" : `image/${actualExt}` as MessageAttachment["mimeType"];
+      const permPath = path.join(permDir, `${draft.id}.${actualExt}`);
+
+      // Move the file (copy + delete for cross-device safety)
+      fs.copyFileSync(draftFile, permPath);
+      fs.rmSync(draftFile, { force: true });
+      // Clean up draft directory
+      try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
 
       results.push({
         id: draft.id,
         kind: "image",
-        mimeType: draft.mimeType as "image/png" | "image/jpeg" | "image/webp",
+        mimeType,
         filename: draft.filename,
         path: permPath,
+        url: `/api/attachments/${params.workspaceId}/${params.conversationId}/${draft.id}`,
         size: draft.size,
         createdAt: new Date().toISOString(),
       });

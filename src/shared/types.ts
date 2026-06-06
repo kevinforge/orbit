@@ -74,6 +74,7 @@ export type MessageAttachment = {
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   filename: string;
   path: string;
+  url: string;
   size: number;
   width?: number;
   height?: number;

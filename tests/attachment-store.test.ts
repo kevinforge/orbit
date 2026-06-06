@@ -152,6 +152,10 @@ test("commitDrafts moves files to permanent directory without client path", asyn
   // Permanent file should exist
   assert.ok(fs.existsSync(attachments[0].path));
   assert.deepEqual(fs.readFileSync(attachments[0].path), data);
+
+  // url field should be generated server-side
+  assert.ok(attachments[0].url);
+  assert.equal(attachments[0].url, `/api/attachments/ws1/conv1/${draft.id}`);
 });
 
 test("commitDrafts returns empty array for empty input", async () => {
@@ -165,6 +169,57 @@ test("commitDrafts returns empty array for empty input", async () => {
   });
 
   assert.deepEqual(result, []);
+});
+
+test("commitDrafts skips missing drafts with warning instead of creating empty records", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  // Commit a draft that was never saved
+  const attachments = await store.commitDrafts({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    draftAttachments: [{
+      id: "nonexistent-id",
+      mimeType: "image/png",
+      filename: "ghost.png",
+      size: 100,
+    }],
+  });
+
+  assert.equal(attachments.length, 0, "should not produce attachment for missing draft");
+});
+
+test("commitDrafts finds actual file regardless of client mimeType", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+  const data = makePngBuffer(200);
+
+  // Upload as PNG
+  const draft = await store.saveDraft({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    data,
+    mimeType: "image/png",
+    filename: "photo.png",
+  });
+
+  // Claim it's JPEG in commit — store should find the actual PNG file
+  const attachments = await store.commitDrafts({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    draftAttachments: [{
+      id: draft.id,
+      mimeType: "image/jpeg", // wrong! file is actually .png
+      filename: "photo.png",
+      size: draft.size,
+    }],
+  });
+
+  assert.equal(attachments.length, 1);
+  // mimeType should reflect the actual file, not the client claim
+  assert.equal(attachments[0].mimeType, "image/png");
+  assert.deepEqual(fs.readFileSync(attachments[0].path), data);
 });
 
 // --- getAttachment (exact extension match) ---
