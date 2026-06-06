@@ -1252,15 +1252,15 @@ function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentSta
         <strong>{author}</strong>
         {message.kind === "agent" && agent ? <RuntimeBadge runtime={agent.runtime} /> : null}
         {message.status ? <span className={`statusPill ${message.status}`}>{message.status}</span> : null}
-        {(isQueued || cancelling) && message.runId ? (
+        {((isQueued || isRunning) && message.runId) || cancelling ? (
           <button
             type="button"
             className="cancelRunBtn"
             onClick={cancelRun}
             disabled={cancelling}
-            title={cancelling ? "正在取消..." : "取消排队任务"}
+            title={cancelling ? "正在取消..." : isRunning ? "打断正在执行的任务" : "取消排队任务"}
           >
-            {cancelling ? "取消中..." : "取消"}
+            {cancelling ? "取消中..." : isRunning ? "打断" : "取消"}
           </button>
         ) : null}
         <DurationDisplay
