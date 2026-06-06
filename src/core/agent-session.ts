@@ -19,7 +19,11 @@ export type AgentSessionOptions = {
 
 type ActiveRun = {
   runId: string;
-  child: { kill: () => unknown };
+  child: {
+    kill: () => void;
+    pid: number;
+    interrupt: () => void;
+  };
 };
 
 export class AgentSession {
@@ -80,6 +84,27 @@ export class AgentSession {
     }
 
     this.setStatus("stopped");
+  }
+
+  /** Hard interrupt: terminate the entire process tree for the running agent. */
+  interrupt(runId: string): boolean {
+    if (!this.activeRun || this.activeRun.runId !== runId) {
+      return false;
+    }
+
+    // Terminate entire process tree
+    this.activeRun.child.interrupt();
+    this.activeRun = null;
+    this.setStatus("idle");
+
+    // Clear session to prevent resuming an interrupted run
+    this.options.sessionStore.clear(
+      this.options.runtime.kind,
+      this.options.conversationId,
+      this.id,
+    );
+
+    return true;
   }
 
   private isResumeFailure(

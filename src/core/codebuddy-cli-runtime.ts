@@ -2,7 +2,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import os from "node:os";
 
 import type { AgentId } from "../shared/types.ts";
-import type { AgentRuntime } from "./agent-runtime.ts";
+import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
+import { interruptProcessTree } from "./claude-cli-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
 
 export type CodeBuddyCliRunOptions = {
@@ -15,12 +16,6 @@ export type CodeBuddyCliRunOptions = {
   onOutput?: (text: string) => void;
   /** Kept for type compatibility with AgentRuntime interface. CodeBuddy does not support native image parameters; images are passed via prompt injection. */
   imagePaths?: string[];
-};
-
-export type CodeBuddyCliRunHandle = {
-  process: ChildProcessWithoutNullStreams;
-  result: Promise<string>;
-  sessionId: Promise<string | null>;
 };
 
 export function buildCodeBuddyCliArgs(options?: { resumeSessionId?: string }): string[] {
@@ -38,7 +33,7 @@ export function buildCodeBuddyCliArgs(options?: { resumeSessionId?: string }): s
   return args;
 }
 
-export function runCodeBuddyCli(options: CodeBuddyCliRunOptions): CodeBuddyCliRunHandle {
+export function runCodeBuddyCli(options: CodeBuddyCliRunOptions): AgentRuntimeRunHandle {
   const args = buildCodeBuddyCliArgs({ resumeSessionId: options.resumeSessionId });
   const command = buildCodeBuddyCliCommand(args);
   const child = spawn(command.file, command.args, {
@@ -46,6 +41,7 @@ export function runCodeBuddyCli(options: CodeBuddyCliRunOptions): CodeBuddyCliRu
     env: createEnv(options.agentId, options.env ?? process.env),
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
+    detached: os.platform() !== "win32", // Create process group on Unix for tree termination
   });
 
   let stdout = "";
@@ -109,7 +105,18 @@ export function runCodeBuddyCli(options: CodeBuddyCliRunOptions): CodeBuddyCliRu
   });
 
   child.stdin.end(options.prompt);
-  return { process: child, result, sessionId: sessionIdPromise };
+
+  const pid = child.pid!;
+
+  return {
+    process: {
+      kill: () => child.kill(),
+      pid,
+      interrupt: () => interruptProcessTree(pid),
+    },
+    result,
+    sessionId: sessionIdPromise,
+  };
 }
 
 export function buildCodeBuddyCliCommand(cliArgs?: string[]): { file: string; args: string[] } {

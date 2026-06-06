@@ -15,6 +15,8 @@ import { parseJsonObjects } from "./json-stream-parser.ts";
 type AgentRunner = {
   get(agentId: AgentId): {
     send(runId: string, prompt: string, imagePaths?: string[]): Promise<RunResult>;
+    /** Hard interrupt: terminate the running process tree for this agent. */
+    interrupt(runId: string): boolean;
   };
 };
 
@@ -123,7 +125,7 @@ export class RunManager {
     return run;
   }
 
-  cancel(runId: string): { ok: boolean; reason?: "not_found" | "not_cancellable" | "already_running" } {
+  cancel(runId: string): { ok: boolean; reason?: "not_found" | "not_cancellable" } {
     const run = this.runs.get(runId);
     if (!run) {
       return { ok: false, reason: "not_found" };
@@ -133,30 +135,52 @@ export class RunManager {
       return { ok: false, reason: "not_cancellable" };
     }
 
+    // Handle queued run cancellation
+    if (run.status === "queued") {
+      const queue = this.getQueue(run.agentId);
+      const idx = queue.findIndex((r) => r.id === runId);
+      if (idx !== -1) {
+        queue.splice(idx, 1);
+      }
+      this.markCancelled(run, "before start");
+      return { ok: true };
+    }
+
+    // Handle running run interruption (hard interrupt)
     if (run.status === "running") {
-      return { ok: false, reason: "already_running" };
+      const interrupted = this.options.agents.get(run.agentId).interrupt(runId);
+      if (!interrupted) {
+        // Process may have already exited naturally
+        return { ok: false, reason: "not_cancellable" };
+      }
+      this.markCancelled(run, "during execution");
+      return { ok: true };
     }
 
-    // run.status === "queued" — the only cancellable state
-    const queue = this.getQueue(run.agentId);
-    const idx = queue.findIndex((r) => r.id === runId);
-    if (idx !== -1) {
-      queue.splice(idx, 1);
-    }
-
-    this.markCancelled(run);
-    return { ok: true };
+    return { ok: false, reason: "not_cancellable" };
   }
 
-  private markCancelled(run: ManagedRun): void {
+  private markCancelled(run: ManagedRun, phase: "before start" | "during execution"): void {
     run.status = "cancelled";
     run.completedAt = new Date().toISOString();
+    // Only remove from active if interrupting a running run
+    if (phase === "during execution") {
+      this.active.delete(run.agentId);
+    }
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
-    this.appendActivity(run, "Cancelled by user before start.");
+
+    const activityText = phase === "before start"
+      ? "Cancelled by user before start."
+      : "Interrupted by user during execution.";
+    this.appendActivity(run, activityText);
+
+    const contentText = phase === "before start"
+      ? `${getAgentLabel(run.agentId)} queued run was cancelled.`
+      : `${getAgentLabel(run.agentId)} run was interrupted.`;
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} queued run was cancelled.`,
+      content: contentText,
       status: "cancelled",
       runStatus: "cancelled",
       activity: run.activity,
@@ -192,7 +216,7 @@ export class RunManager {
     for (const [agentId, queue] of this.queues) {
       while (queue.length > 0) {
         const run = queue.shift()!;
-        this.markCancelled(run);
+        this.markCancelled(run, "before start");
         cancelledQueuedRunIds.push(run.id);
       }
     }

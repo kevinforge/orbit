@@ -46,9 +46,9 @@ function controllableRuntime(result: string, sessionId: string | null = null) {
       calls.push(options);
       return {
         process: {
-          kill() {
-            return true;
-          },
+          kill() {},
+          pid: 12345,
+          interrupt() {},
         },
         result: Promise.resolve(result),
         sessionId: Promise.resolve(sessionId),
@@ -295,9 +295,9 @@ test("resume failure clears stale session and retries without resume", async () 
       calls.push(options);
       return {
         process: {
-          kill() {
-            return true;
-          },
+          kill() {},
+          pid: 12345,
+          interrupt() {},
         },
         result: calls.length === 1
           ? Promise.reject(new Error("No conversation found with session ID: bad-session"))
@@ -354,9 +354,9 @@ test("Claude API deserialize failure clears stale resume session and retries wit
       calls.push(options);
       return {
         process: {
-          kill() {
-            return true;
-          },
+          kill() {},
+          pid: 12345,
+          interrupt() {},
         },
         result: calls.length === 1
           ? Promise.reject(new Error("unknown API Error: 400 Failed to deserialize the JSON body into the target type: messages[1].role: unknown variant `system`, expected `user` or `assistant` at line 1 column 15698"))
