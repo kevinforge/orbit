@@ -1455,7 +1455,16 @@ button:active:not(:disabled) {
 
 .composerInputWrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-input);
+  transition:
+    border-color var(--transition-base),
+    background var(--transition-base),
+    box-shadow var(--transition-base);
 }
 
 .composer textarea {
@@ -1463,22 +1472,18 @@ button:active:not(:disabled) {
   min-width: 0;
   min-height: 42px;
   max-height: calc(22px * 6 + 12px);
-  border: 1.5px solid var(--border);
+  border: 0;
   border-radius: 14px;
   padding: 10px 16px;
   color: var(--text-primary);
-  background: var(--bg-input);
+  background: transparent;
   outline: none;
   font-size: 15px;
   font-weight: 500;
   line-height: 22px;
   resize: none;
-  transition: all var(--transition-base);
-}
-
-/* When attachments are present, add padding-top to accommodate preview bar */
-.composerInputWrap.hasAttachments textarea {
-  padding-top: 58px;
+  overflow-y: auto;
+  transition: background var(--transition-base);
 }
 
 .composer textarea::placeholder {
@@ -1486,7 +1491,7 @@ button:active:not(:disabled) {
   font-weight: 400;
 }
 
-.composer textarea:focus {
+.composerInputWrap:focus-within {
   border-color: var(--accent);
   background: var(--bg-surface);
   box-shadow:
@@ -3374,15 +3379,13 @@ button:active:not(:disabled) {
 /* --- Attachment Preview Bar (composer) --- */
 
 .attachmentPreviewBar {
-  position: absolute;
-  top: 6px;
-  left: 12px;
-  right: 12px;
   display: flex;
-  gap: 6px;
-  padding-bottom: 4px;
+  gap: 8px;
+  min-height: 56px;
+  padding: 8px 12px 6px;
   overflow-x: auto;
-  z-index: 1;
+  border-bottom: 1px solid var(--border-light);
+  background: rgba(255, 255, 255, 0.35);
 }
 
 .attachmentPreviewBar::-webkit-scrollbar {
@@ -3400,6 +3403,7 @@ button:active:not(:disabled) {
 
 .attachmentPreviewItem {
   position: relative;
+  display: flex;
   flex-shrink: 0;
   transition: transform var(--transition-fast);
 }
