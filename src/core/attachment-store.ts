@@ -6,6 +6,8 @@ import { ATTACHMENT_LIMITS, type MessageAttachment } from "../shared/types.ts";
 
 const ALLOWED_MIME_TYPES: ReadonlySet<string> = new Set<string>(ATTACHMENT_LIMITS.ALLOWED_MIME_TYPES);
 
+// MIME_TO_EXT must include all types from ATTACHMENT_LIMITS.ALLOWED_MIME_TYPES in types.ts
+// If adding a new MIME type, update both this map and ALLOWED_MIME_TYPES
 const MIME_TO_EXT: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
