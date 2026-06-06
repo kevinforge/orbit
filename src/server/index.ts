@@ -949,7 +949,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   // Commit draft attachments if present
   let attachments: import("../shared/types.ts").MessageAttachment[] | undefined;
   const draftAttachments = Array.isArray(input.draftAttachments)
-    ? input.draftAttachments as Array<{ id: string; path: string; mimeType: string; filename: string; size: number }>
+    ? input.draftAttachments as Array<{ id: string; mimeType: string; filename: string; size: number }>
     : [];
 
   if (draftAttachments.length > 0) {
@@ -975,11 +975,19 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   sendJson(res, 200, { ok: true, messageId: userMessage.id });
 }
 
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
+
 function readJson(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let body = "";
+    let bodySize = 0;
     req.setEncoding("utf8");
-    req.on("data", (chunk) => {
+    req.on("data", (chunk: string) => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        req.destroy(new Error("Request body too large"));
+        return;
+      }
       body += chunk;
     });
     req.on("end", () => {

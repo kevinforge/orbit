@@ -3415,17 +3415,13 @@ button:active:not(:disabled) {
 /* --- Attachment Toast --- */
 
 .attachmentToast {
-  position: absolute;
-  top: -36px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--secondary);
-  color: white;
+  text-align: center;
   padding: 6px 16px;
-  border-radius: 6px;
+  margin-bottom: 4px;
   font-size: 13px;
-  white-space: nowrap;
-  z-index: 10;
+  color: var(--secondary);
+  background: rgba(194, 65, 12, 0.08);
+  border-radius: 6px;
   animation: toastFadeIn 0.2s ease-out;
 }
 

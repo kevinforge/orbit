@@ -330,7 +330,7 @@ export function App() {
     }
     if (imageFiles.length === 0) return;
 
-    // Don't prevent default text paste — only handle images
+    // Prevent default to avoid the image being pasted as text; images are handled separately
     event.preventDefault();
 
     const maxFiles = 5;

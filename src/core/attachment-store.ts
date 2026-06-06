@@ -12,8 +12,29 @@ const MIME_TO_EXT: Record<string, string> = {
   "image/webp": "webp",
 };
 
+const KNOWN_EXTENSIONS = ["png", "jpg", "webp"];
+
 export class AttachmentStore {
   constructor(private readonly baseDir: string) {}
+
+  // --- Path safety ---
+
+  /** Resolve path segments under baseDir and verify no directory traversal. */
+  private safePath(...segments: string[]): string {
+    const resolved = path.resolve(this.baseDir, ...segments);
+    const base = path.resolve(this.baseDir) + path.sep;
+    if (!resolved.startsWith(base) && resolved !== path.resolve(this.baseDir)) {
+      throw new Error("Invalid path: directory traversal detected");
+    }
+    return resolved;
+  }
+
+  /** Validate that an id segment does not contain path separators or traversal. */
+  private static validateId(id: string): void {
+    if (id.includes("/") || id.includes("\\") || id.includes("..")) {
+      throw new Error("Invalid id: contains path separators or traversal");
+    }
+  }
 
   // --- Draft operations ---
 
@@ -26,8 +47,8 @@ export class AttachmentStore {
   }): Promise<{ id: string; path: string; size: number }> {
     const id = randomUUID();
     const ext = MIME_TO_EXT[params.mimeType] ?? (path.extname(params.filename).slice(1) || "bin");
-    const draftDir = path.join(
-      this.baseDir, "tmp", "attachments",
+    const draftDir = this.safePath(
+      "tmp", "attachments",
       params.workspaceId, params.conversationId, id,
     );
     fs.mkdirSync(draftDir, { recursive: true });
@@ -37,7 +58,8 @@ export class AttachmentStore {
   }
 
   async deleteDraft(workspaceId: string, conversationId: string, attachmentId: string): Promise<boolean> {
-    const draftBase = path.join(this.baseDir, "tmp", "attachments", workspaceId, conversationId, attachmentId);
+    AttachmentStore.validateId(attachmentId);
+    const draftBase = this.safePath("tmp", "attachments", workspaceId, conversationId, attachmentId);
     if (!fs.existsSync(draftBase)) return false;
     fs.rmSync(draftBase, { recursive: true, force: true });
     return true;
@@ -48,12 +70,16 @@ export class AttachmentStore {
   async commitDrafts(params: {
     workspaceId: string;
     conversationId: string;
-    draftAttachments: Array<{ id: string; path: string; mimeType: string; filename: string; size: number }>;
+    draftAttachments: Array<{ id: string; mimeType: string; filename: string; size: number }>;
   }): Promise<MessageAttachment[]> {
     if (params.draftAttachments.length === 0) return [];
 
-    const permDir = path.join(
-      this.baseDir, "conversations",
+    for (const draft of params.draftAttachments) {
+      AttachmentStore.validateId(draft.id);
+    }
+
+    const permDir = this.safePath(
+      "conversations",
       params.workspaceId, params.conversationId, "attachments",
     );
     fs.mkdirSync(permDir, { recursive: true });
@@ -61,16 +87,24 @@ export class AttachmentStore {
     const results: MessageAttachment[] = [];
 
     for (const draft of params.draftAttachments) {
+      // Rebuild draft directory from workspaceId + conversationId + id (not client path)
+      const draftDir = this.safePath(
+        "tmp", "attachments",
+        params.workspaceId, params.conversationId, draft.id,
+      );
+
+      // Find the actual file in the draft directory using exact extension match
       const ext = MIME_TO_EXT[draft.mimeType] ?? (path.extname(draft.filename).slice(1) || "bin");
+      const draftFile = path.join(draftDir, `${draft.id}.${ext}`);
+
       const permPath = path.join(permDir, `${draft.id}.${ext}`);
 
-      if (fs.existsSync(draft.path)) {
+      if (fs.existsSync(draftFile)) {
         // Move the file (copy + delete for cross-device safety)
-        fs.copyFileSync(draft.path, permPath);
-        fs.rmSync(draft.path, { force: true });
-        // Clean up draft directory if empty
-        const draftDir = path.dirname(draft.path);
-        try { fs.rmdirSync(draftDir); } catch { /* not empty or already gone */ }
+        fs.copyFileSync(draftFile, permPath);
+        fs.rmSync(draftFile, { force: true });
+        // Clean up draft directory
+        try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
       }
 
       results.push({
@@ -92,22 +126,24 @@ export class AttachmentStore {
     conversationId: string,
     attachmentId: string,
   ): Promise<{ data: Buffer; mimeType: string } | null> {
-    const permDir = path.join(this.baseDir, "conversations", workspaceId, conversationId, "attachments");
+    AttachmentStore.validateId(attachmentId);
+    const permDir = this.safePath("conversations", workspaceId, conversationId, "attachments");
     if (!fs.existsSync(permDir)) return null;
 
-    const files = fs.readdirSync(permDir);
-    const match = files.find((f) => f.startsWith(attachmentId + "."));
-    if (!match) return null;
+    // Exact extension match — iterate known extensions instead of prefix matching
+    for (const ext of KNOWN_EXTENSIONS) {
+      const candidate = path.join(permDir, `${attachmentId}.${ext}`);
+      if (fs.existsSync(candidate)) {
+        const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        return { data: fs.readFileSync(candidate), mimeType };
+      }
+    }
 
-    const filePath = path.join(permDir, match);
-    const ext = path.extname(match).slice(1);
-    const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-
-    return { data: fs.readFileSync(filePath), mimeType };
+    return null;
   }
 
   async deleteConversationAttachments(workspaceId: string, conversationId: string): Promise<void> {
-    const permDir = path.join(this.baseDir, "conversations", workspaceId, conversationId, "attachments");
+    const permDir = this.safePath("conversations", workspaceId, conversationId, "attachments");
     if (fs.existsSync(permDir)) {
       fs.rmSync(permDir, { recursive: true, force: true });
     }
@@ -116,7 +152,7 @@ export class AttachmentStore {
   // --- Cleanup ---
 
   async cleanupExpiredDrafts(): Promise<number> {
-    const tmpDir = path.join(this.baseDir, "tmp", "attachments");
+    const tmpDir = this.safePath("tmp", "attachments");
     if (!fs.existsSync(tmpDir)) return 0;
 
     const now = Date.now();

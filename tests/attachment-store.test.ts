@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -108,9 +109,9 @@ test("deleteDraft returns false for non-existent draft", async () => {
   assert.equal(deleted, false);
 });
 
-// --- commitDrafts ---
+// --- commitDrafts (rebuilt path from ws+conv+id, not client path) ---
 
-test("commitDrafts moves files to permanent directory", async () => {
+test("commitDrafts moves files to permanent directory without client path", async () => {
   const baseDir = makeTmpDir();
   const store = new AttachmentStore(baseDir);
   const data = makePngBuffer(300);
@@ -126,12 +127,12 @@ test("commitDrafts moves files to permanent directory", async () => {
   const draftPath = draft.path;
   assert.ok(fs.existsSync(draftPath));
 
+  // Note: no `path` field passed — store rebuilds from ws+conv+id
   const attachments = await store.commitDrafts({
     workspaceId: "ws1",
     conversationId: "conv1",
     draftAttachments: [{
       id: draft.id,
-      path: draft.path,
       mimeType: "image/png",
       filename: "draft.png",
       size: draft.size,
@@ -166,7 +167,7 @@ test("commitDrafts returns empty array for empty input", async () => {
   assert.deepEqual(result, []);
 });
 
-// --- getAttachment ---
+// --- getAttachment (exact extension match) ---
 
 test("getAttachment returns attachment data for committed file", async () => {
   const baseDir = makeTmpDir();
@@ -186,7 +187,6 @@ test("getAttachment returns attachment data for committed file", async () => {
     conversationId: "conv1",
     draftAttachments: [{
       id: draft.id,
-      path: draft.path,
       mimeType: "image/jpeg",
       filename: "photo.jpg",
       size: draft.size,
@@ -204,6 +204,35 @@ test("getAttachment returns null for non-existent file", async () => {
   const store = new AttachmentStore(baseDir);
 
   const result = await store.getAttachment("ws1", "conv1", "nonexistent");
+  assert.equal(result, null);
+});
+
+test("getAttachment does not match by prefix (exact extension only)", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+  const data = makePngBuffer(100);
+
+  const draft = await store.saveDraft({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    data,
+    mimeType: "image/png",
+    filename: "test.png",
+  });
+
+  await store.commitDrafts({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    draftAttachments: [{
+      id: draft.id,
+      mimeType: "image/png",
+      filename: "test.png",
+      size: draft.size,
+    }],
+  });
+
+  // Using a prefix of the id should NOT match
+  const result = await store.getAttachment("ws1", "conv1", draft.id.slice(0, 8));
   assert.equal(result, null);
 });
 
@@ -229,8 +258,8 @@ test("deleteConversationAttachments removes all attachments for a conversation",
     workspaceId: "ws1",
     conversationId: "conv1",
     draftAttachments: [
-      { id: draft1.id, path: draft1.path, mimeType: "image/png", filename: "img1.png", size: draft1.size },
-      { id: draft2.id, path: draft2.path, mimeType: "image/jpeg", filename: "img2.jpg", size: draft2.size },
+      { id: draft1.id, mimeType: "image/png", filename: "img1.png", size: draft1.size },
+      { id: draft2.id, mimeType: "image/jpeg", filename: "img2.jpg", size: draft2.size },
     ],
   });
 
@@ -272,4 +301,52 @@ test("cleanupExpiredDrafts removes old drafts but keeps fresh ones", async () =>
   assert.ok(cleaned >= 1, "should clean at least one expired draft");
   assert.ok(!fs.existsSync(oldFile), "old draft should be deleted");
   assert.ok(fs.existsSync(draft.path), "fresh draft should survive");
+});
+
+// --- Path traversal protection ---
+
+// Use a shallow base dir so that traversal actually escapes
+function makeShallowTmpDir(): string {
+  const dir = path.join(os.tmpdir(), `orbit-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+test("saveDraft rejects path traversal in workspaceId", async () => {
+  const baseDir = makeShallowTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  await assert.rejects(
+    () => store.saveDraft({
+      workspaceId: "../../../../etc",
+      conversationId: "conv1",
+      data: makePngBuffer(),
+      mimeType: "image/png",
+      filename: "evil.png",
+    }),
+    /directory traversal/,
+  );
+  fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+test("deleteDraft rejects path traversal in attachmentId", async () => {
+  const baseDir = makeShallowTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  await assert.rejects(
+    () => store.deleteDraft("ws1", "conv1", "../../../../../etc/passwd"),
+    /Invalid id/,
+  );
+  fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+test("getAttachment rejects path traversal in attachmentId", async () => {
+  const baseDir = makeShallowTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  await assert.rejects(
+    () => store.getAttachment("ws1", "conv1", "../../../../../etc/passwd"),
+    /Invalid id/,
+  );
+  fs.rmSync(baseDir, { recursive: true, force: true });
 });
