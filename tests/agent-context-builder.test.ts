@@ -531,3 +531,57 @@ test("all sections present with workspace config (regression check)", () => {
   assert.ok(context.includes("</orbit-context>"));
   assert.ok(context.includes("@developer: test"));
 });
+
+// --- <current-attachments> section ---
+
+test("includes <current-attachments> section when imagePaths provided", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: analyze screenshot",
+    imagePaths: ["/home/.orbit/conversations/ws1/conv1/attachments/img1.png"],
+  });
+
+  assert.ok(context.includes("<current-attachments>"), "should have <current-attachments> opening tag");
+  assert.ok(context.includes("</current-attachments>"), "should have </current-attachments> closing tag");
+  assert.ok(context.includes("image attachments"));
+  assert.ok(context.includes("/home/.orbit/conversations/ws1/conv1/attachments/img1.png"));
+});
+
+test("no <current-attachments> when imagePaths is empty", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    imagePaths: [],
+  });
+
+  assert.ok(!context.includes("<current-attachments>"));
+});
+
+test("no <current-attachments> when imagePaths is not provided", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+  });
+
+  assert.ok(!context.includes("<current-attachments>"));
+});
+
+test("<current-attachments> appears after <current-task>", () => {
+  const profiles = createDefaultAgentProfiles("D:/project");
+  const context = buildAgentContext({
+    agentId: "developer",
+    profiles,
+    agentMessage: "@developer: test",
+    imagePaths: ["/path/img.png"],
+  });
+
+  const taskIdx = context.indexOf("<current-task>");
+  const attachIdx = context.indexOf("<current-attachments>");
+  assert.ok(taskIdx < attachIdx, "<current-task> should come before <current-attachments>");
+});

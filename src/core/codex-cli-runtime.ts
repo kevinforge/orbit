@@ -16,6 +16,7 @@ export type CodexCliRunOptions = {
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;
+  imagePaths?: string[];
 };
 
 export type CodexCliRunHandle = {
@@ -24,9 +25,9 @@ export type CodexCliRunHandle = {
   sessionId: Promise<string | null>;
 };
 
-export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: string }): string[] {
+export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: string; imagePaths?: string[] }): string[] {
   if (options.resumeSessionId) {
-    return [
+    const args = [
       "exec",
       "resume",
       "--json",
@@ -34,9 +35,15 @@ export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: stri
       options.resumeSessionId,
       "-",
     ];
+    if (options.imagePaths?.length) {
+      for (const imgPath of options.imagePaths) {
+        args.push("--image", imgPath);
+      }
+    }
+    return args;
   }
 
-  return [
+  const args = [
     "exec",
     "--json",
     "--cd",
@@ -46,11 +53,17 @@ export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: stri
     "--dangerously-bypass-approvals-and-sandbox",
     "-",
   ];
+  if (options.imagePaths?.length) {
+    for (const imgPath of options.imagePaths) {
+      args.push("--image", imgPath);
+    }
+  }
+  return args;
 }
 
 export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
   const command = buildCodexCliCommand(
-    { cwd: options.cwd, resumeSessionId: options.resumeSessionId },
+    { cwd: options.cwd, resumeSessionId: options.resumeSessionId, imagePaths: options.imagePaths },
     options.env ?? process.env,
   );
   const env = createCodexEnv(options.agentId, options.env ?? process.env);
@@ -126,7 +139,7 @@ export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
 }
 
 export function buildCodexCliCommand(
-  options: { cwd: string; resumeSessionId?: string },
+  options: { cwd: string; resumeSessionId?: string; imagePaths?: string[] },
   env: NodeJS.ProcessEnv = process.env,
 ): { file: string; args: string[] } {
   const args = buildCodexCliArgs(options);

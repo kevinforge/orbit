@@ -14,6 +14,7 @@ export type ClaudeCliRunOptions = {
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;
+  imagePaths?: string[];
 };
 
 export type ClaudeCliRunHandle = {
@@ -22,7 +23,7 @@ export type ClaudeCliRunHandle = {
   sessionId: Promise<string | null>;
 };
 
-export function buildClaudeCliArgs(options?: { resumeSessionId?: string }): string[] {
+export function buildClaudeCliArgs(options?: { resumeSessionId?: string; imagePaths?: string[] }): string[] {
   const args = [
     "--print",
     "--verbose",
@@ -35,11 +36,16 @@ export function buildClaudeCliArgs(options?: { resumeSessionId?: string }): stri
   if (options?.resumeSessionId) {
     args.push("--resume", options.resumeSessionId);
   }
+  if (options?.imagePaths?.length) {
+    for (const imgPath of options.imagePaths) {
+      args.push("--image", imgPath);
+    }
+  }
   return args;
 }
 
 export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
-  const args = buildClaudeCliArgs({ resumeSessionId: options.resumeSessionId });
+  const args = buildClaudeCliArgs({ resumeSessionId: options.resumeSessionId, imagePaths: options.imagePaths });
   const command = buildClaudeCliCommand(args);
   const child = spawn(command.file, command.args, {
     cwd: options.cwd,

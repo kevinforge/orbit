@@ -47,7 +47,7 @@ export class AgentSession {
     }
   }
 
-  send(runId: string, prompt: string): Promise<RunResult> {
+  send(runId: string, prompt: string, imagePaths?: string[]): Promise<RunResult> {
     if (this.activeRun) {
       return Promise.reject(new Error(`${this.id} is already running`));
     }
@@ -60,13 +60,13 @@ export class AgentSession {
       this.options.runtime.kind, this.options.conversationId, this.id,
     );
 
-    return this.executeRun(runId, prompt, runIndex, existingSession?.sessionId ?? undefined)
+    return this.executeRun(runId, prompt, runIndex, existingSession?.sessionId ?? undefined, imagePaths)
       .catch((error: unknown) => {
         if (this.isResumeFailure(error, existingSession)) {
           this.options.sessionStore.clear(
             this.options.runtime.kind, this.options.conversationId, this.id,
           );
-          return this.executeRun(runId, prompt, runIndex, undefined);
+          return this.executeRun(runId, prompt, runIndex, undefined, imagePaths);
         }
 
         throw error;
@@ -107,7 +107,7 @@ export class AgentSession {
     );
   }
 
-  private executeRun(runId: string, prompt: string, runIndex: number, resumeSessionId?: string): Promise<RunResult> {
+  private executeRun(runId: string, prompt: string, runIndex: number, resumeSessionId?: string, imagePaths?: string[]): Promise<RunResult> {
     this.setStatus("running");
 
     const handle = this.options.runtime.run({
@@ -116,6 +116,7 @@ export class AgentSession {
       prompt,
       permissionProfile: this.options.permissionProfile,
       resumeSessionId,
+      imagePaths,
       onOutput: (text) => {
         this.options.eventBus.publish({
           type: "terminal.chunk",

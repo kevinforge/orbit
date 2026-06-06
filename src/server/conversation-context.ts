@@ -76,9 +76,9 @@ export class ConversationContext {
       agents: this.agents,
       messages: this.messages,
       eventBus,
-      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string) => {
+      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
         const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
-        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig });
+        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig, imagePaths });
       },
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
@@ -151,9 +151,9 @@ export class ConversationContext {
       agents: newAgents,
       messages: this.messages,
       eventBus,
-      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string) => {
+      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
         const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
-        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig });
+        return buildAgentContext({ agentId, profiles, agentMessage: prompt, history, workspaceConfig: self._workspaceConfig, imagePaths });
       },
       onRunCompleted: (message) => {
         self.messageRouter.process(message);

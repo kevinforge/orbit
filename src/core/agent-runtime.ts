@@ -10,6 +10,7 @@ export type AgentRuntimeRunOptions = {
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;
+  imagePaths?: string[];
 };
 
 export type AgentRuntimeRunHandle = {

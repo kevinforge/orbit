@@ -115,3 +115,27 @@ test("extractSessionId returns first init event match", () => {
   ].join("\n");
   assert.equal(extractSessionId(output), "real-session");
 });
+
+test("builds CLI args with --image flags when imagePaths provided", () => {
+  const args = buildClaudeCliArgs({ imagePaths: ["/path/to/img1.png", "/path/to/img2.jpg"] });
+  assert.deepEqual(
+    args.slice(-4),
+    ["--image", "/path/to/img1.png", "--image", "/path/to/img2.jpg"],
+  );
+});
+
+test("builds CLI args without --image when imagePaths is empty", () => {
+  const args = buildClaudeCliArgs({ imagePaths: [] });
+  assert.equal(args.includes("--image"), false);
+});
+
+test("builds CLI args with both --resume and --image", () => {
+  const args = buildClaudeCliArgs({
+    resumeSessionId: "sess-123",
+    imagePaths: ["/path/to/img.png"],
+  });
+  assert.ok(args.includes("--resume"));
+  assert.ok(args.includes("sess-123"));
+  assert.ok(args.includes("--image"));
+  assert.ok(args.includes("/path/to/img.png"));
+});

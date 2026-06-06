@@ -13,6 +13,7 @@ export type CodeBuddyCliRunOptions = {
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;
+  imagePaths?: string[];
 };
 
 export type CodeBuddyCliRunHandle = {

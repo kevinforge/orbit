@@ -15,6 +15,7 @@ export type AgentContextInput = {
   agentMessage: string;
   history?: AgentHistoryEntry[];
   workspaceConfig?: WorkspaceRuntimeConfig;
+  imagePaths?: string[];
 };
 
 /**
@@ -168,6 +169,17 @@ function renderCurrentTaskSection(agentMessage: string): string {
   ].join("\n");
 }
 
+function renderCurrentAttachmentsSection(imagePaths: string[]): string {
+  if (imagePaths.length === 0) return "";
+  const lines = imagePaths.map((p) => `- ${escapeDynamicContent(p)}`);
+  return [
+    "<current-attachments>",
+    "The current task includes image attachments. Use the Read tool to view these images.",
+    ...lines,
+    "</current-attachments>",
+  ].join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Main builder
 // ---------------------------------------------------------------------------
@@ -190,6 +202,8 @@ export function buildAgentContext(input: AgentContextInput): string {
     ...(input.history?.length ? [renderHistorySection(input.history)] : []),
     // Current task (always present)
     renderCurrentTaskSection(input.agentMessage),
+    // Image attachments (optional, injected after current-task)
+    ...(input.imagePaths?.length ? [renderCurrentAttachmentsSection(input.imagePaths)] : []),
   ].filter((s) => s !== "");
 
   return [

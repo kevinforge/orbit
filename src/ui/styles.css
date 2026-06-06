@@ -3365,3 +3365,95 @@ button:active:not(:disabled) {
 .contextCreateFormActions button:last-child:hover {
   background: var(--border-light);
 }
+
+/* --- Attachment Preview Bar (composer) --- */
+
+.attachmentPreviewBar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px 0;
+  overflow-x: auto;
+}
+
+.attachmentPreviewItem {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.attachmentPreviewThumb {
+  width: 60px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-base);
+}
+
+.attachmentPreviewRemove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+}
+
+.attachmentPreviewRemove:hover {
+  background: var(--secondary);
+}
+
+/* --- Attachment Toast --- */
+
+.attachmentToast {
+  position: absolute;
+  top: -36px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--secondary);
+  color: white;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+  z-index: 10;
+  animation: toastFadeIn 0.2s ease-out;
+}
+
+/* --- Message Attachments --- */
+
+.messageAttachments {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.messageAttachmentLink {
+  display: block;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  transition: box-shadow 0.15s ease;
+}
+
+.messageAttachmentLink:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.messageAttachmentThumb {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  display: block;
+  background: var(--bg-base);
+}

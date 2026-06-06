@@ -68,6 +68,34 @@ export type AgentState = {
   runtimeAvailable?: boolean;
 };
 
+export type MessageAttachment = {
+  id: string;
+  kind: "image";
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  filename: string;
+  path: string;
+  size: number;
+  width?: number;
+  height?: number;
+  createdAt: string;
+};
+
+export type DraftAttachmentInfo = {
+  id: string;
+  kind: "image";
+  mimeType: string;
+  filename: string;
+  size: number;
+  previewUrl: string;
+};
+
+export const ATTACHMENT_LIMITS = {
+  MAX_FILE_SIZE: 5 * 1024 * 1024,
+  MAX_FILES_PER_MESSAGE: 5,
+  ALLOWED_MIME_TYPES: ["image/png", "image/jpeg", "image/webp"],
+  DRAFT_MAX_AGE_MS: 24 * 60 * 60 * 1000,
+} as const;
+
 export type ChatMessageKind = "user" | "agent" | "system";
 
 export type ChatMessageStatus = "sent" | "running" | "done" | "error" | "cancelled";
@@ -98,6 +126,7 @@ export type ChatMessage = {
   completedAt?: string;
   sessionId?: string;
   runIndex?: number;
+  attachments?: MessageAttachment[];
 };
 
 export type RunResult = {
