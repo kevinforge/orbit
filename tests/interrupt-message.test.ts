@@ -57,16 +57,56 @@ describe("interrupt produces no system message (#70)", () => {
   });
 
   test("interrupt button tooltip is user-friendly", () => {
-    const tooltipMatch = appSource.match(/title="([^"]*停止[^"]*协作[^"]*)"/);
-    assert.ok(tooltipMatch, "Interrupt button must have a tooltip containing '停止' and '协作'");
+    // Both normal and post-interrupt tooltips should be free of internal terms
+    const tooltipMatches = appSource.matchAll(/title=\{hasInterruptedCurrentChain \? "([^"]*)" : "([^"]*)"\}/g);
+    for (const match of tooltipMatches) {
+      const [_, postInterruptTooltip, normalTooltip] = match;
+      const tooltips = [postInterruptTooltip, normalTooltip];
+      const forbiddenTerms = ["run", "supervisor", "自动触发", "数字员工", "协作链", "指派"];
 
-    const tooltip = tooltipMatch[1];
-    const forbiddenTerms = ["run", "supervisor", "自动触发", "数字员工", "协作链", "指派"];
-    for (const term of forbiddenTerms) {
-      assert.ok(
-        !tooltip.includes(term),
-        `Tooltip must not contain internal term "${term}", got: "${tooltip}"`,
-      );
+      for (const tooltip of tooltips) {
+        for (const term of forbiddenTerms) {
+          assert.ok(
+            !tooltip.includes(term),
+            `Tooltip must not contain internal term "${term}", got: "${tooltip}"`,
+          );
+        }
+      }
     }
+  });
+
+  test("interrupt button has disabled state after successful interrupt", () => {
+    assert.ok(
+      appSource.includes("hasInterruptedCurrentChain"),
+      "App must track hasInterruptedCurrentChain state",
+    );
+
+    // Button must be disabled when interrupted
+    const disabledMatch = appSource.match(/disabled=\{isInterrupting \|\| ([^}]+)\}/);
+    assert.ok(
+      disabledMatch && disabledMatch[1].includes("hasInterruptedCurrentChain"),
+      "Interrupt button must be disabled when hasInterruptedCurrentChain is true",
+    );
+
+    // Button text must change to "已打断"
+    assert.ok(
+      appSource.includes('hasInterruptedCurrentChain ? "已打断"'),
+      "Button must show '已打断' after successful interrupt",
+    );
+  });
+
+  test("interrupted state resets when no runs remain and on new message", () => {
+    // useEffect reset when hasRunningOrQueued becomes false
+    const useEffectPattern = /useEffect\(\(\) => \{[\s\S]*?if \(!hasRunningOrQueued && hasInterruptedCurrentChain\)/;
+    assert.ok(
+      useEffectPattern.test(appSource),
+      "hasInterruptedCurrentChain must reset via useEffect when hasRunningOrQueued becomes false",
+    );
+
+    // Reset on new message send
+    assert.ok(
+      appSource.includes("setHasInterruptedCurrentChain(false)"),
+      "hasInterruptedCurrentChain must reset when sending a new message",
+    );
   });
 });

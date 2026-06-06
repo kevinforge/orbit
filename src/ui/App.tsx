@@ -22,6 +22,7 @@ export function App() {
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
   const [isInterrupting, setIsInterrupting] = useState(false);
+  const [hasInterruptedCurrentChain, setHasInterruptedCurrentChain] = useState(false);
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [cursorIndex, setCursorIndex] = useState(0);
@@ -147,6 +148,13 @@ export function App() {
       });
     }
   }, [state.workspace.id]);
+
+  // Reset interrupted state when no more running/queued runs remain
+  useEffect(() => {
+    if (!hasRunningOrQueued && hasInterruptedCurrentChain) {
+      setHasInterruptedCurrentChain(false);
+    }
+  }, [hasRunningOrQueued]);
 
   // Refresh conversations when workspaces list changes
   useEffect(() => {
@@ -287,6 +295,7 @@ export function App() {
       }
 
       setContent("");
+      setHasInterruptedCurrentChain(false);
       isNearBottomRef.current = true;
       setIsNearBottom(true);
       setShowNewMessageHint(false);
@@ -309,7 +318,10 @@ export function App() {
       if (!response.ok) {
         throw new Error(`Interrupt request failed: ${response.status}`);
       }
-      // State will update via SSE events
+      const data = await response.json();
+      if ((data.cancelledQueuedRunIds?.length ?? 0) > 0 || (data.suppressedRunningRunIds?.length ?? 0) > 0) {
+        setHasInterruptedCurrentChain(true);
+      }
     } catch {
       setState((current) => ({
         ...current,
@@ -927,10 +939,10 @@ export function App() {
                 type="button"
                 className="interruptBtn"
                 onClick={interruptChain}
-                disabled={isInterrupting}
-                title="停止后续自动协作"
+                disabled={isInterrupting || hasInterruptedCurrentChain}
+                title={hasInterruptedCurrentChain ? "后续自动协作已停止，当前任务会继续完成" : "停止后续自动协作"}
               >
-                {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
+                {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : hasInterruptedCurrentChain ? "已打断" : "打断"}
               </button>
             ) : null}
             <button type="submit" disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
