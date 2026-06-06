@@ -928,7 +928,7 @@ export function App() {
                 className="interruptBtn"
                 onClick={interruptChain}
                 disabled={isInterrupting}
-                title="打断当前自动协作链，已启动的数字员工会继续完成当前任务但其后续指派将被忽略"
+                title="停止后续自动协作"
               >
                 {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
               </button>

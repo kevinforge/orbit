@@ -16,6 +16,9 @@ import { DEFAULT_WORKSPACE_CONFIG } from "../shared/types.ts";
 
 const MAX_ROUTE_DEPTH = 10;
 
+/** User-facing message shown when the auto-collaboration chain is interrupted. */
+export const INTERRUPT_SYSTEM_MESSAGE = "已停止后续自动协作。";
+
 export type ConversationContextOptions = {
   workspaceId: string;
   conversationId: string;
@@ -136,7 +139,7 @@ export class ConversationContext {
     if (result.cancelledQueuedRunIds.length > 0 || result.suppressedRunningRunIds.length > 0) {
       const msg = this.messages.add({
         kind: "system",
-        content: "用户已打断当前自动协作链。已启动的数字员工会继续完成当前 run，但其后续指派和 supervisor 自动触发将被忽略。你可以直接发送新的任务。",
+        content: INTERRUPT_SYSTEM_MESSAGE,
         status: "done",
       });
       this.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: msg });
