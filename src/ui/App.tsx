@@ -22,6 +22,7 @@ export function App() {
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
   const [isInterrupting, setIsInterrupting] = useState(false);
+  const [interruptToast, setInterruptToast] = useState<string | null>(null);
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [cursorIndex, setCursorIndex] = useState(0);
@@ -309,7 +310,11 @@ export function App() {
       if (!response.ok) {
         throw new Error(`Interrupt request failed: ${response.status}`);
       }
-      // State will update via SSE events
+      const data = await response.json();
+      if ((data.cancelledQueuedRunIds?.length ?? 0) > 0 || (data.suppressedRunningRunIds?.length ?? 0) > 0) {
+        setInterruptToast("已打断后续自动协作");
+        window.setTimeout(() => setInterruptToast(null), 3000);
+      }
     } catch {
       setState((current) => ({
         ...current,
@@ -878,6 +883,7 @@ export function App() {
           )}
         </div>
 
+        {interruptToast ? <div className="interruptToast">{interruptToast}</div> : null}
         <form className="composer" onSubmit={sendMessage}>
           <div className="composerInputWrap">
             <textarea
@@ -928,7 +934,7 @@ export function App() {
                 className="interruptBtn"
                 onClick={interruptChain}
                 disabled={isInterrupting}
-                title="打断当前自动协作链，已启动的数字员工会继续完成当前任务但其后续指派将被忽略"
+                title="停止后续自动协作"
               >
                 {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
               </button>
