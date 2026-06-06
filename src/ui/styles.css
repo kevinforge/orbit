@@ -1466,7 +1466,6 @@ button:active:not(:disabled) {
   border: 1.5px solid var(--border);
   border-radius: 14px;
   padding: 10px 16px;
-  padding-top: var(--composer-padding-top, 10px);
   color: var(--text-primary);
   background: var(--bg-input);
   outline: none;
@@ -1477,9 +1476,11 @@ button:active:not(:disabled) {
   transition: all var(--transition-base);
 }
 
-/* When attachments are present, increase textarea padding-top to accommodate preview bar */
+/* When attachments are present, textarea adapts to accommodate preview bar */
 .composerInputWrap.hasAttachments textarea {
-  --composer-padding-top: 74px;
+  /* Calculate: top offset (6px) + thumb height (48px) + gap (4px) + text line (22px) + bottom padding (8px) */
+  min-height: calc(6px + 48px + 4px + 22px + 8px);
+  padding-top: calc(6px + 48px + 4px);
 }
 
 .composer textarea::placeholder {
@@ -3376,12 +3377,12 @@ button:active:not(:disabled) {
 
 .attachmentPreviewBar {
   position: absolute;
-  top: 8px;
-  left: 14px;
-  right: 14px;
+  top: 6px;
+  left: 12px;
+  right: 12px;
   display: flex;
-  gap: 8px;
-  padding-bottom: 6px;
+  gap: 6px;
+  padding-bottom: 4px;
   overflow-x: auto;
   z-index: 1;
 }
@@ -3410,8 +3411,8 @@ button:active:not(:disabled) {
 }
 
 .attachmentPreviewThumb {
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   object-fit: cover;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-light);
@@ -3425,10 +3426,10 @@ button:active:not(:disabled) {
 
 .attachmentPreviewRemove {
   position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 18px;
-  height: 18px;
+  top: -5px;
+  right: -5px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--text-tertiary);
   color: white;
@@ -3437,7 +3438,7 @@ button:active:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1;
   padding: 0;
