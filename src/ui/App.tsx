@@ -1661,6 +1661,34 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
     else if (expandedIndex !== null && expandedIndex > index) setExpandedIndex(expandedIndex - 1);
   }
 
+  function generateUniqueId(sourceId: string, existingConfigs: AgentConfig[]): string {
+    const existingIds = new Set(existingConfigs.map((c) => c.id));
+    let newId = `${sourceId}-copy`;
+    let counter = 1;
+    while (existingIds.has(newId)) {
+      newId = `${sourceId}-copy-${counter}`;
+      counter++;
+    }
+    return newId;
+  }
+
+  function copyConfig(index: number) {
+    const source = configs[index];
+    const newId = generateUniqueId(source.id, configs);
+    const copy: AgentConfig = {
+      ...structuredClone(source),
+      id: newId,
+      name: `${source.name} (副本)`,
+      enabled: false,
+    };
+    // 清空监督员的触发器配置，避免冲突
+    if (copy.triggers) {
+      copy.triggers = undefined;
+    }
+    setConfigs((prev) => [copy, ...prev]);
+    setExpandedIndex(0);
+  }
+
   async function save() {
     setSaving(true);
     setError("");
@@ -1732,6 +1760,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
                       {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
                     </div>
                     <div className="configCardActions">
+                      <button type="button" className="copyBtn" onClick={(e) => { e.stopPropagation(); copyConfig(i); }} title="复制">📋</button>
                       <button type="button" className="removeBtn" onClick={(e) => { e.stopPropagation(); removeConfig(i); }} title="删除">&times;</button>
                       <span className={`configChevron ${isExpanded ? "configChevronOpen" : ""}`}>▶</span>
                     </div>

@@ -2674,6 +2674,23 @@ button:active:not(:disabled) {
   color: var(--error);
 }
 
+.copyBtn {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+}
+
+.copyBtn:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
 /* ── Toggle Switch ──────────────────────────────────────────── */
 
 .toggleSwitch {
