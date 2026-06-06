@@ -99,12 +99,12 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
     {
       id: "architect",
       name: "Architect",
-      description: "Designs technical boundaries, reviews implementation risk.",
+      description: "Designs technical boundaries, reviews code and implementation risk.",
       role: "architect",
       runtime: runtimeOverrides.architect ?? "codex",
       cwd,
       systemPrompt:
-        "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes.",
+        "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes. Review code for correctness, security, and maintainability when assigned.",
       permissionProfile: permissionProfile("architect"),
     },
     {
