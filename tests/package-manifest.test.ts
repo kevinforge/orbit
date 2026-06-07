@@ -15,7 +15,7 @@ function readPackageJson(): PackageJson {
 test("npm package publishes only the CLI launcher and built artifacts", () => {
   const manifest = readPackageJson();
 
-  assert.deepEqual(manifest.files, ["bin/", "dist/"]);
+  assert.deepEqual(manifest.files, ["bin/", "dist/", "install.cjs"]);
 });
 
 test("package has build script using Bun compile", () => {

@@ -21,3 +21,7 @@ orbit-ui-*.png
 
 # npm pack output
 *.tgz
+
+# standalone binary placed by postinstall
+bin/orbit
+bin/orbit.exe

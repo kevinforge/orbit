@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Orbit - local-first chat control surface for coding agents.
-// For production use, build the standalone binary:
-//   bun build src/standalone-entry.ts --compile --bytecode --minify --sourcemap=none --outfile=dist/bin/orbit
-// For development, run:
-//   npm run dev
+//
+// Resolution order:
+//   1. bin/orbit (native binary placed by `npm install -g` → postinstall)
+//   2. dist/bin/orbit (build output directory)
+//   3. npx tsx src/server/index.ts (development fallback)
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -12,31 +13,36 @@ import fs from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
-
-// Try standalone binary first
 const ext = process.platform === "win32" ? ".exe" : "";
-const standaloneBinary = path.join(root, "dist", "bin", `orbit${ext}`);
-if (fs.existsSync(standaloneBinary)) {
-  const child = spawn(standaloneBinary, [], {
+const binaryName = `orbit${ext}`;
+
+// Priority 1: bin/orbit (placed by postinstall during npm install -g)
+const binBinary = path.join(__dirname, binaryName);
+// Priority 2: dist/bin/orbit (build output)
+const distBinary = path.join(root, "dist", "bin", binaryName);
+
+const binary = fs.existsSync(binBinary) ? binBinary
+  : fs.existsSync(distBinary) ? distBinary
+  : null;
+
+if (binary) {
+  spawn(binary, [], {
     stdio: "inherit",
     cwd: process.cwd(),
     env: {
       ...process.env,
       ORBIT_UI_DIR: process.env.ORBIT_UI_DIR ?? path.join(root, "dist", "ui"),
     },
-  });
-  child.on("exit", (code) => process.exit(code ?? 1));
+  }).on("exit", (code) => process.exit(code ?? 1));
 } else {
-  // Fallback: launch via tsx (development mode)
-  console.error("orbit: standalone binary not found, falling back to development mode.");
-  console.error("Run `npm run build` to create the standalone binary.");
-  const child = spawn("npx", ["tsx", path.join(root, "src", "server", "index.ts")], {
+  // Fallback: development mode
+  console.error("orbit: standalone binary not found. Run `npm run build` to create it.");
+  spawn("npx", ["tsx", path.join(root, "src", "server", "index.ts")], {
     stdio: "inherit",
     cwd: process.cwd(),
     env: {
       ...process.env,
       ORBIT_DIST_UI: path.join(root, "dist", "ui"),
     },
-  });
-  child.on("exit", (code) => process.exit(code ?? 1));
+  }).on("exit", (code) => process.exit(code ?? 1));
 }
