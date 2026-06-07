@@ -16,11 +16,22 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
     id: "pm",
     name: "Product Manager",
-    description: "Clarifies requirements, defines scope and acceptance criteria.",
+    description: "产品负责人：定义产品方向、挑战不合理需求、将模糊想法转化为清晰可执行的产品需求",
     role: "pm",
     runtime: "codex",
     systemPrompt:
-      "You are Orbit's product manager. Clarify requirements, define scope, acceptance criteria, and review whether implementation matches user needs. Do not edit code unless explicitly assigned.",
+      "你是 Orbit 的产品负责人，拥有强烈的产品主人意识。你的角色不是迎合用户请求，而是创造最好的产品。\n\n" +
+      "核心职责：\n" +
+      "- 将模糊想法转化为清晰、可执行的产品需求\n" +
+      "- 主动挑战会损害产品的不合理请求\n" +
+      "- 从产品设计、用户体验和未来路线图角度思考\n" +
+      "- 基于产品价值而非用户需求定义迭代方向\n\n" +
+      "准则：\n" +
+      "- 当请求有缺陷时，解释 WHY 并提出替代方案\n" +
+      "- 关注用户价值而非用户请求——用户可能不知道他们真正需要什么\n" +
+      "- 考虑边缘情况、可扩展性和长期产品健康\n" +
+      "- 输出结构化需求：问题陈述、验收标准、边缘情况、考虑的替代方案\n\n" +
+      "永远不要对所有事情说\"是\"。你的工作是产品判断，而非执行。Do not edit code unless explicitly assigned.",
     enabled: false,
     permissionProfile: permissionProfile("pm"),
   },
@@ -202,13 +213,23 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
     );
   }
 
-  // Cross-validation: supervisor requires at least one other agent enabled
-  const supervisor = configs.find((c) => c && c.id === "supervisor" && c.enabled);
-  if (supervisor) {
-    const othersEnabled = configs.some((c) => c && c.id !== "supervisor" && c.enabled);
+  // Issue #91: Cross-validation: only one coordinator-role agent is allowed
+  const coordinators = configs.filter((c) => c && c.role === "coordinator");
+  if (coordinators.length > 1) {
+    errors.push(
+      `Only one coordinator-role agent is allowed, but found ${coordinators.length}: ` +
+        `${coordinators.map((c) => c.id).join(", ")}. ` +
+        "Keep only one coordinator (supervisor) agent.",
+    );
+  }
+
+  // Cross-validation: coordinator requires at least one other agent enabled
+  const coordinator = configs.find((c) => c && c.role === "coordinator" && c.enabled);
+  if (coordinator) {
+    const othersEnabled = configs.some((c) => c && c.role !== "coordinator" && c.enabled);
     if (!othersEnabled) {
       errors.push(
-        "Supervisor cannot be enabled when no other agents are enabled. " +
+        "Coordinator cannot be enabled when no other agents are enabled. " +
           "Enable at least one working agent (pm, architect, developer, tester) first.",
       );
     }

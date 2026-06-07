@@ -469,6 +469,7 @@ test("coordinator is a valid role accepted by validation", () => {
     { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
       permissionProfile: { canReadFiles: false, canWriteFiles: false, canRunCommands: false, canInstallDependencies: false, canGitCommit: false, allowedDirectories: [] },
     },
+    { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);
@@ -479,6 +480,7 @@ test("coordinator permissionProfile with empty allowedDirectories is valid", () 
     { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
       permissionProfile: { canReadFiles: false, canWriteFiles: false, canRunCommands: false, canInstallDependencies: false, canGitCommit: false, allowedDirectories: [] },
     },
+    { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);
@@ -614,6 +616,7 @@ test("accepts triggers with valid maxTriggersPerConversation and debounceMs", ()
       systemPrompt: "do stuff", enabled: true,
       triggers: { maxTriggersPerConversation: 10, debounceMs: 5000 },
     },
+    { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);
@@ -627,7 +630,8 @@ test("rejects supervisor enabled with no other agents enabled", () => {
     { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: false },
   ];
   const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("Supervisor cannot be enabled")), `Expected supervisor cross-validation error, got: ${JSON.stringify(errors)}`);
+  // Issue #91: Error message uses "Coordinator" instead of "Supervisor"
+  assert.ok(errors.some((e) => e.includes("Coordinator cannot be enabled")), `Expected coordinator cross-validation error, got: ${JSON.stringify(errors)}`);
 });
 
 test("accepts supervisor enabled when at least one other agent is enabled", () => {
@@ -644,7 +648,8 @@ test("rejects supervisor enabled alone (single config)", () => {
     { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("Supervisor cannot be enabled")), `Expected supervisor-alone error, got: ${JSON.stringify(errors)}`);
+  // Issue #91: Error message uses "Coordinator" instead of "Supervisor"
+  assert.ok(errors.some((e) => e.includes("Coordinator cannot be enabled")), `Expected coordinator-alone error, got: ${JSON.stringify(errors)}`);
 });
 
 test("accepts supervisor disabled when alone", () => {

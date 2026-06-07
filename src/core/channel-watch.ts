@@ -21,6 +21,7 @@ type TriggerContext = {
 export class ChannelWatchService {
   private readonly triggerContexts: Map<AgentId, TriggerContext> = new Map();
   private readonly knownIds: Set<string>;
+  private readonly agentRoles: Map<AgentId, string>; // Issue #91: Map agentId -> role
   private readonly unsubscribe: () => void;
   private disposed = false;
 
@@ -35,6 +36,9 @@ export class ChannelWatchService {
     this.knownIds = new Set(profiles.map((p) => p.id));
     this.knownIds.add("user"); // @user: is the task-closure signal
     this.knownIds.add("all");  // @all: is the broadcast signal
+
+    // Issue #91: Initialize agentId -> role mapping
+    this.agentRoles = new Map(profiles.map((p) => [p.id, p.role]));
 
     for (const profile of profiles) {
       if (profile.triggers && hasActiveChannelWatchTriggers(profile.triggers)) {
@@ -126,10 +130,12 @@ export class ChannelWatchService {
     // @user: is only a closure signal when the SUPERVISOR says it, not when other agents do.
     // Other agents might mention @user: in their responses (e.g., "I'll let @user: know"),
     // which should NOT suppress supervisor triggers.
+    // Issue #91: Use role-based check instead of hardcoded ID
+    const agentRole = this.agentRoles.get(agentId);
     const hasAssignment = hasAssignmentMarkerExcludingUserForNonSupervisor(
       message.content,
       this.knownIds,
-      agentId,
+      agentRole,
     );
     if (hasAssignment) return;
 
@@ -227,22 +233,24 @@ function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): bo
  * responses, it should NOT suppress supervisor triggers. @user: is only a closure
  * signal when the supervisor itself says it.
  *
+ * Issue #91: Use role-based check instead of hardcoded agent ID.
+ *
  * @param content - Message content to check
  * @param knownIds - Set of known agent IDs
- * @param fromAgentId - ID of the agent that sent this message
+ * @param fromAgentRole - Role of the agent that sent this message
  * @returns true if there's an assignment marker that should suppress triggers
  */
 function hasAssignmentMarkerExcludingUserForNonSupervisor(
   content: string,
   knownIds: ReadonlySet<string>,
-  fromAgentId: AgentId,
+  fromAgentRole: string | undefined,
 ): boolean {
   const pattern = new RegExp(assignmentPattern.source, "g");
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(content)) !== null) {
     const mentionedId = m[1];
-    // Skip @user: for non-supervisor agents
-    if (mentionedId === "user" && fromAgentId !== "supervisor") {
+    // Issue #91: Skip @user: for non-coordinator agents (role-based check)
+    if (mentionedId === "user" && fromAgentRole !== "coordinator") {
       continue;
     }
     if (knownIds.has(mentionedId)) return true;
