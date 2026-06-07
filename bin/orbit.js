@@ -26,7 +26,7 @@ const binary = fs.existsSync(binBinary) ? binBinary
   : null;
 
 if (binary) {
-  spawn(binary, [], {
+  spawn(binary, process.argv.slice(2), {
     stdio: "inherit",
     cwd: process.cwd(),
     env: {
