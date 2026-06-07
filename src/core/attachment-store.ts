@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -40,6 +41,22 @@ export class AttachmentStore {
 
   // --- Draft operations ---
 
+  /**
+   * Issue #88: Count drafts for a conversation.
+   * Used to enforce the MAX_DRAFTS_PER_CONVERSATION limit.
+   */
+  async countDrafts(workspaceId: string, conversationId: string): Promise<number> {
+    const draftDir = this.safePath("tmp", "attachments", workspaceId, conversationId);
+    try {
+      await fsPromises.access(draftDir);
+    } catch {
+      return 0;
+    }
+
+    const entries = await fsPromises.readdir(draftDir, { withFileTypes: true });
+    return entries.filter(entry => entry.isDirectory()).length;
+  }
+
   async saveDraft(params: {
     workspaceId: string;
     conversationId: string;
@@ -53,17 +70,21 @@ export class AttachmentStore {
       "tmp", "attachments",
       params.workspaceId, params.conversationId, id,
     );
-    fs.mkdirSync(draftDir, { recursive: true });
+    await fsPromises.mkdir(draftDir, { recursive: true });
     const filePath = path.join(draftDir, `${id}.${ext}`);
-    fs.writeFileSync(filePath, params.data);
+    await fsPromises.writeFile(filePath, params.data);
     return { id, path: filePath, size: params.data.length };
   }
 
   async deleteDraft(workspaceId: string, conversationId: string, attachmentId: string): Promise<boolean> {
     AttachmentStore.validateId(attachmentId);
     const draftBase = this.safePath("tmp", "attachments", workspaceId, conversationId, attachmentId);
-    if (!fs.existsSync(draftBase)) return false;
-    fs.rmSync(draftBase, { recursive: true, force: true });
+    try {
+      await fsPromises.access(draftBase);
+    } catch {
+      return false;
+    }
+    await fsPromises.rm(draftBase, { recursive: true, force: true });
     return true;
   }
 
@@ -74,18 +95,25 @@ export class AttachmentStore {
   ): Promise<{ data: Buffer; mimeType: string; filename: string } | null> {
     AttachmentStore.validateId(draftId);
     const draftBase = this.safePath("tmp", "attachments", workspaceId, conversationId, draftId);
-    if (!fs.existsSync(draftBase)) return null;
+    try {
+      await fsPromises.access(draftBase);
+    } catch {
+      return null;
+    }
 
     // Find the file with matching id in the draft directory
     for (const ext of KNOWN_EXTENSIONS) {
       const candidate = path.join(draftBase, `${draftId}.${ext}`);
-      if (fs.existsSync(candidate)) {
+      try {
+        await fsPromises.access(candidate);
         const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
         return {
-          data: fs.readFileSync(candidate),
+          data: await fsPromises.readFile(candidate),
           mimeType,
           filename: `${draftId}.${ext}`,
         };
+      } catch {
+        // File doesn't exist, try next extension
       }
     }
 
@@ -109,7 +137,7 @@ export class AttachmentStore {
       "conversations",
       params.workspaceId, params.conversationId, "attachments",
     );
-    fs.mkdirSync(permDir, { recursive: true });
+    await fsPromises.mkdir(permDir, { recursive: true });
 
     const results: MessageAttachment[] = [];
 
@@ -126,17 +154,20 @@ export class AttachmentStore {
       let actualExt: string | null = null;
       for (const ext of KNOWN_EXTENSIONS) {
         const candidate = path.join(draftDir, `${draft.id}.${ext}`);
-        if (fs.existsSync(candidate)) {
+        try {
+          await fsPromises.access(candidate);
           draftFile = candidate;
           actualExt = ext;
           break;
+        } catch {
+          // File doesn't exist, try next extension
         }
       }
 
       if (!draftFile || !actualExt) {
         // Draft file was cleaned up or never existed — skip with warning
         console.warn(`[orbit] draft file not found for attachment ${draft.id}, skipping`);
-        try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
+        try { await fsPromises.rm(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
         continue;
       }
 
@@ -144,10 +175,10 @@ export class AttachmentStore {
       const permPath = path.join(permDir, `${draft.id}.${actualExt}`);
 
       // Move the file (copy + delete for cross-device safety)
-      fs.copyFileSync(draftFile, permPath);
-      fs.rmSync(draftFile, { force: true });
+      await fsPromises.copyFile(draftFile, permPath);
+      await fsPromises.rm(draftFile, { force: true });
       // Clean up draft directory
-      try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
+      try { await fsPromises.rm(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
 
       results.push({
         id: draft.id,
@@ -171,14 +202,21 @@ export class AttachmentStore {
   ): Promise<{ data: Buffer; mimeType: string } | null> {
     AttachmentStore.validateId(attachmentId);
     const permDir = this.safePath("conversations", workspaceId, conversationId, "attachments");
-    if (!fs.existsSync(permDir)) return null;
+    try {
+      await fsPromises.access(permDir);
+    } catch {
+      return null;
+    }
 
     // Exact extension match — iterate known extensions instead of prefix matching
     for (const ext of KNOWN_EXTENSIONS) {
       const candidate = path.join(permDir, `${attachmentId}.${ext}`);
-      if (fs.existsSync(candidate)) {
+      try {
+        await fsPromises.access(candidate);
         const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-        return { data: fs.readFileSync(candidate), mimeType };
+        return { data: await fsPromises.readFile(candidate), mimeType };
+      } catch {
+        // File doesn't exist, try next extension
       }
     }
 
@@ -187,8 +225,11 @@ export class AttachmentStore {
 
   async deleteConversationAttachments(workspaceId: string, conversationId: string): Promise<void> {
     const permDir = this.safePath("conversations", workspaceId, conversationId, "attachments");
-    if (fs.existsSync(permDir)) {
-      fs.rmSync(permDir, { recursive: true, force: true });
+    try {
+      await fsPromises.access(permDir);
+      await fsPromises.rm(permDir, { recursive: true, force: true });
+    } catch {
+      // Directory doesn't exist, nothing to delete
     }
   }
 
@@ -196,19 +237,23 @@ export class AttachmentStore {
 
   async cleanupExpiredDrafts(): Promise<number> {
     const tmpDir = this.safePath("tmp", "attachments");
-    if (!fs.existsSync(tmpDir)) return 0;
+    try {
+      await fsPromises.access(tmpDir);
+    } catch {
+      return 0;
+    }
 
     const now = Date.now();
     let cleaned = 0;
 
-    this.cleanExpiredRecursive(tmpDir, now, (count) => { cleaned += count; });
+    await this.cleanExpiredRecursive(tmpDir, now, (count) => { cleaned += count; });
     return cleaned;
   }
 
-  private cleanExpiredRecursive(dir: string, now: number, onCleaned: (n: number) => void): void {
+  private async cleanExpiredRecursive(dir: string, now: number, onCleaned: (n: number) => void): Promise<void> {
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fsPromises.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -216,15 +261,15 @@ export class AttachmentStore {
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        this.cleanExpiredRecursive(fullPath, now, onCleaned);
+        await this.cleanExpiredRecursive(fullPath, now, onCleaned);
         // Remove empty directories
         try {
-          fs.rmdirSync(fullPath);
+          await fsPromises.rmdir(fullPath);
         } catch { /* not empty */ }
       } else if (entry.isFile()) {
-        const stat = fs.statSync(fullPath);
+        const stat = await fsPromises.stat(fullPath);
         if (now - stat.mtimeMs > ATTACHMENT_LIMITS.DRAFT_MAX_AGE_MS) {
-          fs.rmSync(fullPath, { force: true });
+          await fsPromises.rm(fullPath, { force: true });
           onCleaned(1);
         }
       }
@@ -232,6 +277,35 @@ export class AttachmentStore {
   }
 
   // --- Validation ---
+
+  /**
+   * Issue #85: Validate image file by checking magic numbers (file headers).
+   * This prevents malicious files from being uploaded with forged MIME types.
+   */
+  private static validateMagicNumber(data: Buffer, mimeType: string): boolean {
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    // JPEG: FF D8 FF
+    const JPEG_MAGIC = Buffer.from([0xFF, 0xD8, 0xFF]);
+    // WebP: RIFF (52 49 46 46) - note: WebP files start with RIFF....WEBP
+    const WEBP_RIFF = Buffer.from([0x52, 0x49, 0x46, 0x46]);
+    const WEBP_TAG = Buffer.from([0x57, 0x45, 0x42, 0x50]); // "WEBP" at offset 8
+
+    if (mimeType === "image/png") {
+      return data.length >= 8 && data.slice(0, 8).equals(PNG_MAGIC);
+    }
+    if (mimeType === "image/jpeg") {
+      return data.length >= 3 && data.slice(0, 3).equals(JPEG_MAGIC);
+    }
+    if (mimeType === "image/webp") {
+      // WebP format: RIFF....WEBP....
+      return data.length >= 12 &&
+        data.slice(0, 4).equals(WEBP_RIFF) &&
+        data.slice(8, 12).equals(WEBP_TAG);
+    }
+    // Unknown type - pass through (handled by MIME type check)
+    return true;
+  }
 
   static validateImageFile(
     data: Buffer,
@@ -247,6 +321,12 @@ export class AttachmentStore {
     if (data.length > ATTACHMENT_LIMITS.MAX_FILE_SIZE) {
       return { valid: false, error: `File size (${(data.length / 1024 / 1024).toFixed(1)}MB) exceeds limit (${ATTACHMENT_LIMITS.MAX_FILE_SIZE / 1024 / 1024}MB).` };
     }
+
+    // Issue #85: Verify file content matches declared MIME type
+    if (!this.validateMagicNumber(data, mimeType)) {
+      return { valid: false, error: `File content does not match declared type ${mimeType}.` };
+    }
+
     return { valid: true };
   }
 }
