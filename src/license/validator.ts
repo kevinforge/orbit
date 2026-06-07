@@ -1,8 +1,6 @@
 /**
  * License validation module.
  * Implements RSA signature verification and time-based checks.
- *
- * Security: Function names are intentionally non-semantic to hinder reverse engineering.
  */
 
 import { createVerify } from 'node:crypto';

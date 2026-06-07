@@ -1,6 +1,6 @@
 /**
  * Hardware fingerprint collection module.
- * Collects MAC address, CPU info, and motherboard UUID to generate unique machine ID.
+ * Collects MAC address, CPU info, disk serial, and motherboard UUID to generate unique machine ID.
  */
 
 import si from 'systeminformation';
@@ -12,8 +12,9 @@ import { createHash } from 'node:crypto';
  *
  * Priority order for hardware identifiers:
  * 1. MAC address (first non-virtual network interface)
- * 2. CPU UUID (fallback)
- * 3. Motherboard UUID (fallback)
+ * 2. CPU processor ID (unique identifier, not just brand name)
+ * 3. Disk serial number (first physical drive)
+ * 4. Motherboard UUID (fallback)
  */
 export async function generateMachineId(): Promise<string> {
   const identifiers: string[] = [];
@@ -33,15 +34,30 @@ export async function generateMachineId(): Promise<string> {
   }
 
   try {
-    // Get CPU info for UUID
+    // Get CPU info - combine multiple unique identifiers
     const cpu = await si.cpu();
-    // processors is a number in systeminformation types, but we need the cpu() result
-    // Use cpu brand and manufacturer as identifier instead
-    if (cpu?.brand && cpu?.manufacturer) {
+    // Use combination of manufacturer, family, model, stepping for uniqueness
+    // This is more unique than just brand name (same brand = same identifier problem)
+    if (cpu?.manufacturer && cpu?.family && cpu?.model && cpu?.stepping) {
+      identifiers.push(`cpu:${cpu.manufacturer}-${cpu.family}-${cpu.model}-${cpu.stepping}`);
+    } else if (cpu?.brand && cpu?.manufacturer) {
+      // Fallback to brand if detailed info unavailable
       identifiers.push(`cpu:${cpu.manufacturer}-${cpu.brand}`);
     }
   } catch {
     // Silently continue if CPU info unavailable
+  }
+
+  try {
+    // Get disk info for serial number (more unique than CPU brand)
+    const disks = await si.diskLayout();
+    // Use first physical disk's serial number
+    const physicalDisk = disks.find((disk) => disk.serialNum);
+    if (physicalDisk?.serialNum) {
+      identifiers.push(`disk:${physicalDisk.serialNum}`);
+    }
+  } catch {
+    // Silently continue if disk info unavailable
   }
 
   try {
@@ -72,9 +88,10 @@ export async function generateMachineId(): Promise<string> {
 export async function getHardwareInfo(): Promise<{
   mac?: string;
   cpuId?: string;
+  diskSerial?: string;
   boardUuid?: string;
 }> {
-  const result: { mac?: string; cpuId?: string; boardUuid?: string } = {};
+  const result: { mac?: string; cpuId?: string; diskSerial?: string; boardUuid?: string } = {};
 
   try {
     const networks = await si.networkInterfaces();
@@ -90,8 +107,21 @@ export async function getHardwareInfo(): Promise<{
 
   try {
     const cpu = await si.cpu();
-    if (cpu?.brand && cpu?.manufacturer) {
+    // Use combination of manufacturer, family, model, stepping for uniqueness
+    if (cpu?.manufacturer && cpu?.family && cpu?.model && cpu?.stepping) {
+      result.cpuId = `${cpu.manufacturer}-${cpu.family}-${cpu.model}-${cpu.stepping}`;
+    } else if (cpu?.brand && cpu?.manufacturer) {
       result.cpuId = `${cpu.manufacturer}-${cpu.brand}`;
+    }
+  } catch {
+    // Ignore
+  }
+
+  try {
+    const disks = await si.diskLayout();
+    const physicalDisk = disks.find((disk) => disk.serialNum);
+    if (physicalDisk?.serialNum) {
+      result.diskSerial = physicalDisk.serialNum;
     }
   } catch {
     // Ignore
