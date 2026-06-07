@@ -79,7 +79,8 @@ export class AgentSession {
 
   stop(): void {
     if (this.activeRun) {
-      this.activeRun.child.kill();
+      // Terminate entire process tree (same behavior as interrupt)
+      this.activeRun.child.interrupt();
       this.activeRun = null;
     }
 
