@@ -67,6 +67,10 @@ export class ChannelWatchService {
         if (!completedEvent.suppressFollowupRouting) {
           this.onAgentCompleted(completedEvent.agentId, completedEvent.resultMessageId);
         }
+      } else if (event.type === "run.failed" && "agentId" in event) {
+        // Issue #82: Trigger supervisor when an agent run fails
+        const failedEvent = event as { agentId: AgentId; runId: string; error?: string };
+        this.onAgentFailed(failedEvent.agentId, failedEvent.runId, failedEvent.error);
       }
     });
   }
@@ -118,13 +122,47 @@ export class ChannelWatchService {
     const message = this.messages.get(resultMessageId);
     if (!message) return;
 
-    if (hasAssignmentMarker(message.content, this.knownIds)) return;
+    // Check for assignment markers, but exclude @user: for non-supervisor agents.
+    // @user: is only a closure signal when the SUPERVISOR says it, not when other agents do.
+    // Other agents might mention @user: in their responses (e.g., "I'll let @user: know"),
+    // which should NOT suppress supervisor triggers.
+    const hasAssignment = hasAssignmentMarkerExcludingUserForNonSupervisor(
+      message.content,
+      this.knownIds,
+      agentId,
+    );
+    if (hasAssignment) return;
 
     for (const ctx of this.triggerContexts.values()) {
       if (ctx.agentId === agentId) continue;
       if (ctx.triggers.onUnassignedMessage) {
         this.tryTrigger(ctx, message);
       }
+    }
+  }
+
+  /**
+   * Issue #82: Handle agent run failure.
+   * When an agent run fails, trigger supervisor if configured with onRunFailed.
+   */
+  private onAgentFailed(agentId: AgentId, runId: string, error?: string): void {
+    // Find supervisors that have onRunFailed trigger configured
+    for (const ctx of this.triggerContexts.values()) {
+      if (ctx.agentId === agentId) continue; // Don't trigger the failed agent itself
+      if (!ctx.triggers.onRunFailed) continue; // Only trigger if onRunFailed is configured
+
+      // Create a synthetic message for the trigger
+      const syntheticMessage: ChatMessage = {
+        id: `failure_${agentId}_${runId}_${Date.now()}`,
+        kind: "system",
+        content: `[Agent ${agentId} failed]\nRun ${runId} encountered an error: ${error ?? "Unknown error"}`,
+        createdAt: new Date().toISOString(),
+        status: "error",
+      };
+
+      // Trigger supervisor with relaxIdleCheck=true so it can run even when other agents are busy
+      // (the failed agent might still be in error state)
+      this.tryTrigger(ctx, syntheticMessage, { relaxIdleCheck: true });
     }
   }
 
@@ -178,6 +216,36 @@ function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): bo
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(content)) !== null) {
     if (knownIds.has(m[1])) return true;
+  }
+  return false;
+}
+
+/**
+ * Check for assignment markers, but exclude @user: for non-supervisor agents.
+ *
+ * Issue #80: When non-supervisor agents (e.g., developer) include @user: in their
+ * responses, it should NOT suppress supervisor triggers. @user: is only a closure
+ * signal when the supervisor itself says it.
+ *
+ * @param content - Message content to check
+ * @param knownIds - Set of known agent IDs
+ * @param fromAgentId - ID of the agent that sent this message
+ * @returns true if there's an assignment marker that should suppress triggers
+ */
+function hasAssignmentMarkerExcludingUserForNonSupervisor(
+  content: string,
+  knownIds: ReadonlySet<string>,
+  fromAgentId: AgentId,
+): boolean {
+  const pattern = new RegExp(assignmentPattern.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(content)) !== null) {
+    const mentionedId = m[1];
+    // Skip @user: for non-supervisor agents
+    if (mentionedId === "user" && fromAgentId !== "supervisor") {
+      continue;
+    }
+    if (knownIds.has(mentionedId)) return true;
   }
   return false;
 }

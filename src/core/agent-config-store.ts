@@ -85,6 +85,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     triggers: {
       onUnassignedMessage: true,
       onAgentBlocked: true,
+      onRunFailed: true, // Issue #82: Trigger supervisor when an agent run fails
     },
   },
 ];

@@ -16,6 +16,8 @@ export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 export type ChannelWatchTriggers = {
   onUnassignedMessage?: boolean;
   onAgentBlocked?: boolean;
+  /** Trigger when an agent run fails. Issue #82 */
+  onRunFailed?: boolean;
   /** Maximum automatic triggers per conversation (default 5). */
   maxTriggersPerConversation?: number;
   /** Minimum milliseconds between consecutive triggers (default 2000). */
@@ -23,7 +25,11 @@ export type ChannelWatchTriggers = {
 };
 
 export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): boolean {
-  return triggers?.onUnassignedMessage === true || triggers?.onAgentBlocked === true;
+  return (
+    triggers?.onUnassignedMessage === true ||
+    triggers?.onAgentBlocked === true ||
+    triggers?.onRunFailed === true
+  );
 }
 
 export type AgentConfigUi = {
@@ -207,6 +213,20 @@ export type WorkspaceRuntimeConfig = {
 export const DEFAULT_WORKSPACE_CONFIG: WorkspaceRuntimeConfig = {
   systemPrompt: "",
   rules: [],
+};
+
+/** 全局配置：跨工作区的设置 */
+export type GlobalConfig = {
+  /** 运行日志开关：记录数字员工运行日志到本地（用于问题排查，会占用磁盘空间）。默认关闭。 */
+  enableRunLogs?: boolean;
+};
+
+export type GlobalRuntimeConfig = {
+  enableRunLogs: boolean;
+};
+
+export const DEFAULT_GLOBAL_CONFIG: GlobalRuntimeConfig = {
+  enableRunLogs: false, // 默认关闭，避免占用磁盘空间
 };
 
 export type RuntimeAvailability = {

@@ -33,6 +33,7 @@ export function App() {
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [showNewMessageHint, setShowNewMessageHint] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showWorkspaceConfig, setShowWorkspaceConfig] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, Conversation[]>>({});
   const [showAgentManager, setShowAgentManager] = useState(false);
@@ -733,7 +734,7 @@ export function App() {
                                 if (ws.id !== state.workspace.id) {
                                   switchWorkspace(ws.id);
                                 }
-                                setShowSettings(true);
+                                setShowWorkspaceConfig(true);
                               }}
                             >
                               工作区配置
@@ -857,6 +858,18 @@ export function App() {
           </nav>
         </section>
 
+        {/* 底部设置区 */}
+        <div className="sidebarBottom">
+          <button
+            type="button"
+            className="sidebarSettingsBtn"
+            onClick={() => setShowSettings(true)}
+            title="设置"
+          >
+            ⚙️
+            <span>设置</span>
+          </button>
+        </div>
       </aside>
       <button
         className="sidebarRevealBtn"
@@ -1060,6 +1073,11 @@ export function App() {
       {showSettings ? (
         <SystemSettingsPanel
           onClose={() => setShowSettings(false)}
+        />
+      ) : null}
+      {showWorkspaceConfig ? (
+        <WorkspaceConfigPanel
+          onClose={() => setShowWorkspaceConfig(false)}
           hasWorkspace={hasWorkspace}
         />
       ) : null}
@@ -1449,7 +1467,89 @@ function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange:
   );
 }
 
-function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; hasWorkspace: boolean }) {
+// Global settings - only runtime-level config
+function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
+  const [enableRunLogs, setEnableRunLogs] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState("");
+
+  useEffect(() => {
+    fetch("/api/global-config")
+      .then((r) => r.json())
+      .then((cfg: { enableRunLogs?: boolean }) => {
+        setEnableRunLogs(cfg.enableRunLogs ?? false);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  function save() {
+    setSaving(true);
+    setSavedMsg("");
+    fetch("/api/global-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enableRunLogs,
+      }),
+    })
+      .then((r) => {
+        if (!r.ok) return r.json().then((err) => Promise.reject(err));
+        return r.json();
+      })
+      .then(() => {
+        setSaving(false);
+        onClose();
+      })
+      .catch((err) => {
+        setSaving(false);
+        setSavedMsg(err?.message ?? "保存失败");
+      });
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalPanel workspaceConfigPanel" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader">
+          <h2>全局设置</h2>
+          <button type="button" onClick={onClose}>&times;</button>
+        </div>
+        <div className="settingsBody">
+          {loading ? (
+            <div className="settingsPlaceholder">
+              <span>加载中...</span>
+            </div>
+          ) : (
+            <div className="settingsSection">
+              <label className="settingsLabel">运行日志</label>
+              <span className="workspaceConfigHint">记录数字员工运行日志到本地（用于问题排查，会占用磁盘空间）</span>
+              <div className="toggleRow">
+                <input
+                  type="checkbox"
+                  id="enableRunLogs"
+                  checked={enableRunLogs}
+                  onChange={(e) => setEnableRunLogs(e.target.checked)}
+                />
+                <label htmlFor="enableRunLogs">{enableRunLogs ? "已开启" : "已关闭"}</label>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="modalFooter">
+          {savedMsg ? <span className="settingsSavedMsg">{savedMsg}</span> : null}
+          <button type="button" onClick={onClose}>关闭</button>
+          <button type="button" className="primaryBtn" onClick={save} disabled={saving}>
+            {saving ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Workspace-level config - prompt and rules
+function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; hasWorkspace: boolean }) {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [rules, setRules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1494,7 +1594,10 @@ function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; h
     fetch("/api/workspace-config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ systemPrompt: systemPrompt.trim(), rules: rules.map((r) => r.trim()).filter(Boolean) }),
+      body: JSON.stringify({
+        systemPrompt: systemPrompt.trim(),
+        rules: rules.map((r) => r.trim()).filter(Boolean),
+      }),
     })
       .then((r) => {
         if (!r.ok) return r.json().then((err) => Promise.reject(err));
@@ -1510,20 +1613,18 @@ function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; h
       });
   }
 
-  const hasChanges = true; // Allow saving always
-
   return (
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalPanel workspaceConfigPanel" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader">
-          <h2>工作区设置</h2>
+          <h2>工作区配置</h2>
           <button type="button" onClick={onClose}>&times;</button>
         </div>
         <div className="settingsBody">
           {!hasWorkspace ? (
             <div className="settingsPlaceholder">
               <strong>请先选择或创建工作区</strong>
-              <span>工作区设置作用于当前工作区下的所有会话。</span>
+              <span>工作区配置作用于当前工作区下的所有会话。</span>
             </div>
           ) : loading ? (
             <div className="settingsPlaceholder">

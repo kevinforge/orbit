@@ -1102,3 +1102,209 @@ test("no supervisor configured — unassigned user message does not trigger any 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// ---------------------------------------------------------------------------
+// Issue #80: @user: from non-supervisor should NOT suppress supervisor trigger
+// ---------------------------------------------------------------------------
+
+test("Issue #80: agent reply with @user: should NOT suppress supervisor trigger", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", developer: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("developer")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // Developer completes with a reply that contains @user:
+  // This should NOT suppress supervisor trigger because only supervisor's own
+  // @user: is a closure signal
+  const agentReply = messages.add({
+    kind: "agent",
+    agentId: "developer",
+    content: "I've implemented the feature. I'll let @user: know about the completion.",
+    status: "done",
+    runId: "run_1",
+    runStatus: "completed",
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "developer",
+    runId: "run_1",
+    resultMessageId: agentReply.id,
+  });
+
+  // Supervisor SHOULD be triggered even though developer mentioned @user:
+  assert.equal(enqueueCalls.length, 1, "supervisor should be triggered when developer mentions @user:");
+  assert.equal(enqueueCalls[0].agentId, "supervisor");
+  assert.ok(enqueueCalls[0].prompt.includes("Supervisor Check"));
+
+  service.dispose();
+});
+
+test("supervisor's own @user: should suppress further supervisor triggers", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // Supervisor completes with @user: closure signal
+  const agentReply = messages.add({
+    kind: "agent",
+    agentId: "supervisor",
+    content: "@user: All tasks are complete. The feature has been implemented and tested.",
+    status: "done",
+    runId: "run_1",
+    runStatus: "completed",
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "supervisor",
+    runId: "run_1",
+    resultMessageId: agentReply.id,
+  });
+
+  // Supervisor should NOT be triggered again because it said @user: (closure signal)
+  assert.equal(enqueueCalls.length, 0, "supervisor's own @user: should suppress further triggers");
+
+  service.dispose();
+});
+
+// ---------------------------------------------------------------------------
+// Issue #82: Supervisor should handle run.failed events
+// ---------------------------------------------------------------------------
+
+test("Issue #82: run.failed triggers supervisor with onRunFailed configured", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", developer: "error" },
+  });
+
+  // Supervisor profile with onRunFailed trigger
+  const supervisorProfile: AgentProfile = {
+    id: "supervisor",
+    name: "Supervisor",
+    role: "coordinator",
+    runtime: "claude-code",
+    cwd: "/tmp",
+    systemPrompt: "You are a supervisor.",
+    permissionProfile: {
+      canReadFiles: false,
+      canWriteFiles: false,
+      canRunCommands: false,
+      canInstallDependencies: false,
+      canGitCommit: false,
+      allowedDirectories: [],
+    },
+    triggers: {
+      onRunFailed: true,
+    },
+  };
+
+  const profiles = [supervisorProfile, makePlainAgentProfile("developer")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // Developer run fails
+  eventBus.publish({
+    type: "run.failed",
+    conversationId: "conv-1",
+    agentId: "developer",
+    runId: "run_1",
+    error: "API rate limit exceeded",
+  });
+
+  // Supervisor should be triggered because onRunFailed is configured
+  assert.equal(enqueueCalls.length, 1, "supervisor should be triggered when agent run fails");
+  assert.equal(enqueueCalls[0].agentId, "supervisor");
+  // The prompt should be a supervisor check prompt
+  assert.ok(enqueueCalls[0].prompt.includes("Supervisor Check"));
+  // The source message passed to enqueue is a synthetic message with the prompt as content
+  assert.ok(enqueueCalls[0].sourceMessage.content.includes("Supervisor Check"));
+
+  service.dispose();
+});
+
+test("run.failed does NOT trigger supervisor without onRunFailed configured", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", developer: "error" },
+  });
+
+  // Supervisor profile WITHOUT onRunFailed trigger
+  const supervisorProfile: AgentProfile = {
+    id: "supervisor",
+    name: "Supervisor",
+    role: "coordinator",
+    runtime: "claude-code",
+    cwd: "/tmp",
+    systemPrompt: "You are a supervisor.",
+    permissionProfile: {
+      canReadFiles: false,
+      canWriteFiles: false,
+      canRunCommands: false,
+      canInstallDependencies: false,
+      canGitCommit: false,
+      allowedDirectories: [],
+    },
+    triggers: {
+      onUnassignedMessage: true,
+      // onRunFailed is NOT configured
+    },
+  };
+
+  const profiles = [supervisorProfile, makePlainAgentProfile("developer")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // Developer run fails
+  eventBus.publish({
+    type: "run.failed",
+    conversationId: "conv-1",
+    agentId: "developer",
+    runId: "run_1",
+    error: "API rate limit exceeded",
+  });
+
+  // Supervisor should NOT be triggered because onRunFailed is not configured
+  assert.equal(enqueueCalls.length, 0, "supervisor should NOT be triggered when onRunFailed is not configured");
+
+  service.dispose();
+});

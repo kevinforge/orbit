@@ -11,6 +11,8 @@ import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { WorkspaceConfigStore } from "../core/workspace-config-store.ts";
 import type { WorkspaceConfig } from "../core/workspace-config-store.ts";
+import { GlobalConfigStore } from "../core/global-config-store.ts";
+import type { GlobalConfig } from "../core/global-config-store.ts";
 import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { SessionStore } from "../core/session-store.ts";
@@ -36,6 +38,7 @@ const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const configStore = new AgentConfigStore();
 const workspaceConfigStore = new WorkspaceConfigStore();
+const globalConfigStore = new GlobalConfigStore();
 const attachmentStore = new AttachmentStore(path.join(os.homedir(), ".orbit"));
 
 // --- Runtime availability ---
@@ -241,6 +244,7 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
     sessionStore: sessStore,
     workspaceStore,
     workspaceConfig,
+    globalConfig: globalConfigStore.load(),
   });
 }
 
@@ -295,11 +299,18 @@ function initActiveContext(): void {
   }
 }
 
-function activateConversation(conversation: { id: string; name: string }): void {
+function activateConversation(conversation: { id: string; name: string }, shouldTouchLastOpened = true): void {
   // No dispose of old context — it stays alive in the map for parallel execution
   activeConversationId = conversation.id;
   activeConversation = { id: conversation.id, name: conversation.name };
-  conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
+
+  // Issue #77: Only touch lastOpenedAt when creating a conversation or first opening it,
+  // not when switching between existing conversations. This prevents the conversation
+  // list from reordering when the user simply clicks to view a different conversation.
+  if (shouldTouchLastOpened) {
+    conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
+  }
+
   saveLastActive(activeWorkspaceId, activeConversationId);
   // Ensure context exists in map (creates lazily if needed)
   getOrCreateContext(activeWorkspaceId, activeConversationId);
@@ -335,17 +346,22 @@ function switchConversation(conversationId: string): void {
   const conv = conversationStore.get(activeWorkspaceId, conversationId);
   if (!conv) throw new Error(`Conversation not found: ${conversationId}`);
 
-  activateConversation(conv);
+  // Issue #77: Don't touch lastOpenedAt when switching conversations
+  activateConversation(conv, false);
   publishContextSwitched();
 }
 
 function refreshEnabledAgents(): void {
-  if (!activeWorkspaceId || !activeConversationId) return;
-  const ctx = getActiveContext();
-  if (!ctx) return;
+  if (!activeWorkspaceId) return;
   const enabledConfigs = allConfigs.filter((c) => c.enabled);
   const profiles = configsToProfiles(enabledConfigs, activeWorkspace.path);
-  ctx.refreshProfiles(profiles);
+
+  // Refresh profiles for ALL contexts in the same workspace, not just the active one
+  for (const [key, ctx] of contextMap) {
+    if (key.startsWith(`${activeWorkspaceId}:`)) {
+      ctx.refreshProfiles(profiles);
+    }
+  }
 }
 
 function publishContextSwitched(): void {
@@ -678,6 +694,33 @@ const server = http.createServer(async (req, res) => {
         if (key.startsWith(`${activeWorkspaceId}:`)) {
           ctx.updateWorkspaceConfig(resolved);
         }
+      }
+      sendJson(res, 200, resolved);
+      return;
+    }
+
+    // --- Global config ---
+
+    if (req.method === "GET" && url.pathname === "/api/global-config") {
+      sendJson(res, 200, globalConfigStore.load());
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/global-config") {
+      const input = (await readJson(req)) as GlobalConfig;
+      if (!input || typeof input !== "object" || Array.isArray(input)) {
+        sendJson(res, 400, { ok: false, message: "Request body must be a JSON object." });
+        return;
+      }
+      if (input.enableRunLogs !== undefined && typeof input.enableRunLogs !== "boolean") {
+        sendJson(res, 400, { ok: false, message: "enableRunLogs must be a boolean." });
+        return;
+      }
+      globalConfigStore.save(input);
+      const resolved = globalConfigStore.load();
+      // Update all active contexts so they use the new config
+      for (const ctx of contextMap.values()) {
+        ctx.updateGlobalConfig(resolved);
       }
       sendJson(res, 200, resolved);
       return;
