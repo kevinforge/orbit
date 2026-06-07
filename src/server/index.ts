@@ -11,6 +11,8 @@ import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { WorkspaceConfigStore } from "../core/workspace-config-store.ts";
 import type { WorkspaceConfig } from "../core/workspace-config-store.ts";
+import { GlobalConfigStore } from "../core/global-config-store.ts";
+import type { GlobalConfig } from "../core/global-config-store.ts";
 import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { SessionStore } from "../core/session-store.ts";
@@ -36,6 +38,7 @@ const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const configStore = new AgentConfigStore();
 const workspaceConfigStore = new WorkspaceConfigStore();
+const globalConfigStore = new GlobalConfigStore();
 const attachmentStore = new AttachmentStore(path.join(os.homedir(), ".orbit"));
 
 // --- Runtime availability ---
@@ -241,6 +244,7 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
     sessionStore: sessStore,
     workspaceStore,
     workspaceConfig,
+    globalConfig: globalConfigStore.load(),
   });
 }
 
@@ -690,6 +694,33 @@ const server = http.createServer(async (req, res) => {
         if (key.startsWith(`${activeWorkspaceId}:`)) {
           ctx.updateWorkspaceConfig(resolved);
         }
+      }
+      sendJson(res, 200, resolved);
+      return;
+    }
+
+    // --- Global config ---
+
+    if (req.method === "GET" && url.pathname === "/api/global-config") {
+      sendJson(res, 200, globalConfigStore.load());
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/global-config") {
+      const input = (await readJson(req)) as GlobalConfig;
+      if (!input || typeof input !== "object" || Array.isArray(input)) {
+        sendJson(res, 400, { ok: false, message: "Request body must be a JSON object." });
+        return;
+      }
+      if (input.enableRunLogs !== undefined && typeof input.enableRunLogs !== "boolean") {
+        sendJson(res, 400, { ok: false, message: "enableRunLogs must be a boolean." });
+        return;
+      }
+      globalConfigStore.save(input);
+      const resolved = globalConfigStore.load();
+      // Update all active contexts so they use the new config
+      for (const ctx of contextMap.values()) {
+        ctx.updateGlobalConfig(resolved);
       }
       sendJson(res, 200, resolved);
       return;

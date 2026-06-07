@@ -11,8 +11,8 @@ import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { MessageRouter } from "../core/message-router.ts";
 import { ChannelWatchService } from "../core/channel-watch.ts";
-import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type WorkspaceRuntimeConfig } from "../shared/types.ts";
-import { DEFAULT_WORKSPACE_CONFIG } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type WorkspaceRuntimeConfig, type GlobalRuntimeConfig } from "../shared/types.ts";
+import { DEFAULT_WORKSPACE_CONFIG, DEFAULT_GLOBAL_CONFIG } from "../shared/types.ts";
 
 const MAX_ROUTE_DEPTH = 10;
 
@@ -24,6 +24,7 @@ export type ConversationContextOptions = {
   sessionStore: SessionStore;
   workspaceStore: WorkspaceStore;
   workspaceConfig?: WorkspaceRuntimeConfig;
+  globalConfig?: GlobalRuntimeConfig;
 };
 
 export class ConversationContext {
@@ -36,6 +37,7 @@ export class ConversationContext {
 
   private _profiles: readonly AgentProfile[];
   private _workspaceConfig: WorkspaceRuntimeConfig;
+  private _globalConfig: GlobalRuntimeConfig;
   private readonly eventBus: EventBus;
   private readonly unsubscribe: () => void;
 
@@ -44,6 +46,7 @@ export class ConversationContext {
     // Store workspace config as mutable instance field so updateWorkspaceConfig()
     // can update it at runtime without recreating the context.
     this._workspaceConfig = options.workspaceConfig ?? structuredClone(DEFAULT_WORKSPACE_CONFIG);
+    this._globalConfig = options.globalConfig ?? structuredClone(DEFAULT_GLOBAL_CONFIG);
     this._profiles = profiles;
     this.eventBus = eventBus;
 
@@ -54,9 +57,9 @@ export class ConversationContext {
 
     this.messages = new MessageStore(messagesPath);
 
-    // 运行日志开关：根据 workspace 配置决定是否记录 agent 运行日志。
+    // 运行日志开关：根据全局配置决定是否记录数字员工运行日志。
     // 如果关闭，不传递 transcriptsDir，TerminalTranscriptStore 将不会持久化日志。
-    const transcriptsDir = this._workspaceConfig.enableRunLogs
+    const transcriptsDir = this._globalConfig.enableRunLogs
       ? workspaceStore.transcriptsDir(workspaceId, conversationId)
       : undefined;
 
@@ -233,6 +236,11 @@ export class ConversationContext {
   updateWorkspaceConfig(config: WorkspaceRuntimeConfig): void {
     this._workspaceConfig = config;
     this.options = { ...this.options, workspaceConfig: config };
+  }
+
+  updateGlobalConfig(config: GlobalRuntimeConfig): void {
+    this._globalConfig = config;
+    this.options = { ...this.options, globalConfig: config };
   }
 
   dispose(): void {

@@ -203,19 +203,29 @@ export type Conversation = ConversationInfo & {
 export type WorkspaceConfig = {
   systemPrompt?: string;
   rules?: string[];
-  /** 运行日志开关：记录 agent 运行日志到本地（用于问题排查，会占用磁盘空间）。默认关闭。 */
-  enableRunLogs?: boolean;
 };
 
 export type WorkspaceRuntimeConfig = {
   systemPrompt: string;
   rules: string[];
-  enableRunLogs: boolean;
 };
 
 export const DEFAULT_WORKSPACE_CONFIG: WorkspaceRuntimeConfig = {
   systemPrompt: "",
   rules: [],
+};
+
+/** 全局配置：跨工作区的设置 */
+export type GlobalConfig = {
+  /** 运行日志开关：记录数字员工运行日志到本地（用于问题排查，会占用磁盘空间）。默认关闭。 */
+  enableRunLogs?: boolean;
+};
+
+export type GlobalRuntimeConfig = {
+  enableRunLogs: boolean;
+};
+
+export const DEFAULT_GLOBAL_CONFIG: GlobalRuntimeConfig = {
   enableRunLogs: false, // 默认关闭，避免占用磁盘空间
 };
 
