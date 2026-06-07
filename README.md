@@ -194,3 +194,4 @@ docs/        Architecture documentation
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Agent Workflow](./AGENTS.md)
+- [Standalone Build](./docs/standalone-build.md)
