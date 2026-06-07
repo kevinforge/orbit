@@ -25,3 +25,8 @@ orbit-ui-*.png
 # standalone binary placed by postinstall
 bin/orbit
 bin/orbit.exe
+
+# License files (never commit)
+private.pem
+license.json
+scripts/private.pem

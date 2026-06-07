@@ -13,13 +13,40 @@
  *   - Place license.json in ./license.json or ~/.orbit/license.json
  */
 
-import { validateLicenseAsync } from "./license/index.ts";
+import { validateLicenseAsync, generateMachineId, getHardwareInfo } from "./license/index.ts";
 
 async function main() {
+  // Handle --machine-id flag
+  if (process.argv.includes('--machine-id')) {
+    const machineId = await generateMachineId();
+    console.log('\n orbit Machine ID');
+    console.log('================');
+    console.log(`\n  ${machineId}\n`);
+    console.log('Send this ID to get your license file.\n');
+    process.exit(0);
+  }
+
+  // Handle --hardware-info flag (for debugging)
+  if (process.argv.includes('--hardware-info')) {
+    const [machineId, hardwareInfo] = await Promise.all([
+      generateMachineId(),
+      getHardwareInfo(),
+    ]);
+    console.log('\n Hardware Information');
+    console.log('====================');
+    console.log(`\n  Machine ID: ${machineId}`);
+    if (hardwareInfo.mac) console.log(`  MAC:        ${hardwareInfo.mac}`);
+    if (hardwareInfo.cpuId) console.log(`  CPU:        ${hardwareInfo.cpuId}`);
+    if (hardwareInfo.boardUuid) console.log(`  Board UUID: ${hardwareInfo.boardUuid}`);
+    console.log('');
+    process.exit(0);
+  }
+
   // License validation
   const isValid = await validateLicenseAsync();
   if (!isValid) {
     console.error("\n[orbit] License validation failed. Exiting.");
+    console.error('[orbit] Run `orbit --machine-id` to get your machine ID for licensing.\n');
     process.exit(1);
   }
 
