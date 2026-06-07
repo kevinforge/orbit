@@ -37,7 +37,9 @@ if (binary) {
 } else {
   // Fallback: development mode
   console.error("orbit: standalone binary not found. Run `npm run build` to create it.");
-  spawn("npx", ["tsx", path.join(root, "src", "server", "index.ts")], {
+  // On Windows, npx needs .cmd suffix for correct execution
+  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+  spawn(npx, ["tsx", path.join(root, "src", "server", "index.ts")], {
     stdio: "inherit",
     cwd: process.cwd(),
     env: {
