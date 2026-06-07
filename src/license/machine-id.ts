@@ -35,8 +35,10 @@ export async function generateMachineId(): Promise<string> {
   try {
     // Get CPU info for UUID
     const cpu = await si.cpu();
-    if (cpu?.processors?.[0]?.id) {
-      identifiers.push(`cpu:${cpu.processors[0].id}`);
+    // processors is a number in systeminformation types, but we need the cpu() result
+    // Use cpu brand and manufacturer as identifier instead
+    if (cpu?.brand && cpu?.manufacturer) {
+      identifiers.push(`cpu:${cpu.manufacturer}-${cpu.brand}`);
     }
   } catch {
     // Silently continue if CPU info unavailable
@@ -88,8 +90,8 @@ export async function getHardwareInfo(): Promise<{
 
   try {
     const cpu = await si.cpu();
-    if (cpu?.processors?.[0]?.id) {
-      result.cpuId = cpu.processors[0].id;
+    if (cpu?.brand && cpu?.manufacturer) {
+      result.cpuId = `${cpu.manufacturer}-${cpu.brand}`;
     }
   } catch {
     // Ignore
