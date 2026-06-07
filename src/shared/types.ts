@@ -100,7 +100,8 @@ export const ATTACHMENT_LIMITS = {
   MAX_FILE_SIZE: 5 * 1024 * 1024,
   MAX_FILES_PER_MESSAGE: 5,
   ALLOWED_MIME_TYPES: ["image/png", "image/jpeg", "image/webp"],
-  DRAFT_MAX_AGE_MS: 24 * 60 * 60 * 1000,
+  DRAFT_MAX_AGE_MS: 1 * 60 * 60 * 1000, // Issue #88: 清理频率从24小时改为1小时
+  MAX_DRAFTS_PER_CONVERSATION: 20, // Issue #88: 每会话最多20个draft
 } as const;
 
 export type ChatMessageKind = "user" | "agent" | "system";

@@ -37,7 +37,14 @@ test("validateImageFile accepts valid JPEG", () => {
 });
 
 test("validateImageFile accepts valid WebP", () => {
-  const result = AttachmentStore.validateImageFile(Buffer.alloc(50), "image/webp", "test.webp");
+  // WebP magic: RIFF....WEBP
+  const webpBuffer = Buffer.from([
+    0x52, 0x49, 0x46, 0x46, // RIFF
+    0x00, 0x00, 0x00, 0x00, // file size (placeholder)
+    0x57, 0x45, 0x42, 0x50, // WEBP
+    // ... rest of WebP data
+  ]);
+  const result = AttachmentStore.validateImageFile(webpBuffer, "image/webp", "test.webp");
   assert.equal(result.valid, true);
 });
 

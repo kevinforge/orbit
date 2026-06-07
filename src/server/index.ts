@@ -505,6 +505,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // Issue #88: Check draft count limit before saving
+      const draftCount = await attachmentStore.countDrafts(activeWorkspaceId, activeConversationId);
+      if (draftCount >= ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION) {
+        sendJson(res, 400, {
+          ok: false,
+          message: `Too many pending uploads. Please commit or delete existing drafts first. (Limit: ${ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION})`
+        });
+        return;
+      }
+
       const saved = await attachmentStore.saveDraft({
         workspaceId: activeWorkspaceId,
         conversationId: activeConversationId,
