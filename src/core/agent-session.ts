@@ -97,12 +97,10 @@ export class AgentSession {
     this.activeRun = null;
     this.setStatus("idle");
 
-    // Clear session to prevent resuming an interrupted run
-    this.options.sessionStore.clear(
-      this.options.runtime.kind,
-      this.options.conversationId,
-      this.id,
-    );
+    // Note: We intentionally do NOT clear the session here.
+    // The CLI's --resume parameter restores the entire conversation context,
+    // not just the interrupted operation. Users interrupt to stop the current
+    // operation, but should be able to continue the conversation afterward.
 
     return true;
   }
@@ -184,7 +182,14 @@ export class AgentSession {
         }
         return { content: cleaned, sessionId: sessionId ?? undefined, runIndex };
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
+        // Even on failure, save the sessionId if one was generated.
+        // This allows the conversation to continue after errors (e.g., rate limits).
+        const sessionId = await handle.sessionId;
+        if (sessionId) {
+          this.persistSession(sessionId);
+        }
+
         this.activeRun = null;
         this.setStatus("error");
         throw error;
