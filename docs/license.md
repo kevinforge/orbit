@@ -64,23 +64,33 @@ orbit
 
 ## 管理员指南：生成授权
 
-### 前置准备
+### 1. 生成密钥对（首次设置）
 
-1. 生成 RSA 密钥对（只需一次）：
+运行密钥生成脚本：
 
 ```powershell
-# 生成私钥（妥善保管，不要泄露）
-openssl genrsa -out private.pem 2048
-
-# 提取公钥（替换到 src/license/constants.ts 中的 PUBLIC_KEY）
-openssl rsa -in private.pem -pubout -out public.pem
+node scripts/generate-keys.mjs
 ```
 
-2. 更新代码中的公钥：
+脚本会自动：
+- 生成 RSA 2048-bit 密钥对
+- 将公钥写入 `src/license/constants.ts`
+- 将私钥保存到 `private.pem`（已在 .gitignore 中排除）
 
-将 `public.pem` 内容替换到 `src/license/constants.ts` 的 `PUBLIC_KEY` 常量。
+**私钥备份清单（必须完成全部）：**
 
-### 生成 License
+- [ ] 复制 private.pem 到加密 U 盘
+- [ ] 存储副本到安全云 vault（1Password 等）
+- [ ] 打印副本存储到物理保险箱
+- [ ] 与信任的团队成员分持（多人保管）
+- [ ] 备份完成后从开发机器删除 private.pem
+
+**重要提醒：**
+- 私钥丢失 = 需要重新发布 Orbit，所有已发授权失效
+- 私钥泄露 = 任何人都可以生成授权
+- 建议使用离线机器生成和存储私钥
+
+### 2. 生成 License
 
 使用授权生成脚本：
 
