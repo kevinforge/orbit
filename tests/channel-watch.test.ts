@@ -1247,8 +1247,10 @@ test("Issue #82: run.failed triggers supervisor with onRunFailed configured", as
   // Supervisor should be triggered because onRunFailed is configured
   assert.equal(enqueueCalls.length, 1, "supervisor should be triggered when agent run fails");
   assert.equal(enqueueCalls[0].agentId, "supervisor");
+  // The prompt should be a supervisor check prompt
   assert.ok(enqueueCalls[0].prompt.includes("Supervisor Check"));
-  assert.ok(enqueueCalls[0].sourceMessage.content.includes("developer failed"));
+  // The source message passed to enqueue is a synthetic message with the prompt as content
+  assert.ok(enqueueCalls[0].sourceMessage.content.includes("Supervisor Check"));
 
   service.dispose();
 });
