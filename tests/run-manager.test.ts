@@ -32,6 +32,14 @@ function createSourceMessage(): ChatMessage {
   };
 }
 
+/** Mock agent runner that supports both send and interrupt. */
+function mockAgentRunner(
+  send: (runId: string, prompt: string) => Promise<RunResult>,
+  interrupt: (runId: string) => boolean = () => true,
+): { send: (runId: string, prompt: string) => Promise<RunResult>; interrupt: (runId: string) => boolean } {
+  return { send, interrupt };
+}
+
 test("queues a second run for the same agent until the first completes", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
@@ -51,6 +59,7 @@ test("queues a second run for the same agent until the first completes", async (
             calls.push({ agentId, runId, prompt });
             return pending.shift()?.promise ?? Promise.reject(new Error("unexpected run"));
           },
+          interrupt() { return true; },
         };
       },
     },
@@ -98,6 +107,7 @@ test("terminal chunks append visible activity to the running message", async () 
             assert.equal(agentId, "developer");
             return first.promise;
           },
+          interrupt() { return true; },
         };
       },
     },
@@ -340,6 +350,7 @@ test("split Claude tool_use across two terminal chunks still produces tool.start
             activeRunId = runId;
             return first.promise;
           },
+          interrupt() { return true; },
         };
       },
     },
@@ -388,6 +399,7 @@ test("split Claude tool_use_result across chunks still produces tool.completed w
             activeRunId = runId;
             return first.promise;
           },
+          interrupt() { return true; },
         };
       },
     },
@@ -442,6 +454,7 @@ test("split Claude tool_use_result error across chunks still produces tool.faile
             activeRunId = runId;
             return first.promise;
           },
+          interrupt() { return true; },
         };
       },
     },
@@ -496,6 +509,7 @@ test("split Codex command_execution completion across chunks still produces tool
             activeRunId = runId;
             return first.promise;
           },
+          interrupt() { return true; },
         };
       },
     },
@@ -552,6 +566,7 @@ test("cancel a queued run prevents it from starting when the active run complete
             calls.push({ agentId, runId });
             return pending.shift()?.promise ?? Promise.reject(new Error("unexpected"));
           },
+          interrupt() { return true; },
         };
       },
     },
@@ -584,10 +599,11 @@ test("cancel a queued run prevents it from starting when the active run complete
   assert.equal(calls.length, 1, "cancelled queued run should not start");
 });
 
-test("cancel a running run returns already_running error", async () => {
+test("cancel a running run triggers interrupt and succeeds", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
   const first = deferred();
+  let interruptedRunId: string | null = null;
 
   const manager = new RunManager({
     conversationId: "test-conv",
@@ -597,6 +613,10 @@ test("cancel a running run returns already_running error", async () => {
       get() {
         return {
           send() { return first.promise; },
+          interrupt(runId: string) {
+            interruptedRunId = runId;
+            return true;
+          },
         };
       },
     },
@@ -609,16 +629,14 @@ test("cancel a running run returns already_running error", async () => {
   assert.equal(run.status, "running");
 
   const result = manager.cancel(run.id);
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, "already_running");
-  assert.equal(run.status, "running", "run status must not change");
+  assert.equal(result.ok, true);
+  assert.equal(run.status, "cancelled", "run status should be cancelled");
+  assert.equal(interruptedRunId, run.id, "interrupt should be called with correct runId");
 
-  // Run should complete normally
-  first.resolve({ content: "done" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
+  // Verify run.cancelled event was published
   const msg = messages.get(run.resultMessageId);
-  assert.equal(msg?.status, "done");
+  assert.equal(msg?.status, "cancelled");
+  assert.ok(msg?.activity?.some((a) => "text" in a && a.text === "Interrupted by user during execution."));
 });
 
 test("cancel a non-existent run returns not_found error", async () => {
@@ -630,7 +648,7 @@ test("cancel a non-existent run returns not_found error", async () => {
     messages,
     eventBus,
     agents: {
-      get() { return { send() { return Promise.resolve({ content: "ok" }); } }; },
+      get() { return { send() { return Promise.resolve({ content: "ok" }); }, interrupt() { return true; } }; },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},
@@ -651,7 +669,7 @@ test("cancel an already-completed run returns not_cancellable", async () => {
     messages,
     eventBus,
     agents: {
-      get() { return { send() { return first.promise; } }; },
+      get() { return { send() { return first.promise; }, interrupt() { return true; } }; },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},
@@ -683,7 +701,7 @@ test("cancel publishes run.cancelled event for queued runs", async () => {
     messages,
     eventBus,
     agents: {
-      get() { return { send() { return pending[callIdx++]!.promise; } }; },
+      get() { return { send() { return pending[callIdx++]!.promise; }, interrupt() { return true; } }; },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},
@@ -701,7 +719,7 @@ test("cancel publishes run.cancelled event for queued runs", async () => {
   assert.equal(cancelledEvents.length, 1, "should publish one run.cancelled event");
 });
 
-test("cancel a running run does not publish a run.cancelled event", async () => {
+test("cancel a running run publishes run.cancelled event", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
   const first = deferred();
@@ -714,7 +732,7 @@ test("cancel a running run does not publish a run.cancelled event", async () => 
     messages,
     eventBus,
     agents: {
-      get() { return { send() { return first.promise; } }; },
+      get() { return { send() { return first.promise; }, interrupt() { return true; } }; },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},
@@ -725,10 +743,10 @@ test("cancel a running run does not publish a run.cancelled event", async () => 
   assert.equal(run.status, "running");
 
   const result = manager.cancel(run.id);
-  assert.equal(result.reason, "already_running");
+  assert.equal(result.ok, true);
 
   const cancelledEvents = events.filter((e) => e.type === "run.cancelled");
-  assert.equal(cancelledEvents.length, 0, "running runs should not publish run.cancelled");
+  assert.equal(cancelledEvents.length, 1, "interrupted running runs should publish run.cancelled");
 });
 
 test("queued run cancel sets runStatus on message", async () => {
@@ -746,6 +764,7 @@ test("queued run cancel sets runStatus on message", async () => {
       get() {
         return {
           send() { return pending.shift()!.promise; },
+          interrupt() { return true; },
         };
       },
     },
@@ -785,6 +804,7 @@ test("run failures store a concise error instead of raw stream output", async ()
           send() {
             return failure.promise;
           },
+          interrupt() { return true; },
         };
       },
     },
@@ -825,6 +845,7 @@ test("interruptCurrentChain cancels all queued runs", async () => {
       get() {
         return {
           send() { return pending.shift()!.promise; },
+          interrupt() { return true; },
         };
       },
     },
@@ -871,7 +892,7 @@ test("interruptCurrentChain does not suppress when no running runs", () => {
     eventBus,
     agents: {
       get() {
-        return { send() { return Promise.resolve({ content: "ok" }); } };
+        return { send() { return Promise.resolve({ content: "ok" }); }, interrupt() { return true; } };
       },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
@@ -903,7 +924,7 @@ test("completed suppressed run does NOT call onRunCompleted but still publishes 
     messages,
     eventBus,
     agents: {
-      get() { return { send() { return first.promise; } }; },
+      get() { return { send() { return first.promise; }, interrupt() { return true; } }; },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() { onRunCompletedCalls++; },
@@ -941,7 +962,7 @@ test("normal (non-suppressed) runs still call onRunCompleted", async () => {
     messages,
     eventBus,
     agents: {
-      get() { return { send() { return first.promise; } }; },
+      get() { return { send() { return first.promise; }, interrupt() { return true; } }; },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted(msg) {
@@ -973,7 +994,7 @@ test("enqueue sets origin based on sourceMessage kind", () => {
     messages,
     eventBus,
     agents: {
-      get() { return { send() { return deferreds.shift()!.promise; } }; },
+      get() { return { send() { return deferreds.shift()!.promise; }, interrupt() { return true; } }; },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},
@@ -1001,7 +1022,7 @@ test("enqueue respects explicit origin parameter over sourceMessage kind", () =>
     messages,
     eventBus,
     agents: {
-      get() { return { send() { return Promise.resolve({ content: "ok" }); } }; },
+      get() { return { send() { return Promise.resolve({ content: "ok" }); }, interrupt() { return true; } }; },
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},

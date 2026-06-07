@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AgentId } from "../shared/types.ts";
-import type { AgentRuntime } from "./agent-runtime.ts";
+import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
+import { interruptProcessTree } from "./claude-cli-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
 import { parseJsonObjects } from "./json-stream-parser.ts";
 
@@ -17,12 +18,6 @@ export type CodexCliRunOptions = {
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;
   imagePaths?: string[];
-};
-
-export type CodexCliRunHandle = {
-  process: ChildProcessWithoutNullStreams;
-  result: Promise<string>;
-  sessionId: Promise<string | null>;
 };
 
 export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: string; imagePaths?: string[] }): string[] {
@@ -61,7 +56,7 @@ export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: stri
   return args;
 }
 
-export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
+export function runCodexCli(options: CodexCliRunOptions): AgentRuntimeRunHandle {
   const command = buildCodexCliCommand(
     { cwd: options.cwd, resumeSessionId: options.resumeSessionId, imagePaths: options.imagePaths },
     options.env ?? process.env,
@@ -72,6 +67,7 @@ export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
     env,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
+    detached: os.platform() !== "win32", // Create process group on Unix for tree termination
   });
 
   let stdout = "";
@@ -135,7 +131,18 @@ export function runCodexCli(options: CodexCliRunOptions): CodexCliRunHandle {
   });
 
   child.stdin.end(options.prompt);
-  return { process: child, result, sessionId: sessionIdPromise };
+
+  const pid = child.pid!;
+
+  return {
+    process: {
+      kill: () => child.kill(),
+      pid,
+      interrupt: () => interruptProcessTree(pid),
+    },
+    result,
+    sessionId: sessionIdPromise,
+  };
 }
 
 export function buildCodexCliCommand(

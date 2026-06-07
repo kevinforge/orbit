@@ -25,7 +25,7 @@ test("creates sessions with the runtime selected by each profile", async () => {
     run(options) {
       calls.push(options.agentId);
       return {
-        process: { kill: () => true },
+        process: { kill: () => {}, pid: 12345, interrupt: () => {} },
         result: Promise.resolve("codebuddy final"),
         sessionId: Promise.resolve("codebuddy-session"),
       };

@@ -19,7 +19,11 @@ export type AgentSessionOptions = {
 
 type ActiveRun = {
   runId: string;
-  child: { kill: () => unknown };
+  child: {
+    kill: () => void;
+    pid: number;
+    interrupt: () => void;
+  };
 };
 
 export class AgentSession {
@@ -75,11 +79,31 @@ export class AgentSession {
 
   stop(): void {
     if (this.activeRun) {
-      this.activeRun.child.kill();
+      // Terminate entire process tree (same behavior as interrupt)
+      this.activeRun.child.interrupt();
       this.activeRun = null;
     }
 
     this.setStatus("stopped");
+  }
+
+  /** Hard interrupt: terminate the entire process tree for the running agent. */
+  interrupt(runId: string): boolean {
+    if (!this.activeRun || this.activeRun.runId !== runId) {
+      return false;
+    }
+
+    // Terminate entire process tree
+    this.activeRun.child.interrupt();
+    this.activeRun = null;
+    this.setStatus("idle");
+
+    // Note: We intentionally do NOT clear the session here.
+    // The CLI's --resume parameter restores the entire conversation context,
+    // not just the interrupted operation. Users interrupt to stop the current
+    // operation, but should be able to continue the conversation afterward.
+
+    return true;
   }
 
   private isResumeFailure(
@@ -159,9 +183,23 @@ export class AgentSession {
         }
         return { content: cleaned, sessionId: sessionId ?? undefined, runIndex };
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
+        // Even on failure, save the sessionId if one was generated.
+        // This allows the conversation to continue after errors (e.g., rate limits).
+        const sessionId = await handle.sessionId;
+        if (sessionId) {
+          this.persistSession(sessionId);
+        }
+
         this.activeRun = null;
-        this.setStatus("error");
+
+        // CRITICAL: Check if status is already "idle" (set by interrupt()).
+        // If so, this rejection was caused by interrupt, not a real error.
+        // Do NOT overwrite the idle status in this case.
+        if (this.status !== "idle") {
+          this.setStatus("error");
+        }
+
         throw error;
       });
   }

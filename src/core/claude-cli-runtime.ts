@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import os from "node:os";
 
 import type { AgentId } from "../shared/types.ts";
-import type { AgentRuntime } from "./agent-runtime.ts";
+import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
 import { parseJsonObjects } from "./json-stream-parser.ts";
 
@@ -22,12 +22,6 @@ export type ClaudeCliRunOptions = {
   onOutput?: (text: string) => void;
 };
 
-export type ClaudeCliRunHandle = {
-  process: ChildProcessWithoutNullStreams;
-  result: Promise<string>;
-  sessionId: Promise<string | null>;
-};
-
 export function buildClaudeCliArgs(options?: { resumeSessionId?: string }): string[] {
   const args = [
     "--print",
@@ -44,7 +38,7 @@ export function buildClaudeCliArgs(options?: { resumeSessionId?: string }): stri
   return args;
 }
 
-export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
+export function runClaudeCli(options: ClaudeCliRunOptions): AgentRuntimeRunHandle {
   const args = buildClaudeCliArgs({ resumeSessionId: options.resumeSessionId });
   const command = buildClaudeCliCommand(args);
   const child = spawn(command.file, command.args, {
@@ -52,6 +46,7 @@ export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
     env: createEnv(options.agentId, options.env ?? process.env),
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
+    detached: os.platform() !== "win32", // Create process group on Unix for tree termination
   });
 
   let stdout = "";
@@ -116,7 +111,18 @@ export function runClaudeCli(options: ClaudeCliRunOptions): ClaudeCliRunHandle {
   });
 
   child.stdin.end(options.prompt);
-  return { process: child, result, sessionId: sessionIdPromise };
+
+  const pid = child.pid!;
+
+  return {
+    process: {
+      kill: () => child.kill(),
+      pid,
+      interrupt: () => interruptProcessTree(pid),
+    },
+    result,
+    sessionId: sessionIdPromise,
+  };
 }
 
 export function buildClaudeCliCommand(cliArgs?: string[]): { file: string; args: string[] } {
@@ -200,4 +206,31 @@ function createEnv(agentId: AgentId, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv 
     ...env,
     ORBIT_AGENT_ID: agentId,
   };
+}
+
+/**
+ * Terminate the entire process tree for a given PID.
+ * - Windows: Uses taskkill with /T (tree) and /F (force) flags.
+ * - Unix: Uses process group termination via negative PID.
+ */
+export function interruptProcessTree(pid: number): void {
+  if (os.platform() === "win32") {
+    // Windows: taskkill with /T terminates all child processes
+    spawn("taskkill", ["/pid", String(pid), "/F", "/T"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+  } else {
+    // Unix: kill process group (negative PID)
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      // Fallback: direct kill if process group doesn't exist
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Process may have already exited
+      }
+    }
+  }
 }

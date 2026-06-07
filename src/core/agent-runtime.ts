@@ -14,7 +14,12 @@ export type AgentRuntimeRunOptions = {
 };
 
 export type AgentRuntimeRunHandle = {
-  process: Pick<ChildProcessWithoutNullStreams, "kill">;
+  process: {
+    kill: () => void;
+    pid: number;
+    /** Hard interrupt: terminate entire process tree (not just parent process). */
+    interrupt: () => void;
+  };
   result: Promise<string>;
   sessionId: Promise<string | null>;
 };
