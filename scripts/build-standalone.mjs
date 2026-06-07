@@ -2,12 +2,12 @@
 /**
  * Build Orbit as a standalone executable using Bun's compile feature.
  *
- * This produces a self-contained binary with embedded Bun runtime,
+ * This produces a self-contained binary with embedded Bun runtime and
  * bytecode-compiled JavaScript for source protection.
  *
  * Usage:
- *   node scripts/build-standalone.mjs          # Build for current platform
- *   node scripts/build-standalone.mjs --all   # Build for all platforms
+ *   node scripts/build-standalone.mjs            # Build for current platform
+ *   node scripts/build-standalone.mjs --all      # Build for all platforms
  *   node scripts/build-standalone.mjs --platform=windows
  */
 
@@ -32,10 +32,10 @@ function hasBun() {
 
 // Platform mapping
 const PLATFORMS = {
-  windows: { target: "bun-windows-x64", ext: ".exe" },
-  linux: { target: "bun-linux-x64", ext: "" },
-  macos: { target: "bun-darwin-x64", ext: "" },
-  macosArm: { target: "bun-darwin-arm64", ext: "" },
+  windows:  { target: "bun-windows-x64",   ext: ".exe" },
+  linux:    { target: "bun-linux-x64",     ext: "" },
+  macos:    { target: "bun-darwin-x64",    ext: "" },
+  macosArm: { target: "bun-darwin-arm64",  ext: "" },
 };
 
 function getCurrentPlatform() {
@@ -79,7 +79,6 @@ function buildStandalone(platformKey) {
     "--sourcemap=none",
     `--target=${platform.target}`,
     `--outfile=${outfile}`,
-    // Define environment variable for finding UI assets
     "--define:process.env.ORBIT_STANDALONE=true",
   ];
 
@@ -95,7 +94,6 @@ function buildStandalone(platformKey) {
 
   console.log(`✅ Built: ${outfile}`);
 
-  // Get file size
   const stats = fs.statSync(outfile);
   const sizeMB = (stats.size / 1024 / 1024).toFixed(2);
   console.log(`   Size: ${sizeMB} MB`);
@@ -157,14 +155,16 @@ function main() {
     } else if (targetPlatform) {
       buildStandalone(targetPlatform);
     } else {
-      // Build for current platform
       const platformKey = getCurrentPlatform();
       buildStandalone(platformKey);
     }
 
     console.log("\n🎉 Standalone build complete!");
-    console.log("\nNote: The UI assets need to be distributed alongside the binary.");
-    console.log("      Set ORBIT_UI_DIR environment variable to the UI assets path when running.");
+    console.log("\n📋 Distribution:");
+    console.log("   Copy the binary and UI assets together:");
+    console.log("   - dist/bin/orbit (standalone binary)");
+    console.log("   - dist/ui/ (UI assets folder)");
+    console.log("\n📖 See docs/standalone-build.md for detailed instructions.");
   } catch (error) {
     console.error(`\n❌ Build failed: ${error.message}`);
     process.exit(1);

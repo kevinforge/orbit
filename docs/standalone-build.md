@@ -1,87 +1,118 @@
-# Standalone Build
+# 独立可执行文件打包
 
-Orbit can be built as a standalone executable using Bun's compile feature. This produces a self-contained binary with:
+Orbit 可以使用 Bun 的 compile 功能打包为独立可执行文件。生成的二进制文件：
 
-- Embedded Bun runtime (no Node.js required)
-- Bytecode-compiled JavaScript (source code protection)
-- Minified code (no source maps)
+- 内嵌 Bun 运行时，无需安装 Node.js 或 Bun
+- JavaScript 编译为字节码，保护源码
+- 代码压缩，无 source map
 
-## Prerequisites
+## 前置条件
 
-- Bun 1.0+ installed on the build machine
+构建机器上需要安装 Bun 1.0+。
 
-Install Bun: https://bun.sh/docs/installation
+安装 Bun：https://bun.sh/docs/installation
 
-## Build
+```powershell
+npm install -g bun
+```
 
-### Build for current platform
+## 编译打包
 
-```bash
-# First build the UI assets
+### 为当前平台编译
+
+```powershell
+# 一键构建（类型检查 + UI + 独立可执行文件）
 npm run build
-
-# Then build the standalone executable
-npm run build:standalone
 ```
 
-Output: `dist/bin/orbit` (or `orbit.exe` on Windows)
+输出：
+- `dist/bin/orbit.exe`（Windows）或 `dist/bin/orbit`（Linux/macOS）
+- `dist/ui/` UI 资源文件
 
-### Build for all platforms
+### 为所有平台编译
 
-```bash
-npm run build:standalone:all
+```powershell
+npm run build:all
 ```
 
-Outputs:
-- `dist/bin/orbit.exe` (Windows x64)
-- `dist/bin/orbit` (Linux x64)
-- `dist/bin/orbit` (macOS x64)
-- `dist/bin/orbit` (macOS ARM64)
+输出：
+- `dist/bin/orbit.exe` - Windows x64
+- `dist/bin/orbit` - Linux x64
+- `dist/bin/orbit` - macOS x64
+- `dist/bin/orbit` - macOS ARM64
 
-### Build for specific platform
+### 为指定平台编译
 
-```bash
+```powershell
 node scripts/build-standalone.mjs --platform=windows
 node scripts/build-standalone.mjs --platform=linux
 node scripts/build-standalone.mjs --platform=macos
 node scripts/build-standalone.mjs --platform=macosArm
 ```
 
-## Distribution
+## 本地安装（测试用）
 
-The standalone executable needs UI assets to be distributed alongside it.
+### 创建本地安装目录
 
-**Option 1: Environment variable**
-
-```bash
-# Set ORBIT_UI_DIR to the UI assets directory
-ORBIT_UI_DIR=/path/to/dist/ui ./orbit
+```powershell
+# 创建 orbit 安装目录
+mkdir D:\orbit
 ```
 
-**Option 2: Relative path**
+### 复制文件
 
-Place `dist/ui/` directory in the same location as the binary:
+```powershell
+# 复制可执行文件
+copy dist\bin\orbit.exe D:\orbit\
 
-```
-orbit.exe
-dist/ui/
-  index.html
-  assets/
-    ...
+# 复制 UI 资源
+xcopy /E /I dist\ui D:\orbit\dist\ui
 ```
 
-## Source Protection
+### 添加到 PATH
 
-The standalone build uses Bun's bytecode compilation which converts JavaScript to a binary format that is difficult to reverse engineer:
+```powershell
+# 方式1：临时添加到当前终端
+$env:Path = "D:\orbit;" + $env:Path
 
-- `--bytecode`: Compiles JS to bytecode (not readable text)
-- `--minify`: Removes comments, shortens variable names
-- `--sourcemap=none`: No source maps included
+# 方式2：永久添加到系统 PATH
+[Environment]::SetEnvironmentVariable("Path", "D:\orbit;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
+```
 
-This provides significantly better source protection than the standard npm package which contains minified but still readable JavaScript.
+### 运行
 
-## Limitations
+```powershell
+# 在任意项目目录下运行
+orbit
+```
 
-- Requires Bun on the build machine (users don't need it)
-- Binary size is larger (~50-100MB) due to embedded runtime
-- Cross-platform builds require running on each target platform or using cross-compilation tools
+打开浏览器访问 `http://localhost:4317`。
+
+## 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `ORBIT_PORT` | 服务端口 | `4317` |
+| `ORBIT_UI_DIR` | UI 资源目录 | 二进制同级的 `dist/ui/` |
+
+## 源码保护原理
+
+Bun compile 提供了三种保护机制：
+
+| 机制 | 效果 |
+|------|------|
+| `--bytecode` | JS 源码编译为二进制字节码，无法直接读取 |
+| `--minify` | 删除注释、缩短变量名 |
+| `--sourcemap=none` | 不生成 source map，切断逆向还原路径 |
+
+对比原来的 esbuild 打包（压缩后仍是可读的 JS 文本），字节码保护力度显著提升。
+
+## 运行时 CLI 依赖
+
+Orbit 本身不需要 CLI 环境，但它调度的 agent 需要：
+
+| Runtime | 安装方式 |
+|---------|----------|
+| Claude Code | `npm install -g @anthropic-ai/claude-code` |
+| Codex | `npm install -g @openai/codex` |
+| CodeBuddy | 参考官方安装文档 |

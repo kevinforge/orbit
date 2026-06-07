@@ -1,22 +1,42 @@
 #!/usr/bin/env node
 // Orbit - local-first chat control surface for coding agents.
+// For production use, build the standalone binary:
+//   bun build src/standalone-entry.ts --compile --bytecode --minify --sourcemap=none --outfile=dist/bin/orbit
+// For development, run:
+//   npm run dev
+
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import fs from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
-const serverEntry = path.join(root, "dist", "server", "index.js");
 
-const child = spawn(process.execPath, [serverEntry], {
-  stdio: "inherit",
-  cwd: process.cwd(),
-  env: {
-    ...process.env,
-    ORBIT_DIST_UI: path.join(root, "dist", "ui"),
-  },
-});
-
-child.on("exit", (code) => {
-  process.exit(code ?? 1);
-});
+// Try standalone binary first
+const ext = process.platform === "win32" ? ".exe" : "";
+const standaloneBinary = path.join(root, "dist", "bin", `orbit${ext}`);
+if (fs.existsSync(standaloneBinary)) {
+  const child = spawn(standaloneBinary, [], {
+    stdio: "inherit",
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ORBIT_UI_DIR: process.env.ORBIT_UI_DIR ?? path.join(root, "dist", "ui"),
+    },
+  });
+  child.on("exit", (code) => process.exit(code ?? 1));
+} else {
+  // Fallback: launch via tsx (development mode)
+  console.error("orbit: standalone binary not found, falling back to development mode.");
+  console.error("Run `npm run build` to create the standalone binary.");
+  const child = spawn("npx", ["tsx", path.join(root, "src", "server", "index.ts")], {
+    stdio: "inherit",
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ORBIT_DIST_UI: path.join(root, "dist", "ui"),
+    },
+  });
+  child.on("exit", (code) => process.exit(code ?? 1));
+}
