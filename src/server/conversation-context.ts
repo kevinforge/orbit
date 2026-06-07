@@ -54,9 +54,9 @@ export class ConversationContext {
 
     this.messages = new MessageStore(messagesPath);
 
-    // Issue #78: Respect the enableTranscripts setting from workspace config.
-    // If disabled, pass undefined to TerminalTranscriptStore to disable logging.
-    const transcriptsDir = this._workspaceConfig.enableTranscripts
+    // 运行日志开关：根据 workspace 配置决定是否记录 agent 运行日志。
+    // 如果关闭，不传递 transcriptsDir，TerminalTranscriptStore 将不会持久化日志。
+    const transcriptsDir = this._workspaceConfig.enableRunLogs
       ? workspaceStore.transcriptsDir(workspaceId, conversationId)
       : undefined;
 

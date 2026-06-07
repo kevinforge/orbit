@@ -2,64 +2,63 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 /**
- * Issue #78: Add transcript logging toggle setting
+ * Issue #78: 运行日志开关功能
  *
- * Problem: Users want to control whether terminal transcripts are logged.
- * Some may prefer to disable logging for privacy or disk space reasons.
+ * 问题: 用户希望控制是否记录 agent 运行日志到本地。
+ * 记录日志会占用磁盘空间,且大多数用户不需要这些日志,应该默认关闭。
  *
- * Fix:
- * 1. Added enableTranscripts field to WorkspaceConfig (default: true)
- * 2. ConversationContext respects this setting when creating TerminalTranscriptStore
- * 3. If disabled, transcripts are not persisted to disk
+ * 修复:
+ * 1. 在 WorkspaceConfig 添加 enableRunLogs 字段（默认 false）
+ * 2. ConversationContext 根据配置决定是否创建 TerminalTranscriptStore
+ * 3. 如果关闭,运行日志不会保存到磁盘
  *
- * UI changes (P2, deferred):
- * - Add settings button and modal in App.tsx
- * - Allow toggling enableTranscripts via PUT /api/workspace-config
+ * UI 改动（P2, 待实现）:
+ * - 在工作区设置区域添加"运行日志"开关
+ * - 说明文字："记录 agent 运行日志到本地（用于问题排查，会占用磁盘空间）"
  */
 
-test("Issue #78: enableTranscripts setting controls transcript logging", async () => {
-  // This is verified by:
-  // 1. Type definition: WorkspaceConfig now has enableTranscripts?: boolean
-  // 2. Default value: DEFAULT_WORKSPACE_CONFIG.enableTranscripts = true
-  // 3. Resolution: resolveWorkspaceConfig respects the setting
-  // 4. Usage: ConversationContext checks this._workspaceConfig.enableTranscripts
-  //    before passing transcriptsDir to TerminalTranscriptStore
+test("Issue #78: enableRunLogs setting controls run logs", async () => {
+  // 验证点:
+  // 1. 类型定义: WorkspaceConfig 有 enableRunLogs?: boolean
+  // 2. 默认值: DEFAULT_WORKSPACE_CONFIG.enableRunLogs = false
+  // 3. 配置解析: resolveWorkspaceConfig 正确处理该字段
+  // 4. 实际使用: ConversationContext 检查 enableRunLogs 后决定是否传递 transcriptsDir
   //
-  // Manual testing:
-  // - Set enableTranscripts: false in workspace config
-  // - Run an agent task
-  // - Verify no transcript files are created in ~/.orbit/transcripts/
+  // 手动测试:
+  // - 在工作区配置中设置 enableRunLogs: true
+  // - 运行 agent 任务
+  // - 验证 ~/.orbit/transcripts/ 目录下生成了日志文件
   //
-  // A full integration test would require:
-  // - Starting the server
-  // - Updating workspace config via PUT /api/workspace-config with enableTranscripts: false
-  // - Running an agent task
-  // - Checking that no transcript files exist
-  // This is beyond the scope of unit tests.
+  // 完整集成测试需要:
+  // - 启动服务器
+  // - 通过 PUT /api/workspace-config 设置 enableRunLogs: true
+  // - 运行 agent 任务
+  // - 检查日志文件是否存在
+  // 这超出了单元测试范围。
 
   assert.ok(true, "Fix verified by code inspection and manual testing");
 });
 
-test("enableTranscripts defaults to true when not specified", async () => {
-  // Import the resolveWorkspaceConfig function to test default behavior
+test("enableRunLogs defaults to false when not specified", async () => {
+  // 导入 resolveWorkspaceConfig 函数测试默认行为
   const { resolveWorkspaceConfig, DEFAULT_WORKSPACE_CONFIG } = await import("../src/core/workspace-config-store.ts");
 
-  // Test default value
-  assert.equal(DEFAULT_WORKSPACE_CONFIG.enableTranscripts, true, "default should be true");
+  // 测试默认值
+  assert.equal(DEFAULT_WORKSPACE_CONFIG.enableRunLogs, false, "默认应该关闭");
 
-  // Test resolution with no config
+  // 测试无配置时的解析
   const noConfig = resolveWorkspaceConfig(null);
-  assert.equal(noConfig.enableTranscripts, true, "should default to true when no config");
+  assert.equal(noConfig.enableRunLogs, false, "无配置时应该默认关闭");
 
-  // Test resolution with config missing the field
+  // 测试配置缺失该字段时的解析
   const partialConfig = resolveWorkspaceConfig({ systemPrompt: "test" });
-  assert.equal(partialConfig.enableTranscripts, true, "should default to true when field missing");
+  assert.equal(partialConfig.enableRunLogs, false, "字段缺失时应该默认关闭");
 
-  // Test resolution with explicit false
-  const disabledConfig = resolveWorkspaceConfig({ enableTranscripts: false });
-  assert.equal(disabledConfig.enableTranscripts, false, "should respect explicit false");
+  // 测试显式设置 false
+  const disabledConfig = resolveWorkspaceConfig({ enableRunLogs: false });
+  assert.equal(disabledConfig.enableRunLogs, false, "显式设置 false 应该生效");
 
-  // Test resolution with explicit true
-  const enabledConfig = resolveWorkspaceConfig({ enableTranscripts: true });
-  assert.equal(enabledConfig.enableTranscripts, true, "should respect explicit true");
+  // 测试显式设置 true
+  const enabledConfig = resolveWorkspaceConfig({ enableRunLogs: true });
+  assert.equal(enabledConfig.enableRunLogs, true, "显式设置 true 应该生效");
 });

@@ -14,9 +14,9 @@ export function resolveWorkspaceConfig(raw?: WorkspaceConfig | null): WorkspaceR
     rules: raw?.rules && Array.isArray(raw.rules)
       ? raw.rules.filter((r) => typeof r === "string" && r.trim()).map((r) => r.trim())
       : DEFAULT_WORKSPACE_CONFIG.rules,
-    enableTranscripts: raw?.enableTranscripts !== undefined
-      ? Boolean(raw.enableTranscripts)
-      : DEFAULT_WORKSPACE_CONFIG.enableTranscripts,
+    enableRunLogs: raw?.enableRunLogs !== undefined
+      ? Boolean(raw.enableRunLogs)
+      : DEFAULT_WORKSPACE_CONFIG.enableRunLogs,
   };
   return resolved;
 }

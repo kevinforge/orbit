@@ -203,20 +203,20 @@ export type Conversation = ConversationInfo & {
 export type WorkspaceConfig = {
   systemPrompt?: string;
   rules?: string[];
-  /** Issue #78: Enable/disable transcript logging (default: true) */
-  enableTranscripts?: boolean;
+  /** 运行日志开关：记录 agent 运行日志到本地（用于问题排查，会占用磁盘空间）。默认关闭。 */
+  enableRunLogs?: boolean;
 };
 
 export type WorkspaceRuntimeConfig = {
   systemPrompt: string;
   rules: string[];
-  enableTranscripts: boolean;
+  enableRunLogs: boolean;
 };
 
 export const DEFAULT_WORKSPACE_CONFIG: WorkspaceRuntimeConfig = {
   systemPrompt: "",
   rules: [],
-  enableTranscripts: true,
+  enableRunLogs: false, // 默认关闭，避免占用磁盘空间
 };
 
 export type RuntimeAvailability = {
