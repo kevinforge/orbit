@@ -20,14 +20,15 @@
     "dev": "tsx src/server/index.ts",
     "build": "tsc --noEmit && vite build && bun build src/standalone-entry.ts --compile --bytecode --minify --sourcemap=none --outfile=dist/bin/orbit",
     "build:all": "tsc --noEmit && vite build && node scripts/build-standalone.mjs --all",
-    "test": "node --test --import tsx tests/mention-router.test.ts tests/message-store.test.ts tests/message-router.test.ts tests/ansi-text-extractor.test.ts tests/terminal-transcript-store.test.ts tests/history-retention.test.ts tests/app-message-pagination.test.ts tests/claude-output-detector.test.ts tests/claude-cli-runtime.test.ts tests/codex-cli-runtime.test.ts tests/codebuddy-cli-runtime.test.ts tests/agent-profiles.test.ts tests/agent-registry.test.ts tests/agent-context-builder.test.ts tests/agent-history-builder.test.ts tests/run-manager.test.ts tests/session-store.test.ts tests/agent-session.test.ts tests/workspace-store.test.ts tests/conversation-store.test.ts tests/markdown-renderer.test.ts tests/agent-config-store.test.ts tests/workspace-config-store.test.ts tests/runtime-probe.test.ts tests/package-manifest.test.ts tests/channel-watch.test.ts tests/interrupt-message.test.ts",
+    "test": "node --test --import tsx tests/mention-router.test.ts tests/message-store.test.ts tests/message-router.test.ts tests/ansi-text-extractor.test.ts tests/terminal-transcript-store.test.ts tests/history-retention.test.ts tests/app-message-pagination.test.ts tests/claude-output-detector.test.ts tests/claude-cli-runtime.test.ts tests/codex-cli-runtime.test.ts tests/codebuddy-cli-runtime.test.ts tests/agent-profiles.test.ts tests/agent-registry.test.ts tests/agent-context-builder.test.ts tests/agent-history-builder.test.ts tests/run-manager.test.ts tests/session-store.test.ts tests/agent-session.test.ts tests/workspace-store.test.ts tests/conversation-store.test.ts tests/markdown-renderer.test.ts tests/agent-config-store.test.ts tests/workspace-config-store.test.ts tests/runtime-probe.test.ts tests/package-manifest.test.ts tests/channel-watch.test.ts tests/interrupt-message.test.ts tests/license.test.ts",
     "test:glob": "node --test --import tsx tests/*.test.ts",
     "prepublishOnly": "npm run test && npm run build"
   },
   "dependencies": {
     "marked": "^18.0.4",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "systeminformation": "^5.31.7"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
