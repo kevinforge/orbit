@@ -25,6 +25,7 @@ The current version is intentionally small. It validates the core workflow befor
 - Workspace-level configuration: shared system prompt and rules per workspace
 - Fixed maximum routing depth (default 10) with depth info in blocking messages
 - Local HTTP server with Server-Sent Events
+- Standalone executable with bytecode-compiled source code
 
 ## Not Included Yet
 
@@ -33,25 +34,38 @@ The current version is intentionally small. It validates the core workflow befor
 - GitHub PR workflow automation inside Orbit
 - General workflow engine or dependency scheduler
 
-## Requirements
-
-- Node.js
-- npm
-- Codex CLI, Claude Code CLI, and CodeBuddy CLI available on `PATH`
-
 ## Install
 
 ```powershell
-npm install
+npm install -g orbit
 ```
 
 ## Run
 
 ```powershell
-npm run dev
+orbit
 ```
 
 Open `http://localhost:4317`.
+
+## Development
+
+For local development:
+
+```powershell
+npm install
+npm run dev
+```
+
+## Requirements
+
+Orbit coordinates CLI-backed agents. The agents require:
+
+| Runtime | Install |
+|---------|---------|
+| Claude Code | `npm install -g @anthropic-ai/claude-code` |
+| Codex | `npm install -g @openai/codex` |
+| CodeBuddy | See official docs |
 
 ### Agent Configuration
 
@@ -120,61 +134,18 @@ The server returns recent messages in `GET /api/state`; older messages can be lo
 
 Optional environment variables:
 
+- `ORBIT_PORT` — Server port (default: 4317)
 - `ORBIT_MESSAGE_RECENT_SHARDS`
 - `ORBIT_HISTORY_RETAIN_DAYS`
 - `ORBIT_TRANSCRIPT_RETAIN_DAYS`
 - `ORBIT_TRANSCRIPT_MAX_BYTES`
 - `ORBIT_TRANSCRIPT_TAIL_BYTES`
 
-To restart the local service on Windows PowerShell and clear the default port first:
-
-```powershell
-cd <project-dir>; $p = Get-NetTCPConnection -LocalPort 4317 -State Listen -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p.OwningProcess -Force }; npm run dev
-```
-
 ## Verify
 
 ```powershell
 npm run test
 npm run build
-npm run pack:check
-```
-
-`npm run pack:check` validates the npm package boundary. The published package
-is intentionally limited to the CLI launcher in `bin/` and built artifacts in
-`dist/`; source files, tests, docs, sourcemaps, screenshots, local `.orbit`
-state, and packaging scripts must not be included.
-
-## Local Package Smoke Test
-
-Use this flow to test the same package shape that users will install from npm:
-
-```powershell
-# In the orbit project directory:
-
-npm install
-npm run test
-npm run build
-npm run pack:check
-
-npm pack
-npm install -g .\orbit-0.9.0.tgz
-
-orbit
-```
-
-Open `http://localhost:4317` after `orbit` starts.
-
-To inspect the package contents without creating a tarball:
-
-```powershell
-npm pack --dry-run --json --ignore-scripts
-```
-
-To remove the local global install after testing:
-
-```powershell
-npm uninstall -g orbit
 ```
 
 ## Repository Layout
@@ -194,4 +165,4 @@ docs/        Architecture documentation
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Agent Workflow](./AGENTS.md)
-- [Standalone Build](./docs/standalone-build.md)
+- [npm Package](./docs/standalone-build.md)
