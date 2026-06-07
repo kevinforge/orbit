@@ -51,9 +51,15 @@ export class ConversationContext {
       workspaceStore.channelsDir(workspaceId, conversationId),
       "messages.json",
     );
-    const transcriptsDir = workspaceStore.transcriptsDir(workspaceId, conversationId);
 
     this.messages = new MessageStore(messagesPath);
+
+    // Issue #78: Respect the enableTranscripts setting from workspace config.
+    // If disabled, pass undefined to TerminalTranscriptStore to disable logging.
+    const transcriptsDir = this._workspaceConfig.enableTranscripts
+      ? workspaceStore.transcriptsDir(workspaceId, conversationId)
+      : undefined;
+
     this.transcripts = new TerminalTranscriptStore(transcriptsDir);
 
     this.unsubscribe = eventBus.subscribe((event) => {

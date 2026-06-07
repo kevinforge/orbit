@@ -295,11 +295,18 @@ function initActiveContext(): void {
   }
 }
 
-function activateConversation(conversation: { id: string; name: string }): void {
+function activateConversation(conversation: { id: string; name: string }, shouldTouchLastOpened = true): void {
   // No dispose of old context — it stays alive in the map for parallel execution
   activeConversationId = conversation.id;
   activeConversation = { id: conversation.id, name: conversation.name };
-  conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
+
+  // Issue #77: Only touch lastOpenedAt when creating a conversation or first opening it,
+  // not when switching between existing conversations. This prevents the conversation
+  // list from reordering when the user simply clicks to view a different conversation.
+  if (shouldTouchLastOpened) {
+    conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
+  }
+
   saveLastActive(activeWorkspaceId, activeConversationId);
   // Ensure context exists in map (creates lazily if needed)
   getOrCreateContext(activeWorkspaceId, activeConversationId);
@@ -335,17 +342,22 @@ function switchConversation(conversationId: string): void {
   const conv = conversationStore.get(activeWorkspaceId, conversationId);
   if (!conv) throw new Error(`Conversation not found: ${conversationId}`);
 
-  activateConversation(conv);
+  // Issue #77: Don't touch lastOpenedAt when switching conversations
+  activateConversation(conv, false);
   publishContextSwitched();
 }
 
 function refreshEnabledAgents(): void {
-  if (!activeWorkspaceId || !activeConversationId) return;
-  const ctx = getActiveContext();
-  if (!ctx) return;
+  if (!activeWorkspaceId) return;
   const enabledConfigs = allConfigs.filter((c) => c.enabled);
   const profiles = configsToProfiles(enabledConfigs, activeWorkspace.path);
-  ctx.refreshProfiles(profiles);
+
+  // Refresh profiles for ALL contexts in the same workspace, not just the active one
+  for (const [key, ctx] of contextMap) {
+    if (key.startsWith(`${activeWorkspaceId}:`)) {
+      ctx.refreshProfiles(profiles);
+    }
+  }
 }
 
 function publishContextSwitched(): void {

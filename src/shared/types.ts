@@ -16,6 +16,8 @@ export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 export type ChannelWatchTriggers = {
   onUnassignedMessage?: boolean;
   onAgentBlocked?: boolean;
+  /** Trigger when an agent run fails. Issue #82 */
+  onRunFailed?: boolean;
   /** Maximum automatic triggers per conversation (default 5). */
   maxTriggersPerConversation?: number;
   /** Minimum milliseconds between consecutive triggers (default 2000). */
@@ -23,7 +25,11 @@ export type ChannelWatchTriggers = {
 };
 
 export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): boolean {
-  return triggers?.onUnassignedMessage === true || triggers?.onAgentBlocked === true;
+  return (
+    triggers?.onUnassignedMessage === true ||
+    triggers?.onAgentBlocked === true ||
+    triggers?.onRunFailed === true
+  );
 }
 
 export type AgentConfigUi = {
@@ -197,16 +203,20 @@ export type Conversation = ConversationInfo & {
 export type WorkspaceConfig = {
   systemPrompt?: string;
   rules?: string[];
+  /** Issue #78: Enable/disable transcript logging (default: true) */
+  enableTranscripts?: boolean;
 };
 
 export type WorkspaceRuntimeConfig = {
   systemPrompt: string;
   rules: string[];
+  enableTranscripts: boolean;
 };
 
 export const DEFAULT_WORKSPACE_CONFIG: WorkspaceRuntimeConfig = {
   systemPrompt: "",
   rules: [],
+  enableTranscripts: true,
 };
 
 export type RuntimeAvailability = {
