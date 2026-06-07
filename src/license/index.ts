@@ -10,6 +10,7 @@ import { PUBLIC_KEY } from './constants.ts';
 
 export type { License } from './types.ts';
 export { generateMachineId } from './machine-id.ts';
+export { getHardwareInfo } from './machine-id.ts';
 export { loadLicense, _v, _t } from './validator.ts';
 
 /**
