@@ -1281,11 +1281,18 @@ function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentSta
             {cancelling ? "取消中..." : isRunning ? "打断" : "取消"}
           </button>
         ) : null}
-        <DurationDisplay
-          startedAt={message.startedAt ?? (isRunning ? message.createdAt : undefined)}
-          completedAt={message.completedAt}
-          isRunning={isRunning}
-        />
+        {/* 用户消息显示创建时间 */}
+        {message.kind === "user" && message.createdAt ? (
+          <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
+        ) : null}
+        {/* Agent 和 system 消息显示持续时间 */}
+        {message.kind !== "user" ? (
+          <DurationDisplay
+            startedAt={message.startedAt ?? (isRunning ? message.createdAt : undefined)}
+            completedAt={message.completedAt}
+            isRunning={isRunning}
+          />
+        ) : null}
       </div>
       {message.sessionId || message.runIndex ? (
         <div className="sessionInfo">
@@ -2169,7 +2176,34 @@ function formatTime(value: string): string {
   if (Number.isNaN(date.getTime())) {
     return "";
   }
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  const now = new Date();
+  const isSameYear = date.getFullYear() === now.getFullYear();
+  const isSameDay = date.toDateString() === now.toDateString();
+
+  if (isSameDay) {
+    // 当天：只显示时分
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  if (isSameYear) {
+    // 今年：显示月-日 时:分
+    return date.toLocaleString([], {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  // 跨年：显示年-月-日 时:分
+  return date.toLocaleString([], {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function formatDuration(ms: number): string {
