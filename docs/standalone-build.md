@@ -47,16 +47,6 @@ npm install -g orbit
 | `ORBIT_PORT` | 服务端口 | `4317` |
 | `ORBIT_UI_DIR` | UI 资源目录 | 包内的 `dist/ui/` |
 
-## 源码保护
-
-Bun compile 提供三种保护机制：
-
-| 机制 | 效果 |
-|------|------|
-| `--bytecode` | JS 源码编译为二进制字节码，无法直接读取 |
-| `--minify` | 删除注释、缩短变量名 |
-| `--sourcemap=none` | 不生成 source map，切断逆向还原路径 |
-
 ## 运行时 CLI 依赖
 
 Orbit 本身不需要 CLI 环境，但它调度的 agent 需要：
