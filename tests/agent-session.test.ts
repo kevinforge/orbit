@@ -530,3 +530,80 @@ test("error case (rate limit) still persists sessionId if one was generated", as
   assert.equal(sessionAfterError?.sessionId, "new-session-after-error", "sessionId should be persisted even on error");
   assert.equal(sessionAfterError?.runCount, 2, "runCount should be incremented");
 });
+
+test("interrupt followed by result reject should NOT change status to error", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+
+  let interruptCalled = false;
+  const deferredResult: { resolve: (value: string) => void; reject: (error: Error) => void } = {
+    resolve: () => {},
+    reject: () => {},
+  };
+  const resultPromise = new Promise<string>((res, rej) => {
+    deferredResult.resolve = res;
+    deferredResult.reject = rej;
+  });
+
+  const runtime: AgentRuntime = {
+    kind: "claude-code",
+    run() {
+      return {
+        process: {
+          kill() {},
+          pid: 12345,
+          interrupt() { interruptCalled = true; },
+        },
+        result: resultPromise,
+        sessionId: Promise.resolve("session-after-interrupt"),
+      };
+    },
+  };
+
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  session.start();
+  const sendPromise = session.send("run-1", "hello");
+
+  // Wait a tick for the run to start
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Interrupt the running run
+  const interrupted = session.interrupt("run-1");
+  assert.equal(interrupted, true);
+  assert.equal(interruptCalled, true);
+
+  // Status should be idle after interrupt
+  assert.equal(session.getStatus(), "idle", "status should be idle immediately after interrupt");
+
+  // Simulate what happens when the killed process exits: result promise rejects
+  deferredResult.reject(new Error("Process killed: exit code 137"));
+
+  // Wait for the catch handler to run and catch the expected rejection
+  try {
+    await sendPromise;
+    assert.fail("send should have rejected after interrupt");
+  } catch (error) {
+    assert.ok((error as Error).message.includes("Process killed"));
+  }
+
+  // CRITICAL: Status should STILL be idle, NOT error
+  // This is the bug we're testing for - catch() should not overwrite idle status
+  assert.equal(session.getStatus(), "idle", "status should remain idle after interrupt-induced reject, not become error");
+});

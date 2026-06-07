@@ -192,7 +192,14 @@ export class AgentSession {
         }
 
         this.activeRun = null;
-        this.setStatus("error");
+
+        // CRITICAL: Check if status is already "idle" (set by interrupt()).
+        // If so, this rejection was caused by interrupt, not a real error.
+        // Do NOT overwrite the idle status in this case.
+        if (this.status !== "idle") {
+          this.setStatus("error");
+        }
+
         throw error;
       });
   }
