@@ -857,6 +857,18 @@ export function App() {
           </nav>
         </section>
 
+        {/* 底部设置区 */}
+        <div className="sidebarBottom">
+          <button
+            type="button"
+            className="sidebarSettingsBtn"
+            onClick={() => setShowSettings(true)}
+            title="设置"
+          >
+            ⚙️
+            <span>设置</span>
+          </button>
+        </div>
       </aside>
       <button
         className="sidebarRevealBtn"
@@ -1452,6 +1464,7 @@ function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange:
 function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; hasWorkspace: boolean }) {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [rules, setRules] = useState<string[]>([]);
+  const [enableRunLogs, setEnableRunLogs] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
@@ -1463,9 +1476,10 @@ function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; h
     }
     fetch("/api/workspace-config")
       .then((r) => r.json())
-      .then((cfg: { systemPrompt?: string; rules?: string[] }) => {
+      .then((cfg: { systemPrompt?: string; rules?: string[]; enableRunLogs?: boolean }) => {
         setSystemPrompt(cfg.systemPrompt ?? "");
         setRules(cfg.rules ?? []);
+        setEnableRunLogs(cfg.enableRunLogs ?? false);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -1494,7 +1508,11 @@ function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; h
     fetch("/api/workspace-config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ systemPrompt: systemPrompt.trim(), rules: rules.map((r) => r.trim()).filter(Boolean) }),
+      body: JSON.stringify({
+        systemPrompt: systemPrompt.trim(),
+        rules: rules.map((r) => r.trim()).filter(Boolean),
+        enableRunLogs,
+      }),
     })
       .then((r) => {
         if (!r.ok) return r.json().then((err) => Promise.reject(err));
@@ -1572,6 +1590,19 @@ function SystemSettingsPanel({ onClose, hasWorkspace }: { onClose: () => void; h
                     ))}
                   </div>
                 )}
+              </div>
+              <div className="settingsSection">
+                <label className="settingsLabel">运行日志</label>
+                <span className="workspaceConfigHint">记录 agent 运行日志到本地（用于问题排查，会占用磁盘空间）</span>
+                <div className="toggleRow">
+                  <input
+                    type="checkbox"
+                    id="enableRunLogs"
+                    checked={enableRunLogs}
+                    onChange={(e) => setEnableRunLogs(e.target.checked)}
+                  />
+                  <label htmlFor="enableRunLogs">{enableRunLogs ? "已开启" : "已关闭"}</label>
+                </div>
               </div>
             </>
           )}
