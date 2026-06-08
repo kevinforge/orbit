@@ -2177,10 +2177,16 @@ button:active:not(:disabled) {
   flex: 0 0 auto;
   max-height: 270px;
   min-height: 0;
-  overflow-y: auto;
+  overflow-y: visible;
   padding-right: 2px;
   margin-top: 10px;
   padding-top: 8px;
+}
+
+.compactAgents .agentList {
+  max-height: calc(270px - 45px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .compactAgents .agentButton {
