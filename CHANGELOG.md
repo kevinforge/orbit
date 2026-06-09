@@ -1,9 +1,5 @@
 # Changelog
 
-All notable changes to **Orbit** are recorded here, newest version first.
-Each entry is written from your point of view — what you can now do, what got
-easier, and what was fixed — rather than from the code's point of view.
-
 > 中文版本请见 [CHANGELOG.zh-CN.md](./CHANGELOG.zh-CN.md).
 
 ---
@@ -11,15 +7,6 @@ easier, and what was fixed — rather than from the code's point of view.
 ## v0.9.3
 
 *In development — not yet released. Includes everything since v0.9.2.*
-
-### A faster, self-contained app
-
-- **Orbit is now a compiled app.** Orbit ships as a standalone binary with the
-  runtime built in, instead of running straight from source. It launches
-  quicker, and installing it picks the right prebuilt binary for your system
-  automatically — Windows, Linux, and macOS (both Intel and Apple Silicon).
-- **Your code stays yours.** Because the app is compiled to bytecode, the
-  Orbit source is protected when distributed.
 
 ### New things you can do
 
@@ -140,4 +127,3 @@ one shared conversation.
   resume previous work.
 - **Readable replies.** Agent responses render as Markdown with
   syntax-highlighted code blocks, and tool activity is visible as it happens.
-- **Installs anywhere.** Available as an npm package: `npm install -g orbit`.
