@@ -4,9 +4,7 @@
 
 ---
 
-## v0.9.3
-
-*In development — not yet released. Includes everything since v0.9.2.*
+## v0.9.3 — 2026-06-09
 
 ### New things you can do
 
