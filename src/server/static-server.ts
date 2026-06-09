@@ -18,8 +18,10 @@ const CONTENT_TYPES: Record<string, string> = {
 // Resolve dist/ui/ relative to the package root, not CWD.
 // In production, ORBIT_DIST_UI is set by bin/orbit.js. In dev, fall back to
 // the source-relative path (import.meta.url → src/server/ → ../../dist/ui).
+// For standalone builds, ORBIT_UI_DIR can be set externally.
 const DIST_UI_ROOT =
   process.env.ORBIT_DIST_UI ??
+  process.env.ORBIT_UI_DIR ??
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "dist", "ui");
 
 export function serveStatic(urlPath: string, res: ServerResponse): boolean {

@@ -37,7 +37,8 @@ request or issue -> feature branch -> failing tests -> implementation -> npm run
 ```powershell
 npm install                  # Install dependencies
 npm run dev                  # Start dev server (port 4317), Vite dev server (port 5173) proxies API calls to it
-npm run build                # Type-check with tsc --noEmit, then build UI with Vite to dist/ui/
+npm run build                # Type-check + Vite UI build + Bun compile standalone binary (dist/bin/orbit)
+npm run build:all            # Build standalone binaries for all platforms (Windows, Linux, macOS x64/ARM64)
 npm run test                 # Run all tests
 npm run test:glob            # Alternative: run tests via glob pattern
 ```
@@ -48,6 +49,14 @@ node --test --import tsx tests/mention-router.test.ts
 ```
 
 Port is configurable via `ORBIT_PORT` env var (default 4317).
+
+## Build Output
+
+- `dist/bin/orbit.exe` (Windows) or `dist/bin/orbit` — standalone executable with embedded Bun runtime
+- `dist/ui/` — UI static assets
+- `--bytecode --minify --sourcemap=none` — source code compiled to binary bytecode for protection
+
+See `docs/standalone-build.md` for distribution and installation instructions.
 
 ## Architecture Overview
 
