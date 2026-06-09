@@ -32,6 +32,16 @@ For every non-trivial change:
 request or issue -> feature branch -> failing tests -> implementation -> npm run test -> npm run build -> commit -> push -> draft PR -> CI -> human merge
 ```
 
+## Engineering & Product Principles
+
+`AGENTS.md` is the source of truth for working principles (Think Before Coding, Engineering Principles, Product Principles). The essentials, restated for every change:
+
+- **Smallest correct change.** Minimum code, no speculative features or abstractions; every changed line traces to the request. Reuse existing utilities and patterns rather than introducing new ones.
+- **Verify, do not assert.** Prefer a failing test that reproduces the bug or proves the feature, then make it pass. Run `npm run test` and `npm run build` before committing, and report what actually passed — never claim "done" while a check fails or was skipped.
+- **Do not break the user's flow.** Never leave an agent stuck or swallow an error silently; interruption, cancellation, and failure must leave recoverable state.
+- **Local-first is a promise.** Data loss (messages, sessions, agent/workspace configs) is a serious bug; file writes must not corrupt on crash.
+- **Speak the user's language.** User-facing text uses product terms (数字员工) and stays consistent in EN and ZH; never leak internal codewords (`run`, `supervisor`, `routeState`) into user-visible messages.
+
 ## Build & Run Commands
 
 ```powershell
