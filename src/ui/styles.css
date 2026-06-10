@@ -3689,7 +3689,17 @@ button:active:not(:disabled) {
 }
 
 .presetCardRecommended {
+  border-color: var(--border-light);
+}
+
+.presetCardSelected {
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm);
+}
+
+.presetCardSelected:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm);
 }
 
 .presetBadge {

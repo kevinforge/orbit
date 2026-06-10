@@ -2,6 +2,7 @@ import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, us
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
 import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
+import { matchPreset } from "../core/workspace-presets.ts";
 import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 
 const initialState: AppState = {
@@ -1606,9 +1607,14 @@ function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
 }
 
 // A preset template card, shared by the workspace-creation picker and the workspace config panel.
-function PresetCard({ preset, onClick }: { preset: WorkspacePreset; onClick: () => void }) {
+function PresetCard({ preset, selected, onClick }: { preset: WorkspacePreset; selected?: boolean; onClick: () => void }) {
+  const classes = [
+    "presetCard",
+    selected ? "presetCardSelected" : "",
+    preset.recommended ? "presetCardRecommended" : "",
+  ].filter(Boolean).join(" ");
   return (
-    <button type="button" className={`presetCard ${preset.recommended ? "presetCardRecommended" : ""}`} onClick={onClick}>
+    <button type="button" className={classes} aria-pressed={selected} onClick={onClick}>
       <span className="presetName">{preset.name}</span>
       <span className="presetDesc">{preset.description}</span>
       {preset.recommended ? <span className="presetBadge">推荐</span> : null}
@@ -1647,6 +1653,8 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
     setSystemPrompt(preset.systemPrompt);
     setRules([...preset.rules]);
   }
+
+  const activePresetId = matchPreset(systemPrompt, rules, presets);
 
   function addRule() {
     setRules((prev) => [...prev, ""]);
@@ -1715,7 +1723,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
                   <span className="workspaceConfigHint">选择内置模板一键填充提示词和规则，会覆盖当前内容。</span>
                   <div className="presetSelector">
                     {presets.map((preset) => (
-                      <PresetCard key={preset.id} preset={preset} onClick={() => applyPreset(preset.id)} />
+                      <PresetCard key={preset.id} preset={preset} selected={activePresetId === preset.id} onClick={() => applyPreset(preset.id)} />
                     ))}
                   </div>
                 </div>

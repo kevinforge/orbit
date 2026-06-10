@@ -6,6 +6,31 @@ export const PRESET_IDS = {
   multiAgentCollaboration: "multi-agent-collaboration",
 } as const;
 
+/**
+ * Find the preset whose content matches the given systemPrompt and rules.
+ * Both sides are normalized: systemPrompt is trimmed, rules are trimmed and
+ * empty strings are removed, then compared by value.
+ * Returns the matching preset id, or `null` if no preset matches.
+ */
+export function matchPreset(
+  systemPrompt: string,
+  rules: string[],
+  presets: WorkspacePreset[],
+): string | null {
+  const normalizedPrompt = systemPrompt.trim();
+  const normalizedRules = rules.map((r) => r.trim()).filter(Boolean);
+  for (const preset of presets) {
+    const pPrompt = preset.systemPrompt.trim();
+    const pRules = preset.rules.map((r) => r.trim()).filter(Boolean);
+    if (normalizedPrompt === pPrompt
+      && normalizedRules.length === pRules.length
+      && normalizedRules.every((r, i) => r === pRules[i])) {
+      return preset.id;
+    }
+  }
+  return null;
+}
+
 export function getWorkspacePresets(): WorkspacePreset[] {
   return [
     {
