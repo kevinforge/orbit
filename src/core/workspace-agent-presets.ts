@@ -4,8 +4,8 @@ import { runtimeKindToCliKey } from "./runtime-meta.ts";
 import { PRESET_IDS } from "./workspace-presets.ts";
 
 const MULTI_AGENT_ENABLED_IDS = new Set(["architect", "developer", "tester", "supervisor"]);
-const RUNTIME_PRIORITY: AgentRuntimeKind[] = ["codex", "claude-code", "codebuddy"];
-const FALLBACK_RUNTIME: AgentRuntimeKind = "codex";
+const RUNTIME_PRIORITY: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
+const FALLBACK_RUNTIME: AgentRuntimeKind = "claude-code";
 
 export function preferredRuntimeFromAvailability(availability: readonly RuntimeAvailability[]): AgentRuntimeKind {
   // RuntimeAvailability.runtime holds CLI keys ("claude", "codex", "codebuddy"),

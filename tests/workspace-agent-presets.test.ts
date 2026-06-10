@@ -39,11 +39,11 @@ test("empty preset leaves all default agents disabled", () => {
   assert.equal(configs.some((config) => config.enabled), false);
 });
 
-test("preferred runtime falls back to codex when no runtime is available", () => {
+test("preferred runtime falls back to claude-code when no runtime is available", () => {
   assert.equal(preferredRuntimeFromAvailability([
     runtime("codex", false),
     runtime("claude", false),
     runtime("codebuddy", false),
-  ]), "codex");
+  ]), "claude-code");
 });
 
