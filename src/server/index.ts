@@ -769,10 +769,11 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const ws = workspaceStore.create(name, wsPath);
-        // Apply preset if specified and not empty
-        if (presetId && presetId !== "empty") {
-          const presets = getWorkspacePresets();
-          const preset = presets.find((p) => p.id === presetId);
+        // Apply the requested preset's prompt/rules when a valid preset id is given.
+        // The "empty" preset just writes empty values, which the config resolver
+        // treats as "no injection" — equivalent to not saving.
+        if (presetId) {
+          const preset = getWorkspacePresets().find((p) => p.id === presetId);
           if (preset) {
             workspaceConfigStore.save(ws.id, {
               systemPrompt: preset.systemPrompt,

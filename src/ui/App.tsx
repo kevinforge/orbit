@@ -48,6 +48,12 @@ export function App() {
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
   const [pendingWorkspacePath, setPendingWorkspacePath] = useState<string | null>(null);
   const [workspacePresets, setWorkspacePresets] = useState<WorkspacePreset[]>([]);
+  useEffect(() => {
+    fetch("/api/workspace-presets")
+      .then((r) => (r.ok ? r.json() : Promise.resolve([])))
+      .then((p: WorkspacePreset[]) => setWorkspacePresets(Array.isArray(p) ? p : []))
+      .catch(() => { /* presets are optional; the picker and config panel degrade gracefully */ });
+  }, []);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -495,16 +501,10 @@ export function App() {
       const selectedPath = result.path?.trim();
       if (!selectedPath) return;
 
-      // Load presets for the selector dialog
-      try {
-        const presetsRes = await fetch("/api/workspace-presets");
-        if (presetsRes.ok) {
-          const presets = (await presetsRes.json()) as WorkspacePreset[];
-          setWorkspacePresets(presets);
-        }
-      } catch { /* ignore */ }
-
-      // Show preset selector dialog, defer creation to confirmWorkspaceCreation
+      if (workspacePresets.length === 0) {
+        window.alert("无法加载工作区模板，请确认本地服务正在运行后重试。");
+        return;
+      }
       setPendingWorkspacePath(selectedPath);
     } finally {
       setIsPickingDirectory(false);
@@ -513,20 +513,31 @@ export function App() {
 
   async function confirmWorkspaceCreation(presetId: string) {
     const selectedPath = pendingWorkspacePath;
-    setPendingWorkspacePath(null);
     if (!selectedPath) return;
-
-    const createResponse = await fetch("/api/workspaces", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: selectedPath, presetId }),
-    });
-    if (!createResponse.ok) return;
-    const workspace = (await createResponse.json()) as Workspace;
-    if (workspace.id) {
-      await switchWorkspace(workspace.id);
+    try {
+      const createResponse = await fetch("/api/workspaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: selectedPath, presetId }),
+      });
+      if (!createResponse.ok) {
+        let message = `创建工作区失败 (${createResponse.status})`;
+        try {
+          const body = await createResponse.json();
+          if (body?.message) message = `创建工作区失败：${body.message}`;
+        } catch { /* ignore parse error, fall back to status */ }
+        window.alert(message);
+        return;
+      }
+      const workspace = (await createResponse.json()) as Workspace;
+      setPendingWorkspacePath(null);
+      if (workspace.id) {
+        await switchWorkspace(workspace.id);
+      }
+      refreshWorkspaces();
+    } catch {
+      window.alert("创建工作区失败：无法连接本地服务。");
     }
-    refreshWorkspaces();
   }
 
   async function renameWorkspace(workspaceId: string, name: string) {
@@ -1099,6 +1110,7 @@ export function App() {
         <WorkspaceConfigPanel
           onClose={() => setShowWorkspaceConfig(false)}
           hasWorkspace={hasWorkspace}
+          presets={workspacePresets}
         />
       ) : null}
       {pendingWorkspacePath ? (
@@ -1112,16 +1124,7 @@ export function App() {
               <span className="workspaceConfigHint">选择一个内置模板快速配置工作区，或使用空白工作区。</span>
               <div className="presetPickerList">
                 {workspacePresets.map((preset) => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    className={`presetCard ${preset.id === "multi-agent-collaboration" ? "presetCardRecommended" : ""}`}
-                    onClick={() => confirmWorkspaceCreation(preset.id)}
-                  >
-                    <span className="presetName">{preset.name}</span>
-                    <span className="presetDesc">{preset.description}</span>
-                    {preset.id === "multi-agent-collaboration" ? <span className="presetBadge">推荐</span> : null}
-                  </button>
+                  <PresetCard key={preset.id} preset={preset} onClick={() => confirmWorkspaceCreation(preset.id)} />
                 ))}
               </div>
             </div>
@@ -1602,14 +1605,24 @@ function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+// A preset template card, shared by the workspace-creation picker and the workspace config panel.
+function PresetCard({ preset, onClick }: { preset: WorkspacePreset; onClick: () => void }) {
+  return (
+    <button type="button" className={`presetCard ${preset.recommended ? "presetCardRecommended" : ""}`} onClick={onClick}>
+      <span className="presetName">{preset.name}</span>
+      <span className="presetDesc">{preset.description}</span>
+      {preset.recommended ? <span className="presetBadge">推荐</span> : null}
+    </button>
+  );
+}
+
 // Workspace-level config - prompt and rules
-function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; hasWorkspace: boolean }) {
+function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () => void; hasWorkspace: boolean; presets: WorkspacePreset[] }) {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [rules, setRules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
-  const [presets, setPresets] = useState<WorkspacePreset[]>([]);
 
   useEffect(() => {
     if (!hasWorkspace) {
@@ -1624,10 +1637,6 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
         setLoading(false);
       })
       .catch(() => setLoading(false));
-    fetch("/api/workspace-presets")
-      .then((r) => r.json())
-      .then((p: WorkspacePreset[]) => setPresets(p))
-      .catch(() => {/* ignore */});
   }, [hasWorkspace]);
 
   function applyPreset(presetId: string) {
@@ -1706,15 +1715,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
                   <span className="workspaceConfigHint">选择内置模板一键填充提示词和规则，会覆盖当前内容。</span>
                   <div className="presetSelector">
                     {presets.map((preset) => (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        className="presetCard"
-                        onClick={() => applyPreset(preset.id)}
-                      >
-                        <span className="presetName">{preset.name}</span>
-                        <span className="presetDesc">{preset.description}</span>
-                      </button>
+                      <PresetCard key={preset.id} preset={preset} onClick={() => applyPreset(preset.id)} />
                     ))}
                   </div>
                 </div>
