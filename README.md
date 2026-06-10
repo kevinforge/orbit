@@ -16,6 +16,8 @@ orbit
 
 Open `http://localhost:4317`.
 
+New to Orbit? Start with the beginner-friendly [Chinese quickstart](docs/QUICKSTART.zh-CN.md).
+
 ## Requirements
 
 Orbit coordinates CLI-backed agents. The agents require:
@@ -28,7 +30,7 @@ Orbit coordinates CLI-backed agents. The agents require:
 
 ## Features
 
-- Four built-in agents: `@pm:`, `@architect:`, `@developer:`, `@tester:`
+- Five built-in agent templates: `@pm:`, `@architect:`, `@developer:`, `@tester:`, `@supervisor:`
 - Custom agent creation and configuration via UI
 - Per-agent permissions (read/write/run/install/git commit)
 - Multiple agent assignments in one message
