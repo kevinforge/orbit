@@ -10,7 +10,7 @@ const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester"
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const CURRENT_MIGRATION_VERSION = 1;
+const CURRENT_MIGRATION_VERSION = 2;
 
 export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
@@ -176,6 +176,9 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
         if (t.onAgentBlocked !== undefined && typeof t.onAgentBlocked !== "boolean") {
           errors.push(`Agent "${configId}" triggers.onAgentBlocked must be a boolean.`);
         }
+        if (t.onRunFailed !== undefined && typeof t.onRunFailed !== "boolean") {
+          errors.push(`Agent "${configId}" triggers.onRunFailed must be a boolean.`);
+        }
         if (t.maxTriggersPerConversation !== undefined) {
           if (typeof t.maxTriggersPerConversation !== "number" || t.maxTriggersPerConversation < 1 || t.maxTriggersPerConversation > 100) {
             errors.push(`Agent "${configId}" triggers.maxTriggersPerConversation must be an integer between 1 and 100.`);
@@ -287,6 +290,17 @@ export class AgentConfigStore {
         for (const def of DEFAULT_AGENT_CONFIGS) {
           if (!savedIds.has(def.id)) {
             configs.push(structuredClone(def));
+            migrated = true;
+          }
+        }
+        for (const config of configs) {
+          if (
+            config.id === "supervisor" &&
+            config.role === "coordinator" &&
+            config.triggers &&
+            config.triggers.onRunFailed === undefined
+          ) {
+            config.triggers.onRunFailed = true;
             migrated = true;
           }
         }

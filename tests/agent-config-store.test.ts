@@ -415,6 +415,31 @@ test("load migrates old configs missing permissionProfile to role defaults", () 
   }
 });
 
+test("load migrates existing default supervisor to handle failed agent runs", () => {
+  const dir = tempDir();
+  try {
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const oldDefaults = structuredClone(DEFAULT_AGENT_CONFIGS).map((config) => (
+      config.id === "supervisor"
+        ? { ...config, triggers: { onUnassignedMessage: true, onAgentBlocked: true } }
+        : config
+    ));
+    fs.writeFileSync(filePath, JSON.stringify({ configs: oldDefaults, _meta: { migrationVersion: 1 } }, null, 2));
+
+    const store = new AgentConfigStore(dir);
+    const loaded = store.load("ws1");
+    const supervisor = loaded.find((config) => config.id === "supervisor");
+
+    assert.equal(supervisor?.triggers?.onRunFailed, true);
+    const persisted = JSON.parse(fs.readFileSync(filePath, "utf8")) as { configs: AgentConfig[] };
+    const persistedSupervisor = persisted.configs.find((config) => config.id === "supervisor");
+    assert.equal(persistedSupervisor?.triggers?.onRunFailed, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("reset outputs configs with permissionProfile", () => {
   const dir = tempDir();
   try {
@@ -534,6 +559,18 @@ test("rejects triggers with non-boolean onAgentBlocked", () => {
   ];
   const errors = validateAgentConfigs(configs);
   assert.ok(errors.some((e) => e.includes("onAgentBlocked") && e.includes("boolean")), `Expected onAgentBlocked boolean error, got: ${JSON.stringify(errors)}`);
+});
+
+test("rejects triggers with non-boolean onRunFailed", () => {
+  const configs: AgentConfig[] = [
+    {
+      id: "a", name: "A", role: "general", runtime: "claude-code",
+      systemPrompt: "do stuff", enabled: true,
+      triggers: { onRunFailed: "yes" as unknown as boolean },
+    },
+  ];
+  const errors = validateAgentConfigs(configs);
+  assert.ok(errors.some((e) => e.includes("onRunFailed") && e.includes("boolean")), `Expected onRunFailed boolean error, got: ${JSON.stringify(errors)}`);
 });
 
 test("accepts valid triggers with both flags set", () => {

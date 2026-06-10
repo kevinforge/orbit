@@ -2149,7 +2149,14 @@ function AgentManagerPanel({
                             );
                           })()}
                         </div>
-                        {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <SupervisorBanner maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5} hasUnassigned={config.triggers?.onUnassignedMessage === true} hasBlocked={config.triggers?.onAgentBlocked === true} /> : null}
+                        {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? (
+                          <SupervisorBanner
+                            maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5}
+                            hasUnassigned={config.triggers?.onUnassignedMessage === true}
+                            hasBlocked={config.triggers?.onAgentBlocked === true}
+                            hasRunFailed={config.triggers?.onRunFailed === true}
+                          />
+                        ) : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -2173,7 +2180,7 @@ function AgentManagerPanel({
   );
 }
 
-function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked }: { maxTriggers: number; hasUnassigned: boolean; hasBlocked: boolean }) {
+function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked, hasRunFailed }: { maxTriggers: number; hasUnassigned: boolean; hasBlocked: boolean; hasRunFailed: boolean }) {
   return (
     <div className="supervisorBanner">
       <p><span aria-hidden="true">🔍</span> <strong>会话监督已启用</strong></p>
@@ -2184,6 +2191,9 @@ function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked }: { maxTrigg
         ) : null}
         {hasBlocked ? (
           <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他数字员工的消息被路由拒绝时，介入兜底处理</li>
+        ) : null}
+        {hasRunFailed ? (
+          <li><span aria-hidden="true">⚡</span> <strong>运行失败</strong> - 数字员工运行出错时，介入判断下一步处理方式</li>
         ) : null}
       </ul>
       <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭启用开关可暂停监督。</p>
