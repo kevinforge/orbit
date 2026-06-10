@@ -31,6 +31,8 @@
   --accent-border: #b2e0db;
   --secondary: #c2410c;
   --secondary-subtle: #fff4ed;
+  --secondary-bg: rgba(194, 65, 12, 0.07);
+  --secondary-border: rgba(194, 65, 12, 0.2);
 
   /* Status */
   --success: #15803d;
@@ -1539,7 +1541,7 @@ button:active:not(:disabled) {
 }
 
 .interruptBtn:hover:not(:disabled) {
-  background: rgba(194, 65, 12, 0.06) !important;
+  background: var(--secondary-bg) !important;
   border-color: var(--secondary) !important;
   transform: translateY(-1px);
 }
@@ -2902,8 +2904,8 @@ button:active:not(:disabled) {
   margin-top: 6px;
   padding: 6px 10px;
   border-radius: var(--radius-md);
-  background: rgba(194, 65, 12, 0.08);
-  border: 1px solid rgba(194, 65, 12, 0.2);
+  background: var(--secondary-border);
+  border: 1px solid var(--secondary-border);
   font-size: 12px;
   color: var(--secondary);
 }
@@ -2942,9 +2944,9 @@ button:active:not(:disabled) {
   gap: 14px;
   margin: 10px 24px 0;
   padding: 12px 14px;
-  border: 1px solid rgba(194, 65, 12, 0.24);
+  border: 1px solid var(--secondary-border);
   border-radius: var(--radius-md);
-  background: rgba(194, 65, 12, 0.07);
+  background: var(--secondary-bg);
   color: var(--secondary);
 }
 
@@ -3791,7 +3793,7 @@ button:active:not(:disabled) {
 
 .presetRuntimeHint.missing {
   color: var(--secondary);
-  background: rgba(194, 65, 12, 0.08);
+  background: var(--secondary-border);
 }
 
 .presetCardRecommended {

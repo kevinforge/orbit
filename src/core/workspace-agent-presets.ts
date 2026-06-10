@@ -8,6 +8,8 @@ const RUNTIME_PRIORITY: AgentRuntimeKind[] = ["codex", "claude-code", "codebuddy
 const FALLBACK_RUNTIME: AgentRuntimeKind = "codex";
 
 export function preferredRuntimeFromAvailability(availability: readonly RuntimeAvailability[]): AgentRuntimeKind {
+  // RuntimeAvailability.runtime holds CLI keys ("claude", "codex", "codebuddy"),
+  // so we convert AgentRuntimeKind ("claude-code") to CLI key via runtimeKindToCliKey().
   const availableRuntimes = new Set(
     availability
       .filter((item) => item.available)
