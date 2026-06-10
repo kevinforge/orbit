@@ -17,6 +17,7 @@ import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
+import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-presets.ts";
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
@@ -666,6 +667,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/runtimes/probe") {
+      await probeRuntimes();
+      sendJson(res, 200, { ok: true, availability: getRuntimeAvailabilityArray() });
+      return;
+    }
+
     // --- Workspace config ---
     if (req.method === "GET" && url.pathname === "/api/workspace-presets") {
       sendJson(res, 200, getWorkspacePresets());
@@ -779,6 +786,7 @@ const server = http.createServer(async (req, res) => {
               systemPrompt: preset.systemPrompt,
               rules: preset.rules,
             });
+            configStore.save(ws.id, initialAgentConfigsForWorkspacePreset(preset.id, getRuntimeAvailabilityArray()));
           }
         }
         sendJson(res, 200, ws);

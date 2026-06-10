@@ -9,11 +9,11 @@ export type RuntimeMeta = { label: string; installUrl: string };
 export function runtimeMeta(runtime: string): RuntimeMeta {
   switch (runtime) {
     case "claude-code":
-      return { label: "Claude Code", installUrl: "https://docs.anthropic.com/en/docs/claude-code/overview" };
+      return { label: "Claude Code", installUrl: "https://docs.anthropic.com/en/docs/claude-code/quickstart" };
     case "codex":
-      return { label: "OpenAI Codex", installUrl: "https://github.com/openai/codex" };
+      return { label: "OpenAI Codex", installUrl: "https://developers.openai.com/codex/cli" };
     case "codebuddy":
-      return { label: "CodeBuddy", installUrl: "https://www.codebuddy.ai/cli" };
+      return { label: "CodeBuddy", installUrl: "https://www.codebuddy.ai/docs/cli/installation" };
     default:
       return { label: runtime, installUrl: "" };
   }
