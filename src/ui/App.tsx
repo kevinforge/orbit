@@ -524,11 +524,12 @@ export function App() {
       const selectedPath = result.path?.trim();
       if (!selectedPath) return;
 
-      if (workspacePresets.length === 0) {
-        window.alert("无法加载工作区模板，请确认本地服务正在运行后重试。");
-        return;
+      const action = getWorkspaceCreationAction(workspacePresets);
+      if (action.kind === "create") {
+        await createWorkspace(selectedPath);
+      } else {
+        setPendingWorkspacePath(selectedPath);
       }
-      setPendingWorkspacePath(selectedPath);
     } finally {
       setIsPickingDirectory(false);
     }
@@ -537,6 +538,10 @@ export function App() {
   async function confirmWorkspaceCreation(presetId: string) {
     const selectedPath = pendingWorkspacePath;
     if (!selectedPath) return;
+    await createWorkspace(selectedPath, presetId);
+  }
+
+  async function createWorkspace(selectedPath: string, presetId?: string) {
     try {
       const createResponse = await fetch("/api/workspaces", {
         method: "POST",
@@ -2361,6 +2366,12 @@ function connectionLabel(state: "connecting" | "live" | "offline"): string {
 const SIDEBAR_MIN_WIDTH = 280;
 const SIDEBAR_MAX_WIDTH = 460;
 const SIDEBAR_DEFAULT_WIDTH = 336;
+
+export type WorkspaceCreationAction = { kind: "choosePreset" } | { kind: "create" };
+
+export function getWorkspaceCreationAction(presets: readonly WorkspacePreset[]): WorkspaceCreationAction {
+  return presets.length > 0 ? { kind: "choosePreset" } : { kind: "create" };
+}
 
 function isConversationRunning(
   summaries: RunningSummary[],
