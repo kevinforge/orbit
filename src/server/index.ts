@@ -17,6 +17,7 @@ import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
+import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
 import type { ConversationInfo, MessagePage, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
@@ -666,6 +667,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --- Workspace config ---
+    if (req.method === "GET" && url.pathname === "/api/workspace-presets") {
+      sendJson(res, 200, getWorkspacePresets());
+      return;
+    }
 
     if (req.method === "GET" && url.pathname === "/api/workspace-config") {
       if (!activeWorkspaceId) {
@@ -754,15 +759,27 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/workspaces") {
-      const input = (await readJson(req)) as { name?: unknown; path?: unknown };
+      const input = (await readJson(req)) as { name?: unknown; path?: unknown; presetId?: unknown };
       const name = typeof input.name === "string" ? input.name.trim() : "";
       const wsPath = typeof input.path === "string" ? input.path.trim() : "";
+      const presetId = typeof input.presetId === "string" ? input.presetId.trim() : "";
       if (!wsPath) {
         sendJson(res, 400, { ok: false, message: "path is required." });
         return;
       }
       try {
         const ws = workspaceStore.create(name, wsPath);
+        // Apply preset if specified and not empty
+        if (presetId && presetId !== "empty") {
+          const presets = getWorkspacePresets();
+          const preset = presets.find((p) => p.id === presetId);
+          if (preset) {
+            workspaceConfigStore.save(ws.id, {
+              systemPrompt: preset.systemPrompt,
+              rules: preset.rules,
+            });
+          }
+        }
         sendJson(res, 200, ws);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

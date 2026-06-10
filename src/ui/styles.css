@@ -3647,3 +3647,70 @@ button:active:not(:disabled) {
   display: block;
   background: var(--bg-base);
 }
+
+/* ===== Workspace Preset Styles ===== */
+
+.presetSelector {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.presetCard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  text-align: left;
+  position: relative;
+}
+
+.presetCard:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.presetName {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.presetDesc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.presetCardRecommended {
+  border-color: var(--accent);
+}
+
+.presetBadge {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--bg-sidebar);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.presetPickerPanel {
+  max-width: 460px;
+}
+
+.presetPickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}

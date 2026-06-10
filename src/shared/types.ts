@@ -206,6 +206,14 @@ export type WorkspaceConfig = {
   rules?: string[];
 };
 
+export type WorkspacePreset = {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  rules: string[];
+};
+
 export type WorkspaceRuntimeConfig = {
   systemPrompt: string;
   rules: string[];

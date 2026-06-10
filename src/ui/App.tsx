@@ -2,7 +2,7 @@ import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, us
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
 import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
@@ -46,6 +46,8 @@ export function App() {
   const [openConversationMenuId, setOpenConversationMenuId] = useState<string | null>(null);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set());  // non-active workspaces only; active workspace is always expanded
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
+  const [pendingWorkspacePath, setPendingWorkspacePath] = useState<string | null>(null);
+  const [workspacePresets, setWorkspacePresets] = useState<WorkspacePreset[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -493,20 +495,38 @@ export function App() {
       const selectedPath = result.path?.trim();
       if (!selectedPath) return;
 
-      const createResponse = await fetch("/api/workspaces", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: selectedPath }),
-      });
-      if (!createResponse.ok) return;
-      const workspace = (await createResponse.json()) as Workspace;
-      if (workspace.id) {
-        await switchWorkspace(workspace.id);
-      }
-      refreshWorkspaces();
+      // Load presets for the selector dialog
+      try {
+        const presetsRes = await fetch("/api/workspace-presets");
+        if (presetsRes.ok) {
+          const presets = (await presetsRes.json()) as WorkspacePreset[];
+          setWorkspacePresets(presets);
+        }
+      } catch { /* ignore */ }
+
+      // Show preset selector dialog, defer creation to confirmWorkspaceCreation
+      setPendingWorkspacePath(selectedPath);
     } finally {
       setIsPickingDirectory(false);
     }
+  }
+
+  async function confirmWorkspaceCreation(presetId: string) {
+    const selectedPath = pendingWorkspacePath;
+    setPendingWorkspacePath(null);
+    if (!selectedPath) return;
+
+    const createResponse = await fetch("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: selectedPath, presetId }),
+    });
+    if (!createResponse.ok) return;
+    const workspace = (await createResponse.json()) as Workspace;
+    if (workspace.id) {
+      await switchWorkspace(workspace.id);
+    }
+    refreshWorkspaces();
   }
 
   async function renameWorkspace(workspaceId: string, name: string) {
@@ -1081,6 +1101,33 @@ export function App() {
           hasWorkspace={hasWorkspace}
         />
       ) : null}
+      {pendingWorkspacePath ? (
+        <div className="modalOverlay" onClick={() => setPendingWorkspacePath(null)}>
+          <div className="modalPanel presetPickerPanel" onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader">
+              <h2>选择工作区模板</h2>
+              <button type="button" onClick={() => setPendingWorkspacePath(null)}>&times;</button>
+            </div>
+            <div className="settingsBody">
+              <span className="workspaceConfigHint">选择一个内置模板快速配置工作区，或使用空白工作区。</span>
+              <div className="presetPickerList">
+                {workspacePresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={`presetCard ${preset.id === "multi-agent-collaboration" ? "presetCardRecommended" : ""}`}
+                    onClick={() => confirmWorkspaceCreation(preset.id)}
+                  >
+                    <span className="presetName">{preset.name}</span>
+                    <span className="presetDesc">{preset.description}</span>
+                    {preset.id === "multi-agent-collaboration" ? <span className="presetBadge">推荐</span> : null}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {showAgentManager ? (
         <AgentManagerPanel
           focusedAgentId={focusedAgentId}
@@ -1562,6 +1609,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
+  const [presets, setPresets] = useState<WorkspacePreset[]>([]);
 
   useEffect(() => {
     if (!hasWorkspace) {
@@ -1576,7 +1624,18 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
         setLoading(false);
       })
       .catch(() => setLoading(false));
+    fetch("/api/workspace-presets")
+      .then((r) => r.json())
+      .then((p: WorkspacePreset[]) => setPresets(p))
+      .catch(() => {/* ignore */});
   }, [hasWorkspace]);
+
+  function applyPreset(presetId: string) {
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset) return;
+    setSystemPrompt(preset.systemPrompt);
+    setRules([...preset.rules]);
+  }
 
   function addRule() {
     setRules((prev) => [...prev, ""]);
@@ -1639,6 +1698,25 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
             </div>
           ) : (
             <>
+              {presets.length > 0 ? (
+                <div className="settingsSection">
+                  <label className="settingsLabel">应用模板</label>
+                  <span className="workspaceConfigHint">选择内置模板一键填充提示词和规则，会覆盖当前内容。</span>
+                  <div className="presetSelector">
+                    {presets.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className="presetCard"
+                        onClick={() => applyPreset(preset.id)}
+                      >
+                        <span className="presetName">{preset.name}</span>
+                        <span className="presetDesc">{preset.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="settingsSection">
                 <label className="settingsLabel">工作区提示词</label>
                 <span className="workspaceConfigHint">对所有会话生效的系统提示词。留空则不注入。</span>
