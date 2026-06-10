@@ -1,10 +1,4 @@
-export interface WorkspacePreset {
-  id: string;
-  name: string;
-  description: string;
-  systemPrompt: string;
-  rules: string[];
-}
+import type { WorkspacePreset } from "../shared/types.ts";
 
 export function getWorkspacePresets(): WorkspacePreset[] {
   return [

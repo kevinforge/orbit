@@ -1633,6 +1633,8 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
   function applyPreset(presetId: string) {
     const preset = presets.find((p) => p.id === presetId);
     if (!preset) return;
+    const hasContent = systemPrompt.trim() || rules.some((r) => r.trim());
+    if (hasContent && !window.confirm("应用模板将覆盖当前提示词和规则，是否继续？")) return;
     setSystemPrompt(preset.systemPrompt);
     setRules([...preset.rules]);
   }
