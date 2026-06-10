@@ -2904,7 +2904,7 @@ button:active:not(:disabled) {
   margin-top: 6px;
   padding: 6px 10px;
   border-radius: var(--radius-md);
-  background: var(--secondary-border);
+  background: var(--secondary-bg);
   border: 1px solid var(--secondary-border);
   font-size: 12px;
   color: var(--secondary);
@@ -3793,7 +3793,7 @@ button:active:not(:disabled) {
 
 .presetRuntimeHint.missing {
   color: var(--secondary);
-  background: var(--secondary-border);
+  background: var(--secondary-bg);
 }
 
 .presetCardRecommended {
