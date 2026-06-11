@@ -1,3 +1,7 @@
+import type { AgentRuntimeKind } from "../shared/types.ts";
+
+export const AGENT_RUNTIME_PRIORITY: readonly AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
+
 /** Map AgentRuntimeKind to CLI probe key: claude-code → claude */
 export function runtimeKindToCliKey(runtime: string): string {
   return runtime === "claude-code" ? "claude" : runtime;

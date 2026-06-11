@@ -1,7 +1,7 @@
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
-import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
+import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
 import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 
@@ -1525,7 +1525,7 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
   );
 }
 
-const RUNTIMES: AgentRuntimeKind[] = ["codex", "claude-code", "codebuddy"];
+const RUNTIMES: readonly AgentRuntimeKind[] = AGENT_RUNTIME_PRIORITY;
 const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
 const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
   { key: "canReadFiles", label: "读取文件", hint: "允许数字员工读取工作区中的文件内容。" },

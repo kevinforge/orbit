@@ -1,10 +1,9 @@
 import type { AgentConfig, AgentRuntimeKind, RuntimeAvailability } from "../shared/types.ts";
 import { DEFAULT_AGENT_CONFIGS } from "./agent-config-store.ts";
-import { runtimeKindToCliKey } from "./runtime-meta.ts";
+import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey } from "./runtime-meta.ts";
 import { PRESET_IDS } from "./workspace-presets.ts";
 
 const MULTI_AGENT_ENABLED_IDS = new Set(["architect", "developer", "tester", "supervisor"]);
-const RUNTIME_PRIORITY: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
 const FALLBACK_RUNTIME: AgentRuntimeKind = "claude-code";
 
 export function preferredRuntimeFromAvailability(availability: readonly RuntimeAvailability[]): AgentRuntimeKind {
@@ -15,7 +14,7 @@ export function preferredRuntimeFromAvailability(availability: readonly RuntimeA
       .filter((item) => item.available)
       .map((item) => item.runtime),
   );
-  return RUNTIME_PRIORITY.find((runtime) => availableRuntimes.has(runtimeKindToCliKey(runtime))) ?? FALLBACK_RUNTIME;
+  return AGENT_RUNTIME_PRIORITY.find((runtime) => availableRuntimes.has(runtimeKindToCliKey(runtime))) ?? FALLBACK_RUNTIME;
 }
 
 export function initialAgentConfigsForWorkspacePreset(
@@ -34,4 +33,3 @@ export function initialAgentConfigsForWorkspacePreset(
       : config
   ));
 }
-

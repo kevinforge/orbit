@@ -33,6 +33,14 @@ test("multi-agent collaboration preset assigns the preferred available runtime t
   }
 });
 
+test("preferred runtime uses claude-code before codex when both are available", () => {
+  assert.equal(preferredRuntimeFromAvailability([
+    runtime("claude", true),
+    runtime("codex", true),
+    runtime("codebuddy", true),
+  ]), "claude-code");
+});
+
 test("empty preset leaves all default agents disabled", () => {
   const configs = initialAgentConfigsForWorkspacePreset(PRESET_IDS.empty, [runtime("codex", true)]);
 
@@ -46,4 +54,3 @@ test("preferred runtime falls back to claude-code when no runtime is available",
     runtime("codebuddy", false),
   ]), "claude-code");
 });
-
