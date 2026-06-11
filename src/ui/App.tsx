@@ -1104,7 +1104,7 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @数字员工: 指派具体数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @developer: 指派具体数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1986,7 +1986,7 @@ function AgentManagerPanel({
       name: `${source.name} (副本)`,
       enabled: false,
     };
-    // 清空监督员的触发器配置，避免冲突
+    // 清空监督者的触发器配置，避免冲突
     if (copy.triggers) {
       copy.triggers = undefined;
     }
@@ -2046,7 +2046,7 @@ function AgentManagerPanel({
           <div className="settingsBody">
             <div className="agentManagerIntro">
               <strong>默认数字员工模板</strong>
-              <span>五个内置模板默认不启用。产品经理、架构师、开发、测试 负责规划与实现，监督员 负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
+              <span>五个内置模板默认不启用。产品经理（pm）、架构师（architect）、开发（developer）、测试（tester）负责规划与实现，监督者（supervisor）负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
             </div>
             <div className="runtimeProbeRow">
               <span>安装或更新命令行工具后，可以重新检测运行环境。</span>

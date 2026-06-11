@@ -10,12 +10,28 @@ const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester"
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const CURRENT_MIGRATION_VERSION = 2;
+const CURRENT_MIGRATION_VERSION = 3;
+
+const DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string> = {
+  pm: "产品经理（pm）",
+  architect: "架构师（architect）",
+  developer: "开发（developer）",
+  tester: "测试（tester）",
+  supervisor: "监督者（supervisor）",
+};
+
+const LEGACY_DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string> = {
+  pm: "Product Manager",
+  architect: "Architect",
+  developer: "Developer",
+  tester: "Tester",
+  supervisor: "Supervisor",
+};
 
 export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   {
     id: "pm",
-    name: "Product Manager",
+    name: DEFAULT_AGENT_DISPLAY_NAMES.pm,
     description: "产品负责人：定义产品方向、挑战不合理需求、将模糊想法转化为清晰可执行的产品需求",
     role: "pm",
     runtime: "codex",
@@ -37,7 +53,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   },
   {
     id: "architect",
-    name: "Architect",
+    name: DEFAULT_AGENT_DISPLAY_NAMES.architect,
     description: "Designs technical boundaries, reviews code and implementation risk.",
     role: "architect",
     runtime: "codex",
@@ -48,7 +64,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   },
   {
     id: "developer",
-    name: "Developer",
+    name: DEFAULT_AGENT_DISPLAY_NAMES.developer,
     description: "Implements features with TDD, creates branches and draft PRs.",
     role: "developer",
     runtime: "claude-code",
@@ -59,7 +75,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   },
   {
     id: "tester",
-    name: "Tester",
+    name: DEFAULT_AGENT_DISPLAY_NAMES.tester,
     description: "Validates behavior, runs tests, reports risks.",
     role: "tester",
     runtime: "codebuddy",
@@ -70,7 +86,7 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
   },
   {
     id: "supervisor",
-    name: "Supervisor",
+    name: DEFAULT_AGENT_DISPLAY_NAMES.supervisor,
     description: "Monitors conversation progress and coordinates agents toward task completion.",
     role: "coordinator",
     runtime: "claude-code",
@@ -301,6 +317,13 @@ export class AgentConfigStore {
             config.triggers.onRunFailed === undefined
           ) {
             config.triggers.onRunFailed = true;
+            migrated = true;
+          }
+        }
+        for (const config of configs) {
+          const nextName = DEFAULT_AGENT_DISPLAY_NAMES[config.id];
+          if (nextName && config.name === LEGACY_DEFAULT_AGENT_DISPLAY_NAMES[config.id]) {
+            config.name = nextName;
             migrated = true;
           }
         }

@@ -24,6 +24,19 @@ test("DEFAULT_AGENT_CONFIGS seeds five disabled built-in templates", () => {
   }
 });
 
+test("DEFAULT_AGENT_CONFIGS use Chinese built-in display names with stable ids", () => {
+  assert.deepEqual(
+    Object.fromEntries(DEFAULT_AGENT_CONFIGS.map((config) => [config.id, config.name])),
+    {
+      pm: "产品经理（pm）",
+      architect: "架构师（architect）",
+      developer: "开发（developer）",
+      tester: "测试（tester）",
+      supervisor: "监督者（supervisor）",
+    },
+  );
+});
+
 test("load returns seed configs when no file exists", () => {
   const dir = tempDir();
   try {
@@ -435,6 +448,35 @@ test("load migrates existing default supervisor to handle failed agent runs", ()
     const persisted = JSON.parse(fs.readFileSync(filePath, "utf8")) as { configs: AgentConfig[] };
     const persistedSupervisor = persisted.configs.find((config) => config.id === "supervisor");
     assert.equal(persistedSupervisor?.triggers?.onRunFailed, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("load migrates legacy default agent names to Chinese names with ids while preserving custom names", () => {
+  const dir = tempDir();
+  try {
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const legacyDefaults: AgentConfig[] = [
+      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "pm")!), name: "Product Manager" },
+      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "architect")!), name: "Architect" },
+      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "developer")!), name: "Developer" },
+      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "tester")!), name: "Tester" },
+      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "supervisor")!), name: "Supervisor" },
+      { id: "custom", name: "My Developer", role: "developer", runtime: "claude-code", systemPrompt: "custom", enabled: true },
+    ];
+    fs.writeFileSync(filePath, JSON.stringify({ configs: legacyDefaults, _meta: { migrationVersion: 2 } }, null, 2));
+
+    const store = new AgentConfigStore(dir);
+    const loaded = store.load("ws1");
+
+    assert.equal(loaded.find((config) => config.id === "pm")?.name, "产品经理（pm）");
+    assert.equal(loaded.find((config) => config.id === "architect")?.name, "架构师（architect）");
+    assert.equal(loaded.find((config) => config.id === "developer")?.name, "开发（developer）");
+    assert.equal(loaded.find((config) => config.id === "tester")?.name, "测试（tester）");
+    assert.equal(loaded.find((config) => config.id === "supervisor")?.name, "监督者（supervisor）");
+    assert.equal(loaded.find((config) => config.id === "custom")?.name, "My Developer");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

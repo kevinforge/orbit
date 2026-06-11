@@ -11,7 +11,7 @@ import { PUBLIC_KEY } from './constants.ts';
 export type { License } from './types.ts';
 export { generateMachineId } from './machine-id.ts';
 export { getHardwareInfo } from './machine-id.ts';
-export { loadLicense, _v, _t } from './validator.ts';
+export { loadLicense, ensureOrbitHomeDir, getOrbitHomeDir, _v, _t } from './validator.ts';
 
 /**
  * Validate license at startup.
@@ -28,14 +28,14 @@ export function validateLicense(
   // Find license file
   const actualLicensePath = licensePath ?? findLicenseFile();
   if (!actualLicensePath) {
-    console.error('[orbit] License file not found');
+    console.error('[orbit] 未找到 license.json。');
     return false;
   }
 
   // Load license
   const license = loadLicense(actualLicensePath);
   if (!license) {
-    console.error('[orbit] Invalid or corrupted license file');
+    console.error('[orbit] license.json 无效或已损坏。');
     return false;
   }
 
@@ -55,21 +55,21 @@ export async function validateLicenseAsync(
   // Find license file
   const actualLicensePath = licensePath ?? findLicenseFile();
   if (!actualLicensePath) {
-    console.error('[orbit] License file not found');
+    console.error('[orbit] 未找到 license.json。');
     return false;
   }
 
   // Load license
   const license = loadLicense(actualLicensePath);
   if (!license) {
-    console.error('[orbit] Invalid or corrupted license file');
+    console.error('[orbit] license.json 无效或已损坏。');
     return false;
   }
 
   // Get current machine ID
   const currentMachineId = await generateMachineId();
   if (currentMachineId !== license.machineId) {
-    console.error('[orbit] License machine ID mismatch');
+    console.error('[orbit] license.json 与当前机器不匹配。');
     return false;
   }
 
@@ -83,14 +83,14 @@ export async function validateLicenseAsync(
   });
 
   if (!_v(signedData, license.signature, PUBLIC_KEY)) {
-    console.error('[orbit] License signature verification failed');
+    console.error('[orbit] license.json 签名验证失败。');
     return false;
   }
 
   // Validate expiration and time rollback
   const actualInstallTimeFile = installTimeFile ?? getInstallTimePath();
   if (!_t(license.expiresAt, actualInstallTimeFile)) {
-    console.error('[orbit] License expired or time rollback detected');
+    console.error('[orbit] license.json 已过期，或检测到系统时间异常。');
     return false;
   }
 
@@ -114,13 +114,13 @@ function validateLicenseSync(license: License, installTimeFile?: string): boolea
   });
 
   if (!_v(signedData, license.signature, PUBLIC_KEY)) {
-    console.error('[orbit] License signature verification failed');
+    console.error('[orbit] license.json 签名验证失败。');
     return false;
   }
 
   const actualInstallTimeFile = installTimeFile ?? getInstallTimePath();
   if (!_t(license.expiresAt, actualInstallTimeFile)) {
-    console.error('[orbit] License expired or time rollback detected');
+    console.error('[orbit] license.json 已过期，或检测到系统时间异常。');
     return false;
   }
 

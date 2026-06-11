@@ -1006,7 +1006,7 @@ const server = http.createServer(async (req, res) => {
   });
   startPeriodicProbe();
   server.listen(port, () => {
-    console.log(`[orbit] listening on http://localhost:${port}`);
+    console.log(`[orbit] Orbit 已启动。请在浏览器中打开：http://localhost:${port}`);
   });
 })();
 

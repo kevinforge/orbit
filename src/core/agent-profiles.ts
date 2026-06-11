@@ -87,7 +87,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
   return [
     {
       id: "pm",
-      name: "Product Manager",
+      name: "产品经理（pm）",
       description: "Clarifies requirements, defines scope and acceptance criteria.",
       role: "pm",
       runtime: runtimeOverrides.pm ?? "codex",
@@ -98,7 +98,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
     },
     {
       id: "architect",
-      name: "Architect",
+      name: "架构师（architect）",
       description: "Designs technical boundaries, reviews code and implementation risk.",
       role: "architect",
       runtime: runtimeOverrides.architect ?? "codex",
@@ -109,7 +109,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
     },
     {
       id: "developer",
-      name: "Developer",
+      name: "开发（developer）",
       description: "Implements features with TDD, creates branches and draft PRs.",
       role: "developer",
       runtime: runtimeOverrides.developer ?? "claude-code",
@@ -120,7 +120,7 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
     },
     {
       id: "tester",
-      name: "Tester",
+      name: "测试（tester）",
       description: "Validates behavior, runs tests, reports risks.",
       role: "tester",
       runtime: runtimeOverrides.tester ?? "codebuddy",
