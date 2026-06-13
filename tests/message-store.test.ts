@@ -515,3 +515,74 @@ test("persisted store does not crash when shard rename stays locked", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("markAbandonedActiveRuns cancels persisted running and queued messages", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  try {
+    const store = new MessageStore(filePath, { now: () => new Date("2026-06-13T03:00:00.000Z") });
+    const running = store.append({
+      kind: "agent",
+      agentId: "developer",
+      content: "developer is working...",
+      status: "running",
+      runStatus: "running",
+      startedAt: "2026-06-13T02:59:00.000Z",
+      activity: [{ type: "status", text: "Run started.", timestamp: "2026-06-13T02:59:00.000Z" }],
+    });
+    const queued = store.append({
+      kind: "agent",
+      agentId: "tester",
+      content: "tester queued...",
+      status: "running",
+      runStatus: "queued",
+      activity: [{ type: "status", text: "Queued behind the current run.", timestamp: "2026-06-13T02:59:10.000Z" }],
+    });
+    const done = store.append({ kind: "agent", agentId: "architect", content: "done", status: "done", runStatus: "completed" });
+
+    const abandoned = store.markAbandonedActiveRuns();
+
+    assert.deepEqual(abandoned.map((message) => message.id), [running.id, queued.id]);
+    assert.equal(store.get(running.id)?.status, "cancelled");
+    assert.equal(store.get(running.id)?.runStatus, "cancelled");
+    assert.equal(store.get(running.id)?.completedAt, "2026-06-13T03:00:00.000Z");
+    assert.match(store.get(running.id)?.content ?? "", /运行已中断/);
+    assert.equal(store.get(queued.id)?.status, "cancelled");
+    assert.equal(store.get(queued.id)?.runStatus, "cancelled");
+    assert.match(store.get(queued.id)?.content ?? "", /排队任务已取消/);
+    assert.equal(store.get(done.id)?.status, "done");
+
+    const reloaded = new MessageStore(filePath);
+    assert.equal(reloaded.get(running.id)?.runStatus, "cancelled");
+    assert.equal(reloaded.get(queued.id)?.runStatus, "cancelled");
+    assert.ok(reloaded.get(running.id)?.activity?.some((event) => "text" in event && event.text.includes("标记为中断")));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("markAbandonedActiveRuns updates active runs in older shards", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  try {
+    const day1 = new MessageStore(filePath, { now: () => new Date("2026-06-12T10:00:00.000Z") });
+    const oldRunning = day1.append({
+      kind: "agent",
+      agentId: "supervisor",
+      content: "supervisor is working...",
+      status: "running",
+      runStatus: "running",
+    });
+
+    const day2 = new MessageStore(filePath, { now: () => new Date("2026-06-13T10:00:00.000Z") });
+    day2.append({ kind: "user", content: "new day" });
+    day2.markAbandonedActiveRuns();
+
+    const reloaded = new MessageStore(filePath, { recentShardCount: 1 });
+    const page = reloaded.listBefore(null, 10);
+    assert.equal(page.messages.some((message) => message.runStatus === "running"), false);
+    assert.equal(reloaded.get(oldRunning.id)?.runStatus, "cancelled");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
