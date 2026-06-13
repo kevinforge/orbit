@@ -77,8 +77,10 @@ async function findUnixPortOwners(port: number, exec: ExecFileLike): Promise<Por
   }
 }
 
-function localAddressMatchesPort(address: string, port: number): boolean {
-  return address.endsWith(`:${port}`);
+export function localAddressMatchesPort(address: string, port: number): boolean {
+  const colonIndex = address.lastIndexOf(":");
+  if (colonIndex === -1) return false;
+  return address.slice(colonIndex + 1) === String(port);
 }
 
 function dedupeOwners(owners: PortOwner[]): PortOwner[] {
