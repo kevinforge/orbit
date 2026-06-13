@@ -26,7 +26,7 @@ Orbit coordinates CLI-backed agents. The agents require:
 |---------|---------|
 | Claude Code | `npm install -g @anthropic-ai/claude-code` |
 | Codex | `npm install -g @openai/codex` |
-| CodeBuddy | See official docs |
+| CodeBuddy | `npm install -g @tencent-ai/codebuddy-code` |
 
 ## Features
 

@@ -23,31 +23,56 @@ Message routing still uses the fixed `@id:` marker:
 
 For first-time use, choose the multi-agent collaboration workspace template. Orbit will enable a useful default set of agents for collaborative development.
 
-## Step 0: Install Prerequisites
+## Step 0: Check Prerequisites
 
-Install Node.js first. npm is installed together with Node.js.
+First check whether Node.js and at least one agent runtime are already installed. If they are already available, you can skip the matching install steps.
 
-1. Open https://nodejs.org/
-2. Download the LTS version. Use Node.js 20 or newer.
-3. Install it with the default options.
-4. Close your terminal and open a new one.
-
-Check that Node.js and npm are available:
+Open PowerShell or your terminal:
 
 ```powershell
 node --version
 npm --version
 ```
 
-Orbit provides the web workspace. The actual work is performed by CLI runtimes. Install at least one runtime:
+If `node --version` prints `v20.x.x` or newer, and `npm --version` prints a version, Node.js and npm are ready.
+
+If Node.js is missing or older than 20:
+
+1. Open https://nodejs.org/
+2. Download the LTS version. Use Node.js 20 or newer.
+3. Install it with the default options.
+4. Close your terminal and open a new one.
+5. Run `node --version` and `npm --version` again.
+
+Orbit provides the web workspace. The actual work is performed by CLI runtimes. You only need at least one runtime to start; you do not need to install all three up front.
+
+Check your runtimes:
+
+```powershell
+claude --version
+codex --version
+codebuddy --version
+```
+
+If at least one command prints a version, you can continue. Missing runtimes can be installed later from the Orbit UI prompts.
+
+If none of the commands work, install at least one runtime:
 
 | Runtime | Common use | Install |
 | --- | --- | --- |
 | Claude Code | Development and supervision | `npm install -g @anthropic-ai/claude-code` |
 | OpenAI Codex | Product, architecture, general work | `npm install -g @openai/codex` |
-| CodeBuddy | Testing or custom agents | See the official CodeBuddy CLI docs |
+| CodeBuddy | Testing or custom agents | `npm install -g @tencent-ai/codebuddy-code` |
 
-After installing a runtime, run that CLI directly in your terminal and complete its own login or authorization flow. Orbit can only use CLIs that already work on your machine.
+If npm installs hang, time out, or cannot download packages, your network may not be able to reach the npm registry reliably. Use a network/proxy that can access npm, or temporarily switch to a mirror:
+
+```powershell
+npm config set registry https://registry.npmmirror.com
+```
+
+If you are on a company proxy, configure npm or your shell proxy settings before running `npm install -g ...`.
+
+After installing a runtime, run the version check again, for example `codebuddy --version`. Then run that CLI directly in your terminal and complete its own login or authorization flow. Orbit can only use CLIs that already work on your machine.
 
 ## Step 1: Install Orbit
 
