@@ -29,3 +29,9 @@ test("package has build script using Bun compile", () => {
   assert.match(manifest.scripts?.build ?? "", /--minify/);
   assert.match(manifest.scripts?.build ?? "", /--sourcemap=none/);
 });
+
+test("default test script includes preset matching coverage", () => {
+  const manifest = readPackageJson();
+
+  assert.match(manifest.scripts?.test ?? "", /tests\/preset-match\.test\.ts/);
+});

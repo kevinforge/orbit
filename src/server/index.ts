@@ -17,6 +17,8 @@ import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
+import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-presets.ts";
+import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
 import type { ConversationInfo, MessagePage, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
@@ -665,7 +667,17 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/runtimes/probe") {
+      await probeRuntimes();
+      sendJson(res, 200, { ok: true, availability: getRuntimeAvailabilityArray() });
+      return;
+    }
+
     // --- Workspace config ---
+    if (req.method === "GET" && url.pathname === "/api/workspace-presets") {
+      sendJson(res, 200, getWorkspacePresets());
+      return;
+    }
 
     if (req.method === "GET" && url.pathname === "/api/workspace-config") {
       if (!activeWorkspaceId) {
@@ -754,15 +766,32 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/workspaces") {
-      const input = (await readJson(req)) as { name?: unknown; path?: unknown };
+      const input = (await readJson(req)) as { name?: unknown; path?: unknown; presetId?: unknown };
       const name = typeof input.name === "string" ? input.name.trim() : "";
       const wsPath = typeof input.path === "string" ? input.path.trim() : "";
+      const presetId = typeof input.presetId === "string" ? input.presetId.trim() : "";
       if (!wsPath) {
         sendJson(res, 400, { ok: false, message: "path is required." });
         return;
       }
+      const allPresets = getWorkspacePresets();
+      if (presetId && !allPresets.some((p) => p.id === presetId)) {
+        sendJson(res, 400, { ok: false, message: `Unknown presetId: "${presetId}".` });
+        return;
+      }
       try {
         const ws = workspaceStore.create(name, wsPath);
+        // Apply the requested preset's prompt/rules when a valid preset id is given.
+        // The "empty" preset just writes empty values, which the config resolver
+        // treats as "no injection" — equivalent to not saving.
+        if (presetId) {
+          const preset = allPresets.find((p) => p.id === presetId)!;
+          workspaceConfigStore.save(ws.id, {
+            systemPrompt: preset.systemPrompt,
+            rules: preset.rules,
+          });
+          configStore.save(ws.id, initialAgentConfigsForWorkspacePreset(preset.id, getRuntimeAvailabilityArray()));
+        }
         sendJson(res, 200, ws);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -978,7 +1007,7 @@ const server = http.createServer(async (req, res) => {
   });
   startPeriodicProbe();
   server.listen(port, () => {
-    console.log(`[orbit] listening on http://localhost:${port}`);
+    console.log(`[orbit] Orbit 已启动。请在浏览器中打开：http://localhost:${port}`);
   });
 })();
 

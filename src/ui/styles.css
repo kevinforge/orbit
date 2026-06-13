@@ -31,6 +31,8 @@
   --accent-border: #b2e0db;
   --secondary: #c2410c;
   --secondary-subtle: #fff4ed;
+  --secondary-bg: rgba(194, 65, 12, 0.07);
+  --secondary-border: rgba(194, 65, 12, 0.2);
 
   /* Status */
   --success: #15803d;
@@ -1539,7 +1541,7 @@ button:active:not(:disabled) {
 }
 
 .interruptBtn:hover:not(:disabled) {
-  background: rgba(194, 65, 12, 0.06) !important;
+  background: var(--secondary-bg) !important;
   border-color: var(--secondary) !important;
   transform: translateY(-1px);
 }
@@ -2246,6 +2248,19 @@ button:active:not(:disabled) {
   background: #f7faf9;
 }
 
+.runtimeProbeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 /* --- Workspace Config Panel --- */
 
 .workspaceConfigPanel {
@@ -2846,7 +2861,7 @@ button:active:not(:disabled) {
 .pillBtnWrapper {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 5px;
 }
 
 .pillBtnWrapperDisabled .pillBtn {
@@ -2857,6 +2872,17 @@ button:active:not(:disabled) {
 .pillMissing {
   border-color: var(--error-border);
   color: var(--error);
+}
+
+.runtimePillInstallLink {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--secondary);
+  text-decoration: none;
+}
+
+.runtimePillInstallLink:hover {
+  text-decoration: underline;
 }
 
 .pillCheck {
@@ -2873,14 +2899,76 @@ button:active:not(:disabled) {
 .runtimeInstallHint {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 6px;
   padding: 6px 10px;
   border-radius: var(--radius-md);
-  background: rgba(194, 65, 12, 0.08);
-  border: 1px solid rgba(194, 65, 12, 0.2);
+  background: var(--secondary-bg);
+  border: 1px solid var(--secondary-border);
   font-size: 12px;
   color: var(--secondary);
+}
+
+.runtimeRefreshBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.runtimeRefreshBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.runtimeRefreshBtn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.runtimeSetupBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 10px 24px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--secondary-border);
+  border-radius: var(--radius-md);
+  background: var(--secondary-bg);
+  color: var(--secondary);
+}
+
+.runtimeSetupText {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.runtimeSetupText strong {
+  color: var(--text-primary);
+}
+
+.runtimeSetupActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
 .runtimeInstallBtn {
@@ -3646,4 +3734,101 @@ button:active:not(:disabled) {
   object-fit: cover;
   display: block;
   background: var(--bg-base);
+}
+
+/* ===== Workspace Preset Styles ===== */
+
+.presetSelector {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.presetCard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  text-align: left;
+  position: relative;
+}
+
+.presetCard:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.presetName {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.presetDesc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.presetRuntimeHint {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 4px;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.presetRuntimeHint.ready {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.presetRuntimeHint.missing {
+  color: var(--secondary);
+  background: var(--secondary-bg);
+}
+
+.presetCardRecommended {
+  border-color: var(--border-light);
+}
+
+.presetCardSelected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm);
+}
+
+.presetCardSelected:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm);
+}
+
+.presetBadge {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--bg-sidebar);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.presetPickerPanel {
+  max-width: 460px;
+}
+
+.presetPickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
 }

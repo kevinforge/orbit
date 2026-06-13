@@ -54,14 +54,15 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 
 ## Agents
 
-Agents are configured via `AgentConfigStore` and persisted per-workspace in `~/.orbit/workspaces/<workspace-id>/agents.json`. Four agents are seeded by default:
+Agents are configured via `AgentConfigStore` and persisted per-workspace in `~/.orbit/workspaces/<workspace-id>/agents.json`. Five agents are seeded by default:
 
-| Agent | Role | Default runtime |
+| Routing marker | Display name | Default runtime |
 | --- | --- | --- |
-| `@pm:` | Product manager | `codex` |
-| `@architect:` | Architect | `codex` |
-| `@developer:` | Developer | `claude-code` |
-| `@tester:` | Tester | `codebuddy` |
+| `@pm:` | 产品经理（pm） | `codex` |
+| `@architect:` | 架构师（architect） | `codex` |
+| `@developer:` | 开发（developer） | `claude-code` |
+| `@tester:` | 测试（tester） | `codebuddy` |
+| `@supervisor:` | 监督者（supervisor） | `claude-code` |
 
 These defaults can be modified, disabled, or removed through the settings UI. Custom agents can be added with any of the supported runtimes and configurable permissions. Only enabled agents participate in routing.
 

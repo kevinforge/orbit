@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { mergeOlderMessagesPage } from "../src/ui/App.tsx";
+import { getWorkspaceCreationAction, mergeOlderMessagesPage } from "../src/ui/App.tsx";
 import type { AppState, ChatMessage, MessagePage } from "../src/shared/types.ts";
 
 function message(id: string, content: string): ChatMessage {
@@ -46,4 +46,8 @@ test("mergeOlderMessagesPage prepends older messages and deduplicates current me
 
   assert.deepEqual(next.messages.map((m) => m.id), ["msg_000001", "msg_000002", "msg_000003"]);
   assert.deepEqual(next.messageHistory, { hasOlderMessages: false, olderCursor: null });
+});
+
+test("workspace creation falls back to blank creation when presets are unavailable", () => {
+  assert.deepEqual(getWorkspaceCreationAction([]), { kind: "create" });
 });

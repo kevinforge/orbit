@@ -1,8 +1,9 @@
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
-import { runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
+import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
@@ -46,6 +47,14 @@ export function App() {
   const [openConversationMenuId, setOpenConversationMenuId] = useState<string | null>(null);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set());  // non-active workspaces only; active workspace is always expanded
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
+  const [pendingWorkspacePath, setPendingWorkspacePath] = useState<string | null>(null);
+  const [workspacePresets, setWorkspacePresets] = useState<WorkspacePreset[]>([]);
+  useEffect(() => {
+    fetch("/api/workspace-presets")
+      .then((r) => (r.ok ? r.json() : Promise.resolve([])))
+      .then((p: WorkspacePreset[]) => setWorkspacePresets(Array.isArray(p) ? p : []))
+      .catch(() => { /* presets are optional; the picker and config panel degrade gracefully */ });
+  }, []);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -53,12 +62,17 @@ export function App() {
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
+  const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const isNearBottomRef = useRef(true);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
   const hasAnyQueuedRun = state.messages.some((m) => m.runStatus === "queued");
   const hasRunningOrQueued = isAnyAgentRunning || hasAnyQueuedRun;
   const hasWorkspace = Boolean(state.workspace.id);
+  const missingRuntimeAgents = useMemo(
+    () => state.agents.filter((agent) => agent.runtimeAvailable === false),
+    [state.agents],
+  );
 
   const refreshWorkspaces = () => {
     fetch("/api/workspaces").then((r) => r.json()).then(setWorkspaces).catch(() => {});
@@ -87,6 +101,23 @@ export function App() {
       .then((nextState: AppState) => setState(normalizeState(nextState)))
       .catch(() => setConnectionState("offline"));
   };
+
+  async function refreshRuntimeAvailability() {
+    if (isRefreshingRuntimes) return;
+    setIsRefreshingRuntimes(true);
+    try {
+      const response = await fetch("/api/runtimes/probe", { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`Runtime probe failed: ${response.status}`);
+      }
+      const body = await response.json() as { availability?: AppState["runtimeAvailability"] };
+      if (Array.isArray(body.availability)) {
+        setState((current) => applyEvent(current, { type: "runtime.availability.updated", availability: body.availability! }));
+      }
+    } finally {
+      setIsRefreshingRuntimes(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -493,19 +524,47 @@ export function App() {
       const selectedPath = result.path?.trim();
       if (!selectedPath) return;
 
+      const action = getWorkspaceCreationAction(workspacePresets);
+      if (action.kind === "create") {
+        await createWorkspace(selectedPath);
+      } else {
+        setPendingWorkspacePath(selectedPath);
+      }
+    } finally {
+      setIsPickingDirectory(false);
+    }
+  }
+
+  async function confirmWorkspaceCreation(presetId: string) {
+    const selectedPath = pendingWorkspacePath;
+    if (!selectedPath) return;
+    await createWorkspace(selectedPath, presetId);
+  }
+
+  async function createWorkspace(selectedPath: string, presetId?: string) {
+    try {
       const createResponse = await fetch("/api/workspaces", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: selectedPath }),
+        body: JSON.stringify({ path: selectedPath, presetId }),
       });
-      if (!createResponse.ok) return;
+      if (!createResponse.ok) {
+        let message = `创建工作区失败 (${createResponse.status})`;
+        try {
+          const body = await createResponse.json();
+          if (body?.message) message = `创建工作区失败：${body.message}`;
+        } catch { /* ignore parse error, fall back to status */ }
+        window.alert(message);
+        return;
+      }
       const workspace = (await createResponse.json()) as Workspace;
+      setPendingWorkspacePath(null);
       if (workspace.id) {
         await switchWorkspace(workspace.id);
       }
       refreshWorkspaces();
-    } finally {
-      setIsPickingDirectory(false);
+    } catch {
+      window.alert("创建工作区失败：无法连接本地服务。");
     }
   }
 
@@ -985,6 +1044,13 @@ export function App() {
           )}
         </div>
 
+        {missingRuntimeAgents.length > 0 ? (
+          <RuntimeSetupBanner
+            agents={missingRuntimeAgents}
+            isRefreshing={isRefreshingRuntimes}
+            onRefresh={refreshRuntimeAvailability}
+          />
+        ) : null}
         {interruptToast ? <div className="interruptToast">{interruptToast}</div> : null}
         {attachmentToast ? <div className="attachmentToast">{attachmentToast}</div> : null}
         <form className="composer" onSubmit={sendMessage}>
@@ -1038,7 +1104,7 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @数字员工: 指派具体数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @developer: 指派具体数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1079,7 +1145,31 @@ export function App() {
         <WorkspaceConfigPanel
           onClose={() => setShowWorkspaceConfig(false)}
           hasWorkspace={hasWorkspace}
+          presets={workspacePresets}
         />
+      ) : null}
+      {pendingWorkspacePath ? (
+        <div className="modalOverlay" onClick={() => setPendingWorkspacePath(null)}>
+          <div className="modalPanel presetPickerPanel" onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader">
+              <h2>选择工作区模板</h2>
+              <button type="button" onClick={() => setPendingWorkspacePath(null)}>&times;</button>
+            </div>
+            <div className="settingsBody">
+              <span className="workspaceConfigHint">选择一个内置模板快速配置工作区，或使用空白工作区。</span>
+              <div className="presetPickerList">
+                {workspacePresets.map((preset) => (
+                  <PresetCard
+                    key={preset.id}
+                    preset={preset}
+                    runtimeAvailability={state.runtimeAvailability}
+                    onClick={() => confirmWorkspaceCreation(preset.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
       {showAgentManager ? (
         <AgentManagerPanel
@@ -1087,6 +1177,8 @@ export function App() {
           onClose={() => { setShowAgentManager(false); setFocusedAgentId(null); }}
           onSaved={() => { setShowAgentManager(false); setFocusedAgentId(null); window.location.reload(); }}
           runtimeAvailability={state.runtimeAvailability}
+          isRefreshingRuntimes={isRefreshingRuntimes}
+          onRefreshRuntimes={refreshRuntimeAvailability}
         />
       ) : null}
       {previewAttachment ? (
@@ -1433,7 +1525,7 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
   );
 }
 
-const RUNTIMES: AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
+const RUNTIMES: readonly AgentRuntimeKind[] = AGENT_RUNTIME_PRIORITY;
 const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
 const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
   { key: "canReadFiles", label: "读取文件", hint: "允许数字员工读取工作区中的文件内容。" },
@@ -1555,8 +1647,77 @@ function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+function RuntimeSetupBanner({ agents, isRefreshing, onRefresh }: { agents: AgentState[]; isRefreshing: boolean; onRefresh: () => void }) {
+  const missingRuntimes = uniqueMissingRuntimes(agents);
+  return (
+    <div className="runtimeSetupBanner">
+      <div className="runtimeSetupText">
+        <strong>运行环境未就绪</strong>
+        <span>
+          {agents.map((agent) => agent.label || agent.id).join("、")} 需要安装对应命令行工具。安装完成后点击重新检测即可继续使用。
+        </span>
+      </div>
+      <div className="runtimeSetupActions">
+        {missingRuntimes.map((runtime) => {
+          const meta = runtimeMeta(runtime);
+          return (
+            <a key={runtime} href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallBtn">
+              安装 {meta.label}
+            </a>
+          );
+        })}
+        <button type="button" className="runtimeRefreshBtn" onClick={onRefresh} disabled={isRefreshing}>
+          {isRefreshing ? "检测中..." : "重新检测"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function uniqueMissingRuntimes(agents: readonly Pick<AgentState, "runtime">[]): AgentRuntimeKind[] {
+  const seen = new Set<AgentRuntimeKind>();
+  const result: AgentRuntimeKind[] = [];
+  for (const agent of agents) {
+    if (!seen.has(agent.runtime)) {
+      seen.add(agent.runtime);
+      result.push(agent.runtime);
+    }
+  }
+  return result;
+}
+
+// A preset template card, shared by the workspace-creation picker and the workspace config panel.
+function PresetCard({ preset, selected, runtimeAvailability, onClick }: { preset: WorkspacePreset; selected?: boolean; runtimeAvailability?: AppState["runtimeAvailability"]; onClick: () => void }) {
+  const classes = [
+    "presetCard",
+    selected ? "presetCardSelected" : "",
+    preset.recommended ? "presetCardRecommended" : "",
+  ].filter(Boolean).join(" ");
+  const runtimeSummary = runtimeAvailability && preset.id === PRESET_IDS.multiAgentCollaboration
+    ? summarizeRuntimeAvailability(runtimeAvailability)
+    : null;
+  return (
+    <button type="button" className={classes} aria-pressed={selected} onClick={onClick}>
+      <span className="presetName">{preset.name}</span>
+      <span className="presetDesc">{preset.description}</span>
+      {runtimeSummary ? <span className={`presetRuntimeHint ${runtimeSummary.kind}`}>{runtimeSummary.text}</span> : null}
+      {preset.recommended ? <span className="presetBadge">推荐</span> : null}
+    </button>
+  );
+}
+
+function summarizeRuntimeAvailability(availability: AppState["runtimeAvailability"]): { kind: "ready" | "missing"; text: string } {
+  const available = RUNTIMES
+    .filter((runtime) => availability.some((item) => item.runtime === runtimeKindToCliKey(runtime) && item.available))
+    .map((runtime) => runtimeMeta(runtime).label);
+  if (available.length > 0) {
+    return { kind: "ready", text: `将默认使用：${available[0]}` };
+  }
+  return { kind: "missing", text: "未检测到运行时，创建后可按提示安装" };
+}
+
 // Workspace-level config - prompt and rules
-function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; hasWorkspace: boolean }) {
+function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () => void; hasWorkspace: boolean; presets: WorkspacePreset[] }) {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [rules, setRules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1577,6 +1738,17 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
       })
       .catch(() => setLoading(false));
   }, [hasWorkspace]);
+
+  function applyPreset(presetId: string) {
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset) return;
+    const hasContent = systemPrompt.trim() || rules.some((r) => r.trim());
+    if (hasContent && !window.confirm("应用模板将覆盖当前提示词和规则，是否继续？")) return;
+    setSystemPrompt(preset.systemPrompt);
+    setRules([...preset.rules]);
+  }
+
+  const activePresetId = matchPreset(systemPrompt, rules, presets);
 
   function addRule() {
     setRules((prev) => [...prev, ""]);
@@ -1639,6 +1811,17 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
             </div>
           ) : (
             <>
+              {presets.length > 0 ? (
+                <div className="settingsSection">
+                  <label className="settingsLabel">应用模板</label>
+                  <span className="workspaceConfigHint">选择内置模板一键填充提示词和规则，会覆盖当前内容。</span>
+                  <div className="presetSelector">
+                    {presets.map((preset) => (
+                      <PresetCard key={preset.id} preset={preset} selected={activePresetId === preset.id} onClick={() => applyPreset(preset.id)} />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="settingsSection">
                 <label className="settingsLabel">工作区提示词</label>
                 <span className="workspaceConfigHint">对所有会话生效的系统提示词。留空则不注入。</span>
@@ -1698,7 +1881,21 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace }: { onClose: () => void; 
   );
 }
 
-function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgentId }: { onClose: () => void; onSaved: () => void; runtimeAvailability: AppState["runtimeAvailability"]; focusedAgentId?: string | null }) {
+function AgentManagerPanel({
+  onClose,
+  onSaved,
+  runtimeAvailability,
+  focusedAgentId,
+  isRefreshingRuntimes,
+  onRefreshRuntimes,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+  runtimeAvailability: AppState["runtimeAvailability"];
+  focusedAgentId?: string | null;
+  isRefreshingRuntimes: boolean;
+  onRefreshRuntimes: () => void;
+}) {
   const [configs, setConfigs] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1718,9 +1915,11 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
     return availByRuntime.get(runtimeKindToCliKey(runtime));
   }
 
+  // Fallback to "claude-code" to stay consistent with AGENT_RUNTIME_PRIORITY
+  // and the server-side FALLBACK_RUNTIME in workspace-agent-presets.ts.
   const firstAvailableRuntime = useMemo((): AgentRuntimeKind => {
     for (const rt of RUNTIMES) {
-      if (isRuntimeAvailable(rt) !== false) return rt; // prefer available or unprobed
+      if (isRuntimeAvailable(rt) === true) return rt;
     }
     return "claude-code";
   }, [availByRuntime]);
@@ -1789,7 +1988,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
       name: `${source.name} (副本)`,
       enabled: false,
     };
-    // 清空监督员的触发器配置，避免冲突
+    // 清空监督者的触发器配置，避免冲突
     if (copy.triggers) {
       copy.triggers = undefined;
     }
@@ -1849,7 +2048,13 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
           <div className="settingsBody">
             <div className="agentManagerIntro">
               <strong>默认数字员工模板</strong>
-              <span>五个内置模板默认不启用。产品经理、架构师、开发、测试 负责规划与实现，监督员 负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
+              <span>五个内置模板默认不启用。产品经理（pm）、架构师（architect）、开发（developer）、测试（tester）负责规划与实现，监督者（supervisor）负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
+            </div>
+            <div className="runtimeProbeRow">
+              <span>安装或更新命令行工具后，可以重新检测运行环境。</span>
+              <button type="button" className="runtimeRefreshBtn" onClick={onRefreshRuntimes} disabled={isRefreshingRuntimes}>
+                {isRefreshingRuntimes ? "检测中..." : "重新检测运行环境"}
+              </button>
             </div>
             <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义数字员工</button>
             {configs.map((config, i) => {
@@ -1918,19 +2123,22 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
                               const isMissing = isAvail === false;
                               const isCurrent = config.runtime === r;
                               const meta = runtimeMeta(r);
-                              const disabled = isMissing && !isCurrent;
                               return (
-                                <span key={r} className={`pillBtnWrapper ${isMissing && !isCurrent ? "pillBtnWrapperDisabled" : ""}`}>
+                                <span key={r} className="pillBtnWrapper">
                                   <button
                                     type="button"
                                     className={`pillBtn ${isCurrent ? "pillActive" : ""} ${isMissing ? "pillMissing" : ""}`}
-                                    onClick={() => { if (!disabled) updateConfig(i, { runtime: r }); }}
-                                    aria-disabled={disabled || undefined}
-                                    title={isMissing ? `${r} 未安装` : isAvail === true ? `${r} 已就绪` : `${r} 检测中...`}
+                                    onClick={() => updateConfig(i, { runtime: r })}
+                                    title={isMissing ? `${meta.label} 未安装，安装后点击重新检测` : isAvail === true ? `${meta.label} 已就绪` : `${meta.label} 检测中...`}
                                   >
-                                    {r}
+                                    {meta.label}
                                     {isAvail === true ? <span className="pillCheck"> ✓</span> : isAvail === undefined ? <span className="pillUnknown"> ?</span> : null}
                                   </button>
+                                  {isMissing ? (
+                                    <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimePillInstallLink">
+                                      安装
+                                    </a>
+                                  ) : null}
                                 </span>
                               );
                             })}
@@ -1939,13 +2147,23 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
                             const meta = runtimeMeta(config.runtime);
                             return (
                               <div className="runtimeInstallHint">
-                                <span>⚠ 未检测到 {meta.label}，请先安装。</span>
+                                <span>未检测到 {meta.label}。请先安装，并确认终端中可以运行对应命令；安装后点击重新检测即可继续。</span>
                                 <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallBtn">查看安装指南 ↗</a>
+                                <button type="button" className="runtimeRefreshBtn" onClick={onRefreshRuntimes} disabled={isRefreshingRuntimes}>
+                                  {isRefreshingRuntimes ? "检测中..." : "重新检测"}
+                                </button>
                               </div>
                             );
                           })()}
                         </div>
-                        {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <SupervisorBanner maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5} hasUnassigned={config.triggers?.onUnassignedMessage === true} hasBlocked={config.triggers?.onAgentBlocked === true} /> : null}
+                        {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? (
+                          <SupervisorBanner
+                            maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5}
+                            hasUnassigned={config.triggers?.onUnassignedMessage === true}
+                            hasBlocked={config.triggers?.onAgentBlocked === true}
+                            hasRunFailed={config.triggers?.onRunFailed === true}
+                          />
+                        ) : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -1969,7 +2187,7 @@ function AgentManagerPanel({ onClose, onSaved, runtimeAvailability, focusedAgent
   );
 }
 
-function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked }: { maxTriggers: number; hasUnassigned: boolean; hasBlocked: boolean }) {
+function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked, hasRunFailed }: { maxTriggers: number; hasUnassigned: boolean; hasBlocked: boolean; hasRunFailed: boolean }) {
   return (
     <div className="supervisorBanner">
       <p><span aria-hidden="true">🔍</span> <strong>会话监督已启用</strong></p>
@@ -1980,6 +2198,9 @@ function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked }: { maxTrigg
         ) : null}
         {hasBlocked ? (
           <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他数字员工的消息被路由拒绝时，介入兜底处理</li>
+        ) : null}
+        {hasRunFailed ? (
+          <li><span aria-hidden="true">⚡</span> <strong>运行失败</strong> — 数字员工运行出错时，介入判断下一步处理方式</li>
         ) : null}
       </ul>
       <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭启用开关可暂停监督。</p>
@@ -2147,6 +2368,12 @@ function connectionLabel(state: "connecting" | "live" | "offline"): string {
 const SIDEBAR_MIN_WIDTH = 280;
 const SIDEBAR_MAX_WIDTH = 460;
 const SIDEBAR_DEFAULT_WIDTH = 336;
+
+export type WorkspaceCreationAction = { kind: "choosePreset" } | { kind: "create" };
+
+export function getWorkspaceCreationAction(presets: readonly WorkspacePreset[]): WorkspaceCreationAction {
+  return presets.length > 0 ? { kind: "choosePreset" } : { kind: "create" };
+}
 
 function isConversationRunning(
   summaries: RunningSummary[],

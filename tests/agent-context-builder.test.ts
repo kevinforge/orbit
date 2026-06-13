@@ -51,7 +51,7 @@ test("includes <identity> section with agent name, id, and role", () => {
 
   assert.ok(context.includes("<identity>"), "should have <identity> opening tag");
   assert.ok(context.includes("</identity>"), "should have </identity> closing tag");
-  assert.ok(context.includes("Current agent: Developer (@developer)"));
+  assert.ok(context.includes("Current agent: 开发（developer） (@developer)"));
   assert.ok(context.includes("Role: developer"));
 });
 
@@ -94,9 +94,9 @@ test("includes description in available agents list", () => {
     agentMessage: "@developer: test",
   });
 
-  assert.ok(context.includes("@pm: Product Manager - Clarifies requirements, defines scope and acceptance criteria."));
-  assert.ok(context.includes("@architect: Architect - Designs technical boundaries, reviews code and implementation risk."));
-  assert.ok(context.includes("@developer: Developer - Implements features with TDD, creates branches and draft PRs."));
+  assert.ok(context.includes("@pm: 产品经理（pm） - Clarifies requirements, defines scope and acceptance criteria."));
+  assert.ok(context.includes("@architect: 架构师（architect） - Designs technical boundaries, reviews code and implementation risk."));
+  assert.ok(context.includes("@developer: 开发（developer） - Implements features with TDD, creates branches and draft PRs."));
 });
 
 test("available agents omits description when empty without extra formatting", () => {

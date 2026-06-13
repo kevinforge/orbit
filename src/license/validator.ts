@@ -5,7 +5,7 @@
 
 import { createVerify } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { License } from './types.ts';
 import { PUBLIC_KEY, LICENSE_PATHS, INSTALL_TIME_FILE } from './constants.ts';
@@ -136,9 +136,27 @@ export function findLicenseFile(): string | null {
 }
 
 /**
+ * Get Orbit's per-user data directory.
+ * @returns Path to ~/.orbit, or the equivalent user-home path on the current OS
+ */
+export function getOrbitHomeDir(baseDir = homedir()): string {
+  return join(baseDir, '.orbit');
+}
+
+/**
+ * Ensure Orbit's per-user data directory exists.
+ * @returns Path to the directory where users should place license.json
+ */
+export function ensureOrbitHomeDir(baseDir = homedir()): string {
+  const dir = getOrbitHomeDir(baseDir);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/**
  * Get install time file path.
  * @returns Path to .install-time file
  */
 export function getInstallTimePath(): string {
-  return `${homedir()}/.orbit/${INSTALL_TIME_FILE}`;
+  return join(getOrbitHomeDir(), INSTALL_TIME_FILE);
 }

@@ -7,6 +7,8 @@ import { createHash, generateKeyPairSync, createSign } from 'node:crypto';
 import {
   License,
   generateMachineId,
+  ensureOrbitHomeDir,
+  getOrbitHomeDir,
   loadLicense,
   _v,
   _t,
@@ -110,6 +112,20 @@ describe('License Module', () => {
       fs.writeFileSync(licenseFile, JSON.stringify({ licenseId: 'test' }));
       const loaded = loadLicense(licenseFile);
       assert.strictEqual(loaded, null);
+    });
+  });
+
+  describe('Orbit license directory', () => {
+    it('should create the per-user .orbit directory for first-time licensing', () => {
+      const homeDir = path.join(testDir, 'home');
+      const orbitDir = getOrbitHomeDir(homeDir);
+
+      assert.strictEqual(fs.existsSync(orbitDir), false);
+      const createdDir = ensureOrbitHomeDir(homeDir);
+
+      assert.strictEqual(createdDir, orbitDir);
+      assert.strictEqual(fs.existsSync(orbitDir), true);
+      assert.strictEqual(fs.statSync(orbitDir).isDirectory(), true);
     });
   });
 

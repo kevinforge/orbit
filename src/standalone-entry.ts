@@ -13,16 +13,24 @@
  *   - Place license.json in ./license.json or ~/.orbit/license.json
  */
 
-import { validateLicenseAsync, generateMachineId, getHardwareInfo } from "./license/index.ts";
+import { validateLicenseAsync, generateMachineId, getHardwareInfo, ensureOrbitHomeDir } from "./license/index.ts";
+import path from "node:path";
 
 async function main() {
   // Handle --machine-id flag
   if (process.argv.includes('--machine-id')) {
+    const orbitHomeDir = ensureOrbitHomeDir();
+    const licensePath = path.join(orbitHomeDir, "license.json");
     const machineId = await generateMachineId();
-    console.log('\n orbit Machine ID');
-    console.log('================');
+    console.log('\nOrbit 机器码');
+    console.log('===========');
     console.log(`\n  ${machineId}\n`);
-    console.log('Send this ID to get your license file.\n');
+    console.log('下一步：');
+    console.log('1. 将上面的机器码发送给管理员。');
+    console.log('2. 管理员会发给你一个 license.json 文件。');
+    console.log(`3. 请把 license.json 放到这个目录：${orbitHomeDir}`);
+    console.log(`   最终文件路径应该是：${licensePath}`);
+    console.log('4. 放好后重新执行：orbit\n');
     process.exit(0);
   }
 
@@ -32,9 +40,9 @@ async function main() {
       generateMachineId(),
       getHardwareInfo(),
     ]);
-    console.log('\n Hardware Information');
-    console.log('====================');
-    console.log(`\n  Machine ID: ${machineId}`);
+    console.log('\n硬件信息');
+    console.log('=======');
+    console.log(`\n  机器码: ${machineId}`);
     if (hardwareInfo.mac) console.log(`  MAC:        ${hardwareInfo.mac}`);
     if (hardwareInfo.cpuId) console.log(`  CPU:        ${hardwareInfo.cpuId}`);
     if (hardwareInfo.boardUuid) console.log(`  Board UUID: ${hardwareInfo.boardUuid}`);
@@ -43,19 +51,26 @@ async function main() {
   }
 
   // License validation
+  const orbitHomeDir = ensureOrbitHomeDir();
+  const licensePath = path.join(orbitHomeDir, "license.json");
   const isValid = await validateLicenseAsync();
   if (!isValid) {
-    console.error("\n[orbit] License validation failed. Exiting.");
-    console.error('[orbit] Run `orbit --machine-id` to get your machine ID for licensing.\n');
+    console.error("\n[orbit] 授权校验未通过，Orbit 暂时不能启动。");
+    console.error("\n首次使用请按下面步骤操作：");
+    console.error("1. 执行命令获取机器码：orbit --machine-id");
+    console.error("2. 将机器码发送给管理员，并向管理员获取 license.json 文件。");
+    console.error(`3. 将 license.json 放到这个目录：${orbitHomeDir}`);
+    console.error(`   最终文件路径应该是：${licensePath}`);
+    console.error("4. 放好后重新执行：orbit\n");
     process.exit(1);
   }
 
   // License valid - start the server
-  console.log("[orbit] License validated successfully.");
+  console.log("[orbit] 授权校验通过，正在启动 Orbit...");
   await import("./server/index.ts");
 }
 
 main().catch((err) => {
-  console.error("[orbit] Fatal error:", err);
+  console.error("[orbit] 启动失败：", err);
   process.exit(1);
 });
