@@ -1915,11 +1915,13 @@ function AgentManagerPanel({
     return availByRuntime.get(runtimeKindToCliKey(runtime));
   }
 
+  // Fallback to "claude-code" to stay consistent with AGENT_RUNTIME_PRIORITY
+  // and the server-side FALLBACK_RUNTIME in workspace-agent-presets.ts.
   const firstAvailableRuntime = useMemo((): AgentRuntimeKind => {
     for (const rt of RUNTIMES) {
       if (isRuntimeAvailable(rt) === true) return rt;
     }
-    return "codex";
+    return "claude-code";
   }, [availByRuntime]);
 
   useEffect(() => {
@@ -2198,7 +2200,7 @@ function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked, hasRunFailed
           <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他数字员工的消息被路由拒绝时，介入兜底处理</li>
         ) : null}
         {hasRunFailed ? (
-          <li><span aria-hidden="true">⚡</span> <strong>运行失败</strong> - 数字员工运行出错时，介入判断下一步处理方式</li>
+          <li><span aria-hidden="true">⚡</span> <strong>运行失败</strong> — 数字员工运行出错时，介入判断下一步处理方式</li>
         ) : null}
       </ul>
       <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭启用开关可暂停监督。</p>

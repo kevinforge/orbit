@@ -774,7 +774,8 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "path is required." });
         return;
       }
-      if (presetId && !getWorkspacePresets().some((p) => p.id === presetId)) {
+      const allPresets = getWorkspacePresets();
+      if (presetId && !allPresets.some((p) => p.id === presetId)) {
         sendJson(res, 400, { ok: false, message: `Unknown presetId: "${presetId}".` });
         return;
       }
@@ -784,7 +785,7 @@ const server = http.createServer(async (req, res) => {
         // The "empty" preset just writes empty values, which the config resolver
         // treats as "no injection" — equivalent to not saving.
         if (presetId) {
-          const preset = getWorkspacePresets().find((p) => p.id === presetId)!;
+          const preset = allPresets.find((p) => p.id === presetId)!;
           workspaceConfigStore.save(ws.id, {
             systemPrompt: preset.systemPrompt,
             rules: preset.rules,
