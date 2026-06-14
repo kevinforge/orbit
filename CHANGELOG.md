@@ -4,6 +4,22 @@
 
 ---
 
+## v0.9.4 — 2026-06-14
+
+### Fixes & reliability
+
+- **Starts even when its port is taken.** If Orbit's port (4317) is already in
+  use — usually because a previous Orbit didn't exit cleanly — it now closes
+  that leftover process and reuses the port, or picks the next free port and
+  tells you which one. No more "port in use" dead end.
+- **No more stuck tasks after a restart.** Runs that were mid-flight or queued
+  when Orbit last stopped are now clearly marked as interrupted (with a prompt
+  to resend), instead of spinning forever as "running".
+- **More reliable startup.** A port-detection edge case on higher port numbers
+  was corrected so the recovery above works consistently.
+
+---
+
 ## v0.9.3 — 2026-06-09
 
 ### New things you can do

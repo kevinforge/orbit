@@ -1,6 +1,6 @@
 {
   "name": "orbit",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "private": false,
   "description": "Local-first chat control surface for coordinating Claude Code agents.",
   "type": "module",
