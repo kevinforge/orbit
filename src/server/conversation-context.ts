@@ -56,6 +56,10 @@ export class ConversationContext {
     );
 
     this.messages = new MessageStore(messagesPath);
+    const abandonedRuns = this.messages.markAbandonedActiveRuns();
+    if (abandonedRuns.length > 0) {
+      console.warn(`[orbit] marked ${abandonedRuns.length} abandoned run(s) as interrupted after restart`);
+    }
 
     // 运行日志开关：根据全局配置决定是否记录数字员工运行日志。
     // 如果关闭，不传递 transcriptsDir，TerminalTranscriptStore 将不会持久化日志。

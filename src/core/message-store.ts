@@ -97,6 +97,50 @@ export class MessageStore {
     return null;
   }
 
+  markAbandonedActiveRuns(): ChatMessage[] {
+    const completedAt = this.now().toISOString();
+    const allMessages = this.readAllMessages();
+    const updatedMessages: ChatMessage[] = [];
+    const abandoned: ChatMessage[] = [];
+
+    for (const message of allMessages) {
+      const isActiveAgentRun = message.kind === "agent" && (
+        message.runStatus === "running" || message.runStatus === "queued" || (message.status === "running" && Boolean(message.runId))
+      );
+      if (isActiveAgentRun) {
+        const updated: ChatMessage = {
+          ...message,
+          content: message.runStatus === "queued"
+            ? "排队任务已取消：Orbit 服务已关闭或重启，请重新发送任务。"
+            : "运行已中断：Orbit 服务已关闭或重启，之前的数字员工进程已停止，请重新发送任务。",
+          status: "cancelled",
+          runStatus: "cancelled",
+          startedAt: message.startedAt ?? message.createdAt,
+          completedAt,
+          activity: [
+            ...(message.activity ?? []),
+            {
+              type: "status",
+              text: "Orbit 服务已关闭或重启，已将这次运行标记为中断。",
+              timestamp: completedAt,
+            },
+          ],
+        };
+        updatedMessages.push(updated);
+        abandoned.push(updated);
+      } else {
+        updatedMessages.push(message);
+      }
+    }
+
+    if (abandoned.length > 0) {
+      this.writeAllMessages(updatedMessages);
+      this.load();
+    }
+
+    return abandoned;
+  }
+
   markRouteState(id: string, routeState: MessageRouteState): ChatMessage | null {
     const existing = this.get(id);
     if (!existing) {

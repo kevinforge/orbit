@@ -25,10 +25,13 @@ import type { ConversationInfo, MessagePage, RunningSummary, WorkspaceInfo } fro
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { ConversationContext } from "./conversation-context.ts";
+import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 
-const port = Number(process.env.ORBIT_PORT ?? 4317);
+const DEFAULT_PORT = 4317;
+const requestedPort = Number(process.env.ORBIT_PORT ?? DEFAULT_PORT);
+let activePort = requestedPort;
 const UNTITLED_CONVERSATION_NAME = "新会话";
 const EMPTY_WORKSPACE: WorkspaceInfo = { id: "", name: "", path: "" };
 const EMPTY_CONVERSATION: ConversationInfo = { id: "", name: "" };
@@ -45,8 +48,12 @@ const attachmentStore = new AttachmentStore(path.join(os.homedir(), ".orbit"));
 
 // --- Runtime availability ---
 const PROBE_INTERVAL_MS = Number(process.env.ORBIT_RUNTIME_PROBE_INTERVAL_MS ?? 60000);
+const START_RETRY_DELAY_MS = 500;
+const AUTO_PORT_RETRY_LIMIT = 10;
+const SHUTDOWN_FORCE_EXIT_MS = 2000;
 let runtimeAvailability: Map<string, RuntimeProbeResult> = new Map();
 let probeTimer: ReturnType<typeof setInterval> | null = null;
+let shuttingDown = false;
 
 async function probeRuntimes(): Promise<void> {
   const results = await probeAllRuntimes();
@@ -1005,11 +1012,120 @@ const server = http.createServer(async (req, res) => {
   await probeRuntimes().catch((err) => {
     console.warn("[orbit] runtime probe failed:", err instanceof Error ? err.message : String(err));
   });
+  await startServerWithRecovery();
   startPeriodicProbe();
-  server.listen(port, () => {
-    console.log(`[orbit] Orbit 已启动。请在浏览器中打开：http://localhost:${port}`);
-  });
 })();
+
+async function startServerWithRecovery(): Promise<void> {
+  try {
+    await listenOnce(activePort);
+    logStarted();
+  } catch (error) {
+    if (!isAddressInUseError(error)) {
+      throw error;
+    }
+    const recovered = await recoverOccupiedPort();
+    if (recovered) {
+      await wait(START_RETRY_DELAY_MS);
+      await retryRequestedPort();
+      return;
+    }
+    if (await tryFallbackPorts()) return;
+    printPortInUseHelp();
+    process.exit(1);
+  }
+}
+
+async function retryRequestedPort(): Promise<void> {
+  try {
+    await listenOnce(activePort);
+    logStarted();
+  } catch (retryError) {
+    if (isAddressInUseError(retryError) && await tryFallbackPorts()) {
+      return;
+    }
+    if (isAddressInUseError(retryError)) {
+      printPortInUseHelp();
+      process.exit(1);
+    }
+    throw retryError;
+  }
+}
+
+async function tryFallbackPorts(): Promise<boolean> {
+  if (process.env.ORBIT_PORT) {
+    return false;
+  }
+  for (let nextPort = requestedPort + 1; nextPort <= requestedPort + AUTO_PORT_RETRY_LIMIT; nextPort++) {
+    try {
+      activePort = nextPort;
+      await listenOnce(activePort);
+      console.warn(`[orbit] 端口 ${requestedPort} 已被占用，已自动改用端口 ${activePort}。`);
+      logStarted();
+      return true;
+    } catch (error) {
+      if (!isAddressInUseError(error)) {
+        throw error;
+      }
+    }
+  }
+  activePort = requestedPort;
+  return false;
+}
+
+function listenOnce(port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port);
+  });
+}
+
+async function recoverOccupiedPort(): Promise<boolean> {
+  const owners = await findPortOwners(activePort);
+  const orbitOwners = owners.filter((owner) => owner.pid !== process.pid && isOrbitPortOwner(owner));
+  if (orbitOwners.length === 0) {
+    return false;
+  }
+
+  for (const owner of orbitOwners) {
+    try {
+      console.warn(`[orbit] 检测到上一次 Orbit 进程仍占用端口 ${activePort}，正在自动关闭旧进程（PID ${owner.pid}）...`);
+      await stopPortOwner(owner);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[orbit] 自动关闭旧 Orbit 进程失败（PID ${owner.pid}）：${message}`);
+      return false;
+    }
+  }
+  return true;
+}
+
+function isAddressInUseError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "EADDRINUSE";
+}
+
+function printPortInUseHelp(): void {
+  console.error(`[orbit] 启动失败：端口 ${requestedPort} 到 ${requestedPort + AUTO_PORT_RETRY_LIMIT} 都已被占用。`);
+  console.error("[orbit] 请先关闭正在运行的 Orbit 窗口或占用该端口的程序，然后重新执行 orbit。");
+  console.error(`[orbit] 如果你需要临时换一个端口，可以执行：set ORBIT_PORT=4318 && orbit`);
+}
+
+function logStarted(): void {
+  console.log(`[orbit] Orbit 已启动。请在浏览器中打开：http://localhost:${activePort}`);
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // --- Helpers ---
 
@@ -1238,12 +1354,22 @@ async function handlePutAgents(req: http.IncomingMessage, res: http.ServerRespon
 }
 
 function shutdown(): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
   stopPeriodicProbe();
+  sseHub.closeAll();
   for (const ctx of contextMap.values()) {
     ctx.dispose();
   }
   contextMap.clear();
   contextLru.length = 0;
+  const forceExitTimer = setTimeout(() => {
+    process.exit(0);
+  }, SHUTDOWN_FORCE_EXIT_MS);
+  if (typeof forceExitTimer === "object" && "unref" in forceExitTimer) {
+    forceExitTimer.unref();
+  }
+  server.closeAllConnections?.();
   server.close(() => {
     process.exit(0);
   });
@@ -1251,3 +1377,4 @@ function shutdown(): void {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+process.on("SIGHUP", shutdown);

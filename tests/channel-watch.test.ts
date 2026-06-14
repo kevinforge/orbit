@@ -311,6 +311,12 @@ test("user message resets trigger count", async () => {
     profiles,
   );
 
+  // setTimeout can resolve a touch early on CI runners, dropping the elapsed
+  // window right onto the debounce boundary (strict `<` in channel-watch) so the
+  // debounce swallows a trigger. Wait a bit past DEBOUNCE_MS to keep this timing
+  // test stable under scheduler jitter.
+  const settleMs = DEBOUNCE_MS + 100;
+
   // Trigger supervisor 5 times (max)
   for (let i = 0; i < MAX_TRIGGERS_PER_CONVERSATION; i++) {
     const msg = messages.add({
@@ -323,7 +329,7 @@ test("user message resets trigger count", async () => {
     });
 
     // Need to advance time past debounce for each trigger
-    await sleep(DEBOUNCE_MS);
+    await sleep(settleMs);
 
     eventBus.publish({
       type: "run.completed",
@@ -346,7 +352,7 @@ test("user message resets trigger count", async () => {
     runStatus: "completed",
   });
 
-  await sleep(DEBOUNCE_MS);
+  await sleep(settleMs);
 
   eventBus.publish({
     type: "run.completed",
@@ -376,7 +382,7 @@ test("user message resets trigger count", async () => {
     runStatus: "completed",
   });
 
-  await sleep(DEBOUNCE_MS);
+  await sleep(settleMs);
 
   eventBus.publish({
     type: "run.completed",
@@ -633,6 +639,9 @@ test("trigger count caps at MAX_TRIGGERS and final prompt indicates last", async
     profiles,
   );
 
+  // Same debounce-jitter margin as the reset-count test — see note there.
+  const settleMs = DEBOUNCE_MS + 100;
+
   // Trigger up to max
   for (let i = 0; i < MAX_TRIGGERS_PER_CONVERSATION; i++) {
     const msg = messages.add({
@@ -644,7 +653,7 @@ test("trigger count caps at MAX_TRIGGERS and final prompt indicates last", async
       runStatus: "completed",
     });
 
-    await sleep(DEBOUNCE_MS);
+    await sleep(settleMs);
 
     eventBus.publish({
       type: "run.completed",
