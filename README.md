@@ -4,9 +4,16 @@ Orbit is a local-first chat control surface for coordinating multiple CLI-backed
 
 ## Install
 
+Install the release package provided by your administrator:
+
 ```powershell
-npm install -g orbit
+npm install -g .\orbit-<version>.tgz
 ```
+
+Install Orbit from the release tarball or private registry package provided by
+your administrator. Do not run `npm install -g orbit` against the public npm
+registry: that package name is owned by an unrelated project and can fail at
+startup with `ERR_PACKAGE_PATH_NOT_EXPORTED` for `uuid/v1`.
 
 ## Run
 

@@ -35,8 +35,13 @@ npm publish
 ## 用户安装
 
 ```powershell
-npm install -g orbit
+npm install -g .\orbit-<version>.tgz
 ```
+
+除非已经把当前项目发布到会覆盖该包名的私有 npm 源，否则不要让用户直接对公开
+npm 源执行 `npm install -g orbit`。公开 npm 上的 `orbit` 是另一个同名项目，
+在较新的 Node 版本下可能会因为 `uuid/v1` 报
+`ERR_PACKAGE_PATH_NOT_EXPORTED`。
 
 `postinstall` 脚本会自动检测平台，将匹配的二进制文件复制到 `bin/` 目录。
 

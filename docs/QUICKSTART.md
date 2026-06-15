@@ -76,10 +76,22 @@ After installing a runtime, run the version check again, for example `codebuddy 
 
 ## Step 1: Install Orbit
 
-Open PowerShell or your terminal:
+Get the Orbit release tarball from your administrator, then open PowerShell or
+your terminal in the directory containing that file:
 
 ```powershell
-npm install -g orbit
+npm install -g .\orbit-<version>.tgz
+```
+
+Do not install `orbit` directly from the public npm registry. The public
+`orbit` package is unrelated to this product. If you already ran
+`npm install -g orbit` and `orbit --machine-id` fails with
+`ERR_PACKAGE_PATH_NOT_EXPORTED` for `uuid/v1`, uninstall that package and then
+install the Orbit release tarball:
+
+```powershell
+npm uninstall -g orbit
+npm install -g .\orbit-<version>.tgz
 ```
 
 After installation, get your machine ID:
