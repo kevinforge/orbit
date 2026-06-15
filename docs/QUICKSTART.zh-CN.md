@@ -66,10 +66,20 @@ npm config set registry https://registry.npmmirror.com
 
 ## 第 1 步：安装 Orbit
 
-打开 PowerShell，执行：
+先从管理员处获取 Orbit 发布包，然后在发布包所在目录打开 PowerShell，执行：
 
 ```powershell
-npm install -g orbit
+npm install -g .\orbit-<version>.tgz
+```
+
+不要直接从公开 npm 安装 `orbit`。公开 npm 上的 `orbit` 是另一个同名项目。
+如果你已经执行过 `npm install -g orbit`，并且运行 `orbit --machine-id` 时看到
+`ERR_PACKAGE_PATH_NOT_EXPORTED` 和 `uuid/v1`，请先卸载错误的包，再安装 Orbit
+发布包：
+
+```powershell
+npm uninstall -g orbit
+npm install -g .\orbit-<version>.tgz
 ```
 
 安装完成后，先获取机器码：
