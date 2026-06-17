@@ -82,24 +82,28 @@ test("runtimeMeta returns label and installUrl for claude-code", () => {
   const meta = runtimeMeta("claude-code");
   assert.equal(meta.label, "Claude Code");
   assert.ok(meta.installUrl.includes("anthropic"), "should have anthropic install URL");
+  assert.ok(meta.installCommand.includes("@anthropic-ai/claude-code"), "should include Claude Code install command");
 });
 
 test("runtimeMeta returns label and installUrl for codex", () => {
   const meta = runtimeMeta("codex");
   assert.equal(meta.label, "OpenAI Codex");
   assert.ok(meta.installUrl.includes("openai"), "should have openai install URL");
+  assert.ok(meta.installCommand.includes("@openai/codex"), "should include Codex install command");
 });
 
 test("runtimeMeta returns label and installUrl for codebuddy", () => {
   const meta = runtimeMeta("codebuddy");
   assert.equal(meta.label, "CodeBuddy");
   assert.ok(meta.installUrl.includes("codebuddy"), "should have codebuddy install URL");
+  assert.ok(meta.installCommand.includes("@tencent-ai/codebuddy-code"), "should include CodeBuddy install command");
 });
 
 test("runtimeMeta returns runtime name as label for unknown runtime", () => {
   const meta = runtimeMeta("unknown");
   assert.equal(meta.label, "unknown");
   assert.equal(meta.installUrl, "");
+  assert.equal(meta.installCommand, "");
 });
 
 test("Codex probe always returns runtime: codex even with custom CODEX_CLI_PATH", async () => {
