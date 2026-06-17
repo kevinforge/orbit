@@ -1657,6 +1657,16 @@ function RuntimeSetupBanner({ agents, isRefreshing, onRefresh }: { agents: Agent
           {agents.map((agent) => agent.label || agent.id).join("、")} 需要安装对应命令行工具。安装完成后点击重新检测即可继续使用。
         </span>
       </div>
+      <div className="runtimeSetupCommands" aria-label="运行环境安装命令">
+        {missingRuntimes.map((runtime) => {
+          const meta = runtimeMeta(runtime);
+          return (
+            <code key={runtime} className="runtimeInstallCommand">
+              {meta.installCommand}
+            </code>
+          );
+        })}
+      </div>
       <div className="runtimeSetupActions">
         {missingRuntimes.map((runtime) => {
           const meta = runtimeMeta(runtime);
@@ -2148,6 +2158,7 @@ function AgentManagerPanel({
                             return (
                               <div className="runtimeInstallHint">
                                 <span>未检测到 {meta.label}。请先安装，并确认终端中可以运行对应命令；安装后点击重新检测即可继续。</span>
+                                <code className="runtimeInstallCommand">{meta.installCommand}</code>
                                 <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallBtn">查看安装指南 ↗</a>
                                 <button type="button" className="runtimeRefreshBtn" onClick={onRefreshRuntimes} disabled={isRefreshingRuntimes}>
                                   {isRefreshingRuntimes ? "检测中..." : "重新检测"}

@@ -7,18 +7,30 @@ export function runtimeKindToCliKey(runtime: string): string {
   return runtime === "claude-code" ? "claude" : runtime;
 }
 
-/** Shared runtime metadata — labels and install URLs in one place */
-export type RuntimeMeta = { label: string; installUrl: string };
+/** Shared runtime metadata — labels, setup commands, and install URLs in one place */
+export type RuntimeMeta = { label: string; installUrl: string; installCommand: string };
 
 export function runtimeMeta(runtime: string): RuntimeMeta {
   switch (runtime) {
     case "claude-code":
-      return { label: "Claude Code", installUrl: "https://docs.anthropic.com/en/docs/claude-code/quickstart" };
+      return {
+        label: "Claude Code",
+        installUrl: "https://docs.anthropic.com/en/docs/claude-code/quickstart",
+        installCommand: "npm install -g @anthropic-ai/claude-code",
+      };
     case "codex":
-      return { label: "OpenAI Codex", installUrl: "https://developers.openai.com/codex/cli" };
+      return {
+        label: "OpenAI Codex",
+        installUrl: "https://developers.openai.com/codex/cli",
+        installCommand: "npm install -g @openai/codex",
+      };
     case "codebuddy":
-      return { label: "CodeBuddy", installUrl: "https://www.codebuddy.ai/docs/cli/installation" };
+      return {
+        label: "CodeBuddy",
+        installUrl: "https://www.codebuddy.ai/docs/cli/installation",
+        installCommand: "npm install -g @tencent-ai/codebuddy-code",
+      };
     default:
-      return { label: runtime, installUrl: "" };
+      return { label: runtime, installUrl: "", installCommand: "" };
   }
 }
