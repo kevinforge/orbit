@@ -1041,6 +1041,13 @@ button:active:not(:disabled) {
   color: var(--text-muted);
 }
 
+.handoffSummary {
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .messageBody {
   overflow-wrap: anywhere;
   color: var(--text-secondary);
