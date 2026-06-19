@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AgentId } from "../shared/types.ts";
+import type { AgentId, PermissionProfile } from "../shared/types.ts";
 import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
 import { interruptProcessTree } from "./claude-cli-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
@@ -13,41 +13,46 @@ export type CodexCliRunOptions = {
   agentId: AgentId;
   cwd: string;
   prompt: string;
-  permissionProfile?: unknown;
+  permissionProfile: PermissionProfile;
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;
   imagePaths?: string[];
 };
 
-export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: string; imagePaths?: string[] }): string[] {
-  if (options.resumeSessionId) {
-    const args = [
-      "exec",
-      "resume",
-      "--json",
-      "--dangerously-bypass-approvals-and-sandbox",
-      options.resumeSessionId,
-      "-",
-    ];
-    if (options.imagePaths?.length) {
-      for (const imgPath of options.imagePaths) {
-        args.push("--image", imgPath);
-      }
-    }
-    return args;
-  }
-
+export function buildCodexCliArgs(options: {
+  cwd: string;
+  permissionProfile: PermissionProfile;
+  resumeSessionId?: string;
+  imagePaths?: string[];
+}): string[] {
+  const fullyTrusted = isFullyTrusted(options.permissionProfile);
+  const sandbox = fullyTrusted
+    ? "danger-full-access"
+    : options.permissionProfile.canWriteFiles ? "workspace-write" : "read-only";
   const args = [
     "exec",
     "--json",
     "--cd",
     options.cwd,
     "--sandbox",
-    "danger-full-access",
-    "--dangerously-bypass-approvals-and-sandbox",
-    "-",
+    sandbox,
   ];
+
+  if (fullyTrusted) {
+    args.push("--dangerously-bypass-approvals-and-sandbox");
+  } else if (sandbox === "workspace-write") {
+    for (const directory of options.permissionProfile.allowedDirectories) {
+      args.push("--add-dir", directory);
+    }
+  }
+
+  if (options.resumeSessionId) {
+    args.push("resume", options.resumeSessionId, "-");
+  } else {
+    args.push("-");
+  }
+
   if (options.imagePaths?.length) {
     for (const imgPath of options.imagePaths) {
       args.push("--image", imgPath);
@@ -58,7 +63,12 @@ export function buildCodexCliArgs(options: { cwd: string; resumeSessionId?: stri
 
 export function runCodexCli(options: CodexCliRunOptions): AgentRuntimeRunHandle {
   const command = buildCodexCliCommand(
-    { cwd: options.cwd, resumeSessionId: options.resumeSessionId, imagePaths: options.imagePaths },
+    {
+      cwd: options.cwd,
+      permissionProfile: options.permissionProfile,
+      resumeSessionId: options.resumeSessionId,
+      imagePaths: options.imagePaths,
+    },
     options.env ?? process.env,
   );
   const env = createCodexEnv(options.agentId, options.env ?? process.env);
@@ -146,11 +156,24 @@ export function runCodexCli(options: CodexCliRunOptions): AgentRuntimeRunHandle 
 }
 
 export function buildCodexCliCommand(
-  options: { cwd: string; resumeSessionId?: string; imagePaths?: string[] },
+  options: {
+    cwd: string;
+    permissionProfile: PermissionProfile;
+    resumeSessionId?: string;
+    imagePaths?: string[];
+  },
   env: NodeJS.ProcessEnv = process.env,
 ): { file: string; args: string[] } {
   const args = buildCodexCliArgs(options);
   return { file: resolveCodexCommand(env), args };
+}
+
+function isFullyTrusted(profile: PermissionProfile): boolean {
+  return profile.canReadFiles &&
+    profile.canWriteFiles &&
+    profile.canRunCommands &&
+    profile.canInstallDependencies &&
+    profile.canGitCommit;
 }
 
 export function extractCodexCliFinalAnswer(output: string): { text: string; sessionId?: string } {

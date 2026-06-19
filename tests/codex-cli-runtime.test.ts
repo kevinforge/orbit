@@ -9,33 +9,86 @@ import {
   extractCodexSessionId,
   resolveCodexCommand,
 } from "../src/core/codex-cli-runtime.ts";
+import type { PermissionProfile } from "../src/shared/types.ts";
 
-test("builds non-interactive Codex exec args without resume", () => {
-  assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace" }), [
+const readOnlyProfile: PermissionProfile = {
+  canReadFiles: true,
+  canWriteFiles: false,
+  canRunCommands: true,
+  canInstallDependencies: false,
+  canGitCommit: false,
+  allowedDirectories: ["."],
+};
+
+const workspaceWriteProfile: PermissionProfile = {
+  ...readOnlyProfile,
+  canWriteFiles: true,
+  allowedDirectories: [".", "D:/shared"],
+};
+
+const fullAccessProfile: PermissionProfile = {
+  canReadFiles: true,
+  canWriteFiles: true,
+  canRunCommands: true,
+  canInstallDependencies: true,
+  canGitCommit: true,
+  allowedDirectories: ["."],
+};
+
+test("uses a read-only sandbox without bypass for non-writing agents", () => {
+  assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace", permissionProfile: readOnlyProfile }), [
     "exec",
     "--json",
     "--cd",
     "D:/workspace",
     "--sandbox",
-    "danger-full-access",
-    "--dangerously-bypass-approvals-and-sandbox",
+    "read-only",
     "-",
   ]);
 });
 
-test("builds Codex resume args with session id", () => {
-  assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace", resumeSessionId: "sess-abc" }), [
+test("uses the same read-only sandbox when resuming a session", () => {
+  assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace", permissionProfile: readOnlyProfile, resumeSessionId: "sess-abc" }), [
     "exec",
-    "resume",
     "--json",
-    "--dangerously-bypass-approvals-and-sandbox",
+    "--cd",
+    "D:/workspace",
+    "--sandbox",
+    "read-only",
+    "resume",
     "sess-abc",
     "-",
   ]);
 });
 
+test("maps writable directories into a workspace-write sandbox", () => {
+  assert.deepEqual(buildCodexCliArgs({ cwd: "D:/workspace", permissionProfile: workspaceWriteProfile }), [
+    "exec",
+    "--json",
+    "--cd",
+    "D:/workspace",
+    "--sandbox",
+    "workspace-write",
+    "--add-dir",
+    ".",
+    "--add-dir",
+    "D:/shared",
+    "-",
+  ]);
+});
+
+test("only fully trusted profiles bypass approvals and sandboxing", () => {
+  const args = buildCodexCliArgs({ cwd: "D:/workspace", permissionProfile: fullAccessProfile });
+
+  assert.ok(args.includes("danger-full-access"));
+  assert.ok(args.includes("--dangerously-bypass-approvals-and-sandbox"));
+});
+
 test("builds a spawnable Codex command", () => {
-  const command = buildCodexCliCommand({ cwd: "D:/workspace" }, { ORBIT_CODEX_PATH: "C:/codex/bin/codex.exe" });
+  const command = buildCodexCliCommand(
+    { cwd: "D:/workspace", permissionProfile: readOnlyProfile },
+    { ORBIT_CODEX_PATH: "C:/codex/bin/codex.exe" },
+  );
 
   assert.equal(command.file, "C:/codex/bin/codex.exe");
   assert.ok(command.args.includes("exec"));

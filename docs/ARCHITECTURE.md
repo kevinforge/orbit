@@ -187,11 +187,15 @@ Codex uses the user's normal Codex CLI home. Orbit does not create per-agent `CO
 
 ## CLI Runtimes
 
-Orbit runs each backend through a runtime adapter. Codex uses:
+Orbit runs each backend through a runtime adapter. Codex maps each agent's permission profile to its native sandbox:
 
 ```text
-codex exec --json --cd <cwd> --sandbox danger-full-access --dangerously-bypass-approvals-and-sandbox -
+no write access        -> codex exec --json --cd <cwd> --sandbox read-only -
+restricted write      -> codex exec --json --cd <cwd> --sandbox workspace-write [--add-dir <dir>] -
+all permissions       -> codex exec --json --cd <cwd> --sandbox danger-full-access --dangerously-bypass-approvals-and-sandbox -
 ```
+
+Resumed Codex sessions receive the same sandbox arguments before the `resume` subcommand. Codex sandbox modes do not express every Orbit permission independently, so install and git-commit restrictions remain in the private agent context until they can be enforced with stable native policy controls.
 
 Claude Code uses:
 
