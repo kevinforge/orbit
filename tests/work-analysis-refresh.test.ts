@@ -18,3 +18,13 @@ test("refresh keeps existing analysis visible while the request is in progress",
   assert.match(source, /loading && !analysis \? <AnalysisLoading/);
   assert.match(source, /\{analysis \? \(/);
 });
+
+test("timeline uses distinct colors for running, completed, and empty track states", () => {
+  const styles = fs.readFileSync(
+    path.resolve(import.meta.dirname, "../src/ui/styles.css"),
+    "utf8",
+  );
+  assert.match(styles, /\.taskTimelineTrack\s*\{[^}]*background: var\(--bg-surface\)/s);
+  assert.match(styles, /\.taskTimelineBar\.running\s*\{[^}]*background: var\(--warning\)/s);
+  assert.match(styles, /\.taskTimelineBar\.completed\s*\{[^}]*background: var\(--success\)/s);
+});

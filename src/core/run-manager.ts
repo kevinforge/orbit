@@ -259,7 +259,11 @@ export class RunManager {
     this.appendActivity(run, "运行已开始。");
 
     const imagePaths = run.sourceAttachments?.map((a) => a.path);
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, run.sourceMessage.id, imagePaths);
+    // Supervisor prompts describe coordination intent, not the triggering message itself.
+    // Keep that source message in conversation history so the supervisor can see the
+    // employee result or user request it is expected to coordinate.
+    const excludedSourceMessageId = run.origin === "supervisor" ? undefined : run.sourceMessage.id;
+    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths);
     let result: Promise<RunResult>;
     try {
       result = this.options.agents.get(run.agentId).send(run.id, runtimePrompt, imagePaths);

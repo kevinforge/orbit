@@ -1256,3 +1256,40 @@ test("enqueue respects explicit origin parameter over sourceMessage kind", () =>
   const run = manager.enqueue("developer", "work", userMsg, "supervisor");
   assert.equal(run.origin, "supervisor");
 });
+
+test("supervisor-triggered runs keep their source message in conversation history", () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const sourceMessageIds: Array<string | undefined> = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return new Promise<RunResult>(() => {}); }, interrupt() { return true; } }; },
+    },
+    buildPrompt(_agentId, prompt, sourceMessageId) {
+      sourceMessageIds.push(sourceMessageId);
+      return prompt;
+    },
+    onRunCompleted() {},
+  });
+
+  const architectResult: ChatMessage = {
+    id: "architect-result",
+    kind: "agent",
+    agentId: "architect",
+    content: "统计结果已经完成",
+    createdAt: new Date().toISOString(),
+    status: "done",
+    runStatus: "completed",
+    runId: "architect-run",
+    completedAt: new Date().toISOString(),
+  };
+
+  manager.enqueue("supervisor", "Review the latest result", architectResult, "supervisor");
+
+  assert.deepEqual(sourceMessageIds, [undefined]);
+  manager.dispose();
+});

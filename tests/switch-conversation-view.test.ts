@@ -76,4 +76,15 @@ describe("switchConversation always returns to the conversation view", () => {
       "the view should switch only after conversation creation succeeds",
     );
   });
+
+  test("returning to a conversation scrolls its message list to the latest message", () => {
+    assert.match(appSource, /if \(activeView !== "conversation"\) return;/);
+    assert.match(appSource, /\[activeView, state\.conversation\.id\]/);
+    assert.match(appSource, /requestAnimationFrame\(\(\) => scrollMessagesToBottom\(messagesRef\.current\)\)/);
+  });
+
+  test("work analysis hides conversation-specific live employee status", () => {
+    assert.match(appSource, /showLiveStatus=\{activeView === "conversation"\}/);
+    assert.match(appSource, /showLiveStatus !== false/);
+  });
 });

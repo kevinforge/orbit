@@ -335,6 +335,16 @@ export function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [scrollKey]);
 
+  useLayoutEffect(() => {
+    if (activeView !== "conversation") return;
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
+    setShowNewMessageHint(false);
+    scrollMessagesToBottom(messagesRef.current);
+    const frame = window.requestAnimationFrame(() => scrollMessagesToBottom(messagesRef.current));
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeView, state.conversation.id]);
+
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = content.trim();
@@ -943,6 +953,7 @@ export function App() {
                   key={agentId}
                   agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", role: "general", status: "idle" }}
                   selected={selectedAgent === agentId}
+                  showLiveStatus={activeView === "conversation"}
                   onClick={() => chooseAgent(agentId)}
                   onConfig={() => { setFocusedAgentId(agentId); setShowAgentManager(true); }}
                 />
@@ -1349,18 +1360,19 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
   );
 }
 
-function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void; onConfig?: () => void }) {
-  const isRunning = props.agent.status === "running" || props.agent.status === "starting";
+function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStatus?: boolean; onClick: () => void; onConfig?: () => void }) {
+  const showStatus = props.showLiveStatus !== false || props.agent.runtimeAvailable === false;
+  const isRunning = props.showLiveStatus !== false && (props.agent.status === "running" || props.agent.status === "starting");
   const isRuntimeMissing = props.agent.runtimeAvailable === false;
   const meta = runtimeMeta(props.agent.runtime);
   return (
     <button
-      className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""}`}
+      className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""} ${showStatus ? "" : "statusHidden"}`}
       onClick={props.onClick}
       type="button"
       title={isRuntimeMissing ? `${meta.label} 未安装，该数字员工无法运行` : undefined}
     >
-      <span className={`statusDot ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`} aria-hidden="true" />
+      {showStatus ? <span className={`statusDot ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`} aria-hidden="true" /> : null}
       <span className="agentText">
         <span className="agentTextRow">
           <strong>
@@ -1393,9 +1405,11 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
           ) : null}
         </small>
       </span>
-      <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
-        {isRuntimeMissing ? "missing" : props.agent.status}
-      </span>
+      {showStatus ? (
+        <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
+          {isRuntimeMissing ? "missing" : props.agent.status}
+        </span>
+      ) : null}
     </button>
   );
 }

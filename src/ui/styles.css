@@ -334,6 +334,11 @@ button:active:not(:disabled) {
   box-shadow: var(--shadow-xs);
 }
 
+.agentButton.statusHidden {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "text";
+}
+
 .agentTextRow {
   display: inline-flex;
   align-items: center;
@@ -3009,7 +3014,8 @@ button:active:not(:disabled) {
   height: 8px;
   overflow: hidden;
   border-radius: var(--radius-full);
-  background: var(--border-light);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
 }
 
 .taskTimelineBar {
@@ -3022,11 +3028,23 @@ button:active:not(:disabled) {
 }
 
 .taskTimelineBar.running {
-  background: var(--accent);
+  background: var(--warning);
 }
 
 .taskTimelineBar.queued {
   background: var(--text-muted);
+}
+
+.taskTimelineBar.completed {
+  background: var(--success);
+}
+
+.taskTimelineBar.failed {
+  background: var(--error);
+}
+
+.taskTimelineBar.cancelled {
+  background: var(--warning-border);
 }
 
 .openConversationBtn {
