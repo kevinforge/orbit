@@ -586,3 +586,89 @@ test("markAbandonedActiveRuns updates active runs in older shards", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("readShard skips corrupt lines instead of dropping the whole shard", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  try {
+    const now = new Date("2026-06-20T10:00:00.000Z");
+    const store = new MessageStore(filePath, { now: () => now });
+    const first = store.append({ kind: "user", content: "good-1" });
+    store.append({ kind: "user", content: "middle-will-corrupt" });
+    const third = store.append({ kind: "user", content: "good-3" });
+
+    // Corrupt the middle line on disk (simulating a truncated write after a crash)
+    const shardPath = path.join(dir, "messages", "2026-06-20.ndjson");
+    const lines = fs.readFileSync(shardPath, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0);
+    assert.equal(lines.length, 3);
+    const corrupted = [lines[0], "{ this line is not valid json {{{", lines[2]].join(os.EOL) + os.EOL;
+    fs.writeFileSync(shardPath, corrupted);
+
+    const reloaded = new MessageStore(filePath, { now: () => now });
+    const ids = reloaded.list().map((message) => message.id);
+    assert.ok(ids.includes(first.id), "first good line should survive");
+    assert.ok(ids.includes(third.id), "third good line should survive");
+    assert.equal(reloaded.list().length, 2, "corrupt middle line is skipped, good lines preserved");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("update does not wipe a shard when one of its lines is corrupt", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  try {
+    const now = new Date("2026-06-20T10:00:00.000Z");
+    const store = new MessageStore(filePath, { now: () => now });
+    const first = store.append({ kind: "user", content: "good-1" });
+    store.append({ kind: "user", content: "middle-will-corrupt" });
+    const third = store.append({ kind: "user", content: "good-3" });
+
+    // Corrupt the middle line, then trigger a shard rewrite via update().
+    const shardPath = path.join(dir, "messages", "2026-06-20.ndjson");
+    const lines = fs.readFileSync(shardPath, "utf8").split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const corrupted = [lines[0], "{ corrupt json {{{", lines[2]].join(os.EOL) + os.EOL;
+    fs.writeFileSync(shardPath, corrupted);
+
+    assert.doesNotThrow(() => store.update(first.id, { content: "good-1-updated" }));
+
+    const reloaded = new MessageStore(filePath, { now: () => now });
+    const reloadedIds = reloaded.list().map((message) => message.id);
+    assert.ok(reloadedIds.includes(first.id), "first message survives the rewrite");
+    assert.ok(reloadedIds.includes(third.id), "third message survives the rewrite");
+    assert.equal(reloaded.get(first.id)?.content, "good-1-updated");
+    assert.ok(fs.statSync(shardPath).size > 0, "shard file must not be wiped empty after update");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("rewrite refuses to wipe a non-empty shard when all reads fail", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  try {
+    const now = new Date("2026-06-20T10:00:00.000Z");
+    const store = new MessageStore(filePath, { now: () => now });
+    const first = store.append({ kind: "user", content: "good-1" });
+
+    // Replace the on-disk shard with fully-corrupt (but non-empty) content.
+    // The in-memory copy still exists, so update() will attempt a rewrite.
+    const shardPath = path.join(dir, "messages", "2026-06-20.ndjson");
+    const corruptContent = "{ totally unparseable garbage that is non-empty }}}";
+    fs.writeFileSync(shardPath, corruptContent);
+
+    console.warn = (message?: unknown) => { warnings.push(String(message)); };
+
+    // readShard() returns [] (all corrupt), so writeShard would write empty.
+    // The guard must refuse and preserve the non-empty file.
+    assert.doesNotThrow(() => store.update(first.id, { content: "updated" }));
+
+    assert.equal(fs.readFileSync(shardPath, "utf8"), corruptContent, "non-empty corrupt shard must be preserved, not wiped");
+    assert.ok(warnings.some((warning) => /shard/i.test(warning)), `expected a guard warning, got: ${warnings.join("; ")}`);
+  } finally {
+    console.warn = originalWarn;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

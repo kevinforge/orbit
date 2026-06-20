@@ -38,6 +38,7 @@ export class MessageStore {
   private readonly recentShardCount: number;
   private readonly now: () => Date;
   private readonly warnedPersistenceTargets = new Set<string>();
+  private readonly warnedShardIssues = new Set<string>();
 
   constructor(filePath?: string, options: MessageStoreOptions = {}) {
     this.filePath = filePath;
@@ -311,6 +312,14 @@ export class MessageStore {
   private writeShard(shardName: string, messages: ChatMessage[]): boolean {
     if (!this.filePath) return false;
     const shardPath = this.shardPath(shardName);
+    // Guard: never overwrite a non-empty shard with empty content. An empty
+    // write only happens when readShard() parsed nothing (e.g. every line was
+    // truncated/corrupted by a crash). Clobbering the file would permanently
+    // destroy whatever bytes remain — keep the file and warn instead.
+    if (messages.length === 0 && this.shardFileSize(shardPath) > 0) {
+      this.warnEmptyWriteRefused(shardPath);
+      return false;
+    }
     try {
       fs.mkdirSync(path.dirname(shardPath), { recursive: true });
       const tmp = shardPath + ".tmp";
@@ -400,15 +409,29 @@ export class MessageStore {
   }
 
   private readShard(shardName: string): ChatMessage[] {
+    let content: string;
     try {
-      return fs
-        .readFileSync(this.shardPath(shardName), "utf8")
-        .split(/\r?\n/)
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line) as ChatMessage);
+      content = fs.readFileSync(this.shardPath(shardName), "utf8");
     } catch {
       return [];
     }
+
+    // Parse line-by-line so a single truncated/corrupt line (e.g. after a
+    // crash mid-append) only drops that line instead of the whole shard.
+    const messages: ChatMessage[] = [];
+    let corruptLines = 0;
+    for (const line of content.split(/\r?\n/)) {
+      if (line.trim().length === 0) continue;
+      try {
+        messages.push(JSON.parse(line) as ChatMessage);
+      } catch {
+        corruptLines += 1;
+      }
+    }
+    if (corruptLines > 0) {
+      this.warnCorruptShard(shardName, corruptLines);
+    }
+    return messages;
   }
 
   private findShardForMessage(id: string): string | null {
@@ -522,6 +545,26 @@ export class MessageStore {
 
   private clearPersistenceWarning(targetPath: string): void {
     this.warnedPersistenceTargets.delete(targetPath);
+  }
+
+  private shardFileSize(shardPath: string): number {
+    try {
+      return fs.existsSync(shardPath) ? fs.statSync(shardPath).size : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private warnCorruptShard(shardName: string, corruptLines: number): void {
+    if (this.warnedShardIssues.has(shardName)) return;
+    console.warn(`[orbit] skipped ${corruptLines} corrupt line(s) in message shard ${this.shardPath(shardName)}; the affected messages may be unreadable`);
+    this.warnedShardIssues.add(shardName);
+  }
+
+  private warnEmptyWriteRefused(shardPath: string): void {
+    if (this.warnedShardIssues.has(shardPath)) return;
+    console.warn(`[orbit] refused to overwrite non-empty message shard ${shardPath} with empty content to prevent data loss`);
+    this.warnedShardIssues.add(shardPath);
   }
 
   private shardDir(): string {
