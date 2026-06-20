@@ -195,6 +195,14 @@ export class RunManager {
       runId: run.id,
       resultMessageId: updated.id,
     });
+
+    // A running run was interrupted, freeing the agent's slot — start the next
+    // queued run so the queue doesn't stall (and FIFO is preserved via shift).
+    // Late settlement of the killed run is no-op: complete()/fail() early-return
+    // on status === "cancelled", so they won't touch the newly-active run.
+    if (phase === "during execution") {
+      this.startNext(run.agentId);
+    }
   }
 
   /** Interrupt the current auto-collaboration chain without killing running CLI processes.
