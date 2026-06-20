@@ -15,6 +15,7 @@ export function WorkAnalysisPanel(props: {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
     if (!props.workspaceId) {
@@ -40,7 +41,7 @@ export function WorkAnalysisPanel(props: {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [days, props.workspaceId]);
+  }, [days, props.workspaceId, refreshVersion]);
 
   const visibleTasks = useMemo(
     () => analysis?.tasks.filter((task) => filter === "all" || task.status === filter) ?? [],
@@ -55,20 +56,30 @@ export function WorkAnalysisPanel(props: {
           <h1>工作分析</h1>
           <p>回顾数字员工完成的任务、协作规模与实际耗时。</p>
         </div>
-        <label className="analysisRange">
-          <span>统计范围</span>
-          <select value={days} onChange={(event) => setDays(Number(event.target.value))}>
-            <option value={7}>最近 7 天</option>
-            <option value={30}>最近 30 天</option>
-            <option value={90}>最近 90 天</option>
-          </select>
-        </label>
+        <div className="analysisHeaderActions">
+          <label className="analysisRange">
+            <span>统计范围</span>
+            <select value={days} onChange={(event) => setDays(Number(event.target.value))}>
+              <option value={7}>最近 7 天</option>
+              <option value={30}>最近 30 天</option>
+              <option value={90}>最近 90 天</option>
+            </select>
+          </label>
+          <button
+            className="analysisRefreshBtn"
+            type="button"
+            onClick={() => setRefreshVersion((version) => version + 1)}
+            disabled={loading}
+          >
+            {loading && analysis ? "刷新中…" : "刷新"}
+          </button>
+        </div>
       </header>
 
       <div className="analysisScroll">
-        {loading ? <AnalysisLoading /> : null}
-        {!loading && error ? <AnalysisError message={error} /> : null}
-        {!loading && !error && analysis ? (
+        {loading && !analysis ? <AnalysisLoading /> : null}
+        {!loading && error && !analysis ? <AnalysisError message={error} /> : null}
+        {analysis ? (
           <>
             <section className="analysisSummary" aria-label="工作分析总览">
               <SummaryCard label="已完成任务" value={String(analysis.summary.completedTasks)} detail={`${analysis.summary.totalTasks} 项已结束任务`} tone="accent" />

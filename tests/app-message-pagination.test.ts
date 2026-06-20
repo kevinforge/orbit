@@ -6,6 +6,7 @@ import {
   getConversationRunningLabel,
   getWorkspaceCreationAction,
   mergeOlderMessagesPage,
+  resolveActiveView,
 } from "../src/ui/App.tsx";
 import type { AgentState, AppState, ChatMessage, MessagePage, RunningSummary } from "../src/shared/types.ts";
 
@@ -55,6 +56,15 @@ test("mergeOlderMessagesPage prepends older messages and deduplicates current me
 
 test("workspace creation falls back to blank creation when presets are unavailable", () => {
   assert.deepEqual(getWorkspaceCreationAction([]), { kind: "create" });
+});
+
+test("work analysis view is restored after a page reload", () => {
+  assert.equal(resolveActiveView("analysis"), "analysis");
+});
+
+test("unknown persisted views fall back to the conversation", () => {
+  assert.equal(resolveActiveView(null), "conversation");
+  assert.equal(resolveActiveView("unknown"), "conversation");
 });
 
 const agents: AgentState[] = [

@@ -17,9 +17,24 @@ const initialState: AppState = {
   runtimeAvailability: [],
 };
 
+type ActiveView = "conversation" | "analysis";
+const ACTIVE_VIEW_STORAGE_KEY = "orbit.activeView";
+
+export function resolveActiveView(storedView: string | null): ActiveView {
+  return storedView === "analysis" ? "analysis" : "conversation";
+}
+
+function loadActiveView(): ActiveView {
+  try {
+    return resolveActiveView(window.localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY));
+  } catch {
+    return "conversation";
+  }
+}
+
 export function App() {
   const [state, setState] = useState<AppState>(initialState);
-  const [activeView, setActiveView] = useState<"conversation" | "analysis">("conversation");
+  const [activeView, setActiveView] = useState<ActiveView>(loadActiveView);
   const [content, setContent] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
@@ -66,6 +81,14 @@ export function App() {
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const isNearBottomRef = useRef(true);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, activeView);
+    } catch {
+      // The view still works when storage is unavailable; only reload persistence is lost.
+    }
+  }, [activeView]);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
   const hasAnyQueuedRun = state.messages.some((m) => m.runStatus === "queued");

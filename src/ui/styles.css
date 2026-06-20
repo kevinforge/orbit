@@ -2547,6 +2547,36 @@ button:active:not(:disabled) {
   letter-spacing: 0.04em;
 }
 
+.analysisHeaderActions {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.analysisRefreshBtn {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.analysisRefreshBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-surface);
+}
+
+.analysisRefreshBtn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 .analysisRange select {
   min-width: 124px;
   min-height: 38px;
@@ -3034,6 +3064,11 @@ button:active:not(:disabled) {
   .analysisHeader {
     align-items: flex-start;
     padding: 18px;
+  }
+
+  .analysisHeaderActions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .analysisScroll {
