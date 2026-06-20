@@ -607,11 +607,14 @@ export function App() {
     }
 
   async function switchConversation(conversationId: string, targetWorkspaceId?: string) {
+    // Always return to the conversation view when a conversation is clicked,
+    // even if it is already the active one (e.g. returning from 工作分析).
+    // The guard below only skips the redundant /switch request.
+    setActiveView("conversation");
     if (conversationId === state.conversation.id) return;
     const wsParam = targetWorkspaceId && targetWorkspaceId !== state.workspace.id ? `?workspaceId=${targetWorkspaceId}` : "";
     const response = await fetch(`/api/conversations/${conversationId}/switch${wsParam}`, { method: "POST" });
     if (!response.ok) return;
-    setActiveView("conversation");
     refreshConversations();
     refreshState();
   }
