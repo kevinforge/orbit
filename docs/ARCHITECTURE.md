@@ -44,6 +44,8 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/workspace-config-store.ts` | Load/save per-workspace configuration (systemPrompt, rules) |
 | `src/core/conversation-store.ts` | Conversation metadata persistence per workspace |
 | `src/core/message-store.ts` | Workspace-persisted channel messages, shard manifests, and pagination |
+| `src/core/work-analysis.ts` | Aggregates completed message trees into task, collaboration, and duration metrics |
+| `src/server/workspace-work-analysis.ts` | Loads workspace conversation history for `GET /api/work-analysis` |
 | `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
 | `src/core/workspace-store.ts` | Workspace CRUD, isolation, and user directory persistence |
 | `src/core/terminal-transcript-store.ts` | Workspace-persisted runtime activity transcript segments |

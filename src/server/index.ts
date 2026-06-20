@@ -28,6 +28,7 @@ import { ConversationContext } from "./conversation-context.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
+import { buildWorkspaceWorkAnalysis } from "./workspace-work-analysis.ts";
 
 const DEFAULT_PORT = 4317;
 const requestedPort = Number(process.env.ORBIT_PORT ?? DEFAULT_PORT);
@@ -453,6 +454,23 @@ const server = http.createServer(async (req, res) => {
         runningSummaries: buildRunningSummaries(),
         runtimeAvailability: getRuntimeAvailabilityArray(),
       });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/work-analysis") {
+      if (!activeWorkspaceId) {
+        sendJson(res, 409, { ok: false, message: "Create or select a workspace before viewing work analysis." });
+        return;
+      }
+      const requestedDays = Number(url.searchParams.get("days") ?? 30);
+      const days = Number.isFinite(requestedDays) ? Math.max(1, Math.min(365, Math.floor(requestedDays))) : 30;
+      sendJson(res, 200, buildWorkspaceWorkAnalysis({
+        workspaceId: activeWorkspaceId,
+        days,
+        workspaceStore,
+        conversationStore,
+        agentConfigStore: configStore,
+      }));
       return;
     }
 

@@ -1,0 +1,251 @@
+import { useEffect, useMemo, useState } from "react";
+
+import type { WorkAnalysis, WorkTask, WorkTaskStatus } from "../shared/types.ts";
+
+type TaskFilter = "all" | WorkTaskStatus;
+
+export function WorkAnalysisPanel(props: {
+  workspaceId: string;
+  workspaceName: string;
+  onOpenConversation: (conversationId: string) => void;
+}) {
+  const [days, setDays] = useState(30);
+  const [analysis, setAnalysis] = useState<WorkAnalysis | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<TaskFilter>("all");
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!props.workspaceId) {
+      setAnalysis(null);
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    fetch(`/api/work-analysis?days=${days}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("工作分析暂时无法加载");
+        return response.json() as Promise<WorkAnalysis>;
+      })
+      .then(setAnalysis)
+      .catch((reason: unknown) => {
+        if ((reason as { name?: string }).name !== "AbortError") {
+          setError(reason instanceof Error ? reason.message : "工作分析暂时无法加载");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [days, props.workspaceId]);
+
+  const visibleTasks = useMemo(
+    () => analysis?.tasks.filter((task) => filter === "all" || task.status === filter) ?? [],
+    [analysis, filter],
+  );
+
+  return (
+    <section className="analysisPage" aria-label="数字员工工作分析">
+      <header className="analysisHeader">
+        <div>
+          <p className="eyebrow">{props.workspaceName || "当前工作区"}</p>
+          <h1>工作分析</h1>
+          <p>回顾数字员工完成的任务、协作规模与实际耗时。</p>
+        </div>
+        <label className="analysisRange">
+          <span>统计范围</span>
+          <select value={days} onChange={(event) => setDays(Number(event.target.value))}>
+            <option value={7}>最近 7 天</option>
+            <option value={30}>最近 30 天</option>
+            <option value={90}>最近 90 天</option>
+          </select>
+        </label>
+      </header>
+
+      <div className="analysisScroll">
+        {loading ? <AnalysisLoading /> : null}
+        {!loading && error ? <AnalysisError message={error} /> : null}
+        {!loading && !error && analysis ? (
+          <>
+            <section className="analysisSummary" aria-label="工作分析总览">
+              <SummaryCard label="已完成任务" value={String(analysis.summary.completedTasks)} detail={`${analysis.summary.totalTasks} 项已结束任务`} tone="accent" />
+              <SummaryCard label="参与数字员工" value={String(analysis.summary.participatingAgents)} detail="统计范围内去重" />
+              <SummaryCard label="多员工协作率" value={formatPercent(analysis.summary.multiAgentRate)} detail="至少 2 位数字员工参与" />
+              <SummaryCard label="任务耗时中位数" value={formatDuration(analysis.summary.medianDurationMs)} detail="仅统计已完成任务" />
+            </section>
+
+            <section className="analysisPanel trendPanel">
+              <div className="analysisPanelHeading">
+                <div>
+                  <p className="analysisKicker">完成趋势</p>
+                  <h2>每天完成的任务</h2>
+                </div>
+                <span>{analysis.summary.completedTasks} 项完成</span>
+              </div>
+              <TrendChart analysis={analysis} />
+            </section>
+
+            <section className="analysisPanel taskPanel">
+              <div className="analysisPanelHeading taskPanelHeading">
+                <div>
+                  <p className="analysisKicker">任务记录</p>
+                  <h2>最近结束的任务</h2>
+                </div>
+                <div className="taskFilters" aria-label="按状态筛选任务">
+                  {(["all", "completed", "failed", "cancelled"] as TaskFilter[]).map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      className={filter === status ? "active" : ""}
+                      onClick={() => setFilter(status)}
+                    >
+                      {filterLabel(status)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {visibleTasks.length === 0 ? (
+                <div className="analysisEmpty">
+                  <strong>{analysis.tasks.length === 0 ? "还没有可分析的任务" : "没有符合筛选条件的任务"}</strong>
+                  <span>{analysis.tasks.length === 0 ? "数字员工完成任务后，结果会自动出现在这里。" : "换一个状态看看其他任务。"}</span>
+                </div>
+              ) : (
+                <div className="taskList">
+                  {visibleTasks.map((task) => (
+                    <TaskRow
+                      key={`${task.conversationId}:${task.id}`}
+                      task={task}
+                      expanded={expandedTaskId === `${task.conversationId}:${task.id}`}
+                      onToggle={() => {
+                        const id = `${task.conversationId}:${task.id}`;
+                        setExpandedTaskId((current) => current === id ? null : id);
+                      }}
+                      onOpenConversation={() => props.onOpenConversation(task.conversationId)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function SummaryCard(props: { label: string; value: string; detail: string; tone?: "accent" }) {
+  return (
+    <article className={`summaryCard ${props.tone ?? ""}`}>
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+      <small>{props.detail}</small>
+    </article>
+  );
+}
+
+function TrendChart({ analysis }: { analysis: WorkAnalysis }) {
+  const points = analysis.trend;
+  const max = Math.max(1, ...points.map((point) => point.completedTasks));
+  return (
+    <div className="trendChart" role="img" aria-label={`最近 ${analysis.days} 天每天完成任务数量`}>
+      {points.map((point, index) => (
+        <div className="trendColumn" key={point.date} title={`${formatDate(point.date)}：${point.completedTasks} 项`}>
+          <span className="trendValue">{point.completedTasks || ""}</span>
+          <span className="trendTrack">
+            <span className="trendBar" style={{ height: `${Math.max(point.completedTasks ? 12 : 2, point.completedTasks / max * 100)}%` }} />
+          </span>
+          {(points.length <= 14 || index === 0 || index === points.length - 1 || index % Math.ceil(points.length / 6) === 0) ? (
+            <span className="trendDate">{formatShortDate(point.date)}</span>
+          ) : <span className="trendDate" aria-hidden="true" />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TaskRow(props: { task: WorkTask; expanded: boolean; onToggle: () => void; onOpenConversation: () => void }) {
+  const { task } = props;
+  return (
+    <article className={`taskRow ${props.expanded ? "expanded" : ""}`}>
+      <button className="taskRowMain" type="button" onClick={props.onToggle} aria-expanded={props.expanded}>
+        <span className={`taskStatus ${task.status}`} aria-label={statusLabel(task.status)} />
+        <span className="taskIdentity">
+          <strong>{task.title}</strong>
+          <small>{task.conversationName} · {formatDateTime(task.completedAt)}</small>
+        </span>
+        <span className="taskAgents" title={task.agents.map((agent) => agent.label).join("、")}>
+          <span className="agentStack" aria-hidden="true">
+            {task.agents.slice(0, 4).map((agent) => <span key={agent.agentId}>{agent.label.slice(0, 1)}</span>)}
+          </span>
+          <small>{task.agents.length} 位</small>
+        </span>
+        <span className="taskDuration">{formatDuration(task.durationMs)}</span>
+        <span className={`taskStatusLabel ${task.status}`}>{statusLabel(task.status)}</span>
+        <span className="taskChevron" aria-hidden="true">⌄</span>
+      </button>
+      {props.expanded ? (
+        <div className="taskDetail">
+          <div className="taskFlow">
+            {task.agents.map((agent, index) => (
+              <div className="taskFlowStep" key={agent.agentId}>
+                <span className={`taskFlowDot ${agent.status}`}>{index + 1}</span>
+                <div>
+                  <strong>{agent.label}</strong>
+                  <small>{statusLabel(agent.status)} · {formatDuration(agent.durationMs)}{agent.runCount > 1 ? ` · ${agent.runCount} 次执行` : ""}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button className="openConversationBtn" type="button" onClick={props.onOpenConversation}>打开相关会话</button>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function AnalysisLoading() {
+  return <div className="analysisState"><span className="analysisSpinner" /><strong>正在整理任务数据</strong></div>;
+}
+
+function AnalysisError({ message }: { message: string }) {
+  return <div className="analysisState error"><strong>{message}</strong><span>稍后重新打开工作分析即可重试。</span></div>;
+}
+
+function statusLabel(status: WorkTaskStatus): string {
+  return status === "completed" ? "已完成" : status === "failed" ? "失败" : "已取消";
+}
+
+function filterLabel(filter: TaskFilter): string {
+  return filter === "all" ? "全部" : statusLabel(filter);
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatDuration(milliseconds: number): string {
+  if (!milliseconds) return "—";
+  const totalSeconds = Math.max(1, Math.round(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}时${minutes}分`;
+  if (minutes > 0) return `${minutes}分${seconds ? `${seconds}秒` : ""}`;
+  return `${seconds}秒`;
+}
+
+function formatDate(date: string): string {
+  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(`${date}T00:00:00Z`));
+}
+
+function formatShortDate(date: string): string {
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(`${date}T00:00:00Z`));
+}
+
+function formatDateTime(date: string): string {
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(date));
+}

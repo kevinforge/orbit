@@ -154,6 +154,51 @@ export type RunningSummary = {
   runningAgentIds: AgentId[];
 };
 
+export type WorkTaskStatus = "completed" | "failed" | "cancelled";
+
+export type WorkTaskAgent = {
+  agentId: AgentId;
+  label: string;
+  status: WorkTaskStatus;
+  durationMs: number;
+  runCount: number;
+};
+
+export type WorkTask = {
+  id: string;
+  conversationId: string;
+  conversationName: string;
+  title: string;
+  status: WorkTaskStatus;
+  createdAt: string;
+  completedAt: string;
+  durationMs: number;
+  agents: WorkTaskAgent[];
+};
+
+export type WorkAnalysisTrendPoint = {
+  date: string;
+  completedTasks: number;
+  medianDurationMs: number;
+};
+
+export type WorkAnalysis = {
+  workspaceId: string;
+  days: number;
+  generatedAt: string;
+  summary: {
+    totalTasks: number;
+    completedTasks: number;
+    failedTasks: number;
+    cancelledTasks: number;
+    participatingAgents: number;
+    multiAgentRate: number;
+    medianDurationMs: number;
+  };
+  trend: WorkAnalysisTrendPoint[];
+  tasks: WorkTask[];
+};
+
 export type MessageHistoryState = {
   hasOlderMessages: boolean;
   olderCursor: string | null;
