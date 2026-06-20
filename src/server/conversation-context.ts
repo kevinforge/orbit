@@ -107,6 +107,7 @@ export class ConversationContext {
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
       },
+      getAgentLabel: (agentId: AgentId) => profiles.find((profile) => profile.id === agentId)?.name ?? agentId,
     });
 
     const hasActiveSupervisor = profiles.some(
@@ -193,6 +194,7 @@ export class ConversationContext {
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
       },
+      getAgentLabel: (agentId: AgentId) => profiles.find((profile) => profile.id === agentId)?.name ?? agentId,
     });
 
     const newHasSupervisor = profiles.some(

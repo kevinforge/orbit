@@ -50,6 +50,8 @@ export type RunManagerOptions = {
   eventBus: EventBus;
   buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => string;
   onRunCompleted: (message: ChatMessage) => void;
+  /** Resolves a user-facing display name for an agent id (defaults to the raw id). */
+  getAgentLabel?: (agentId: AgentId) => string;
 };
 
 export class RunManager {
@@ -67,6 +69,10 @@ export class RunManager {
 
   dispose(): void {
     this.unsubscribe();
+  }
+
+  private resolveAgentLabel(agentId: AgentId): string {
+    return this.options.getAgentLabel?.(agentId) ?? agentId;
   }
 
   hasQueuedRuns(): boolean {
@@ -90,7 +96,7 @@ export class RunManager {
       agentId,
       runId,
       runStatus: isBusy ? "queued" : "running",
-      content: isBusy ? `${getAgentLabel(agentId)} queued...` : `${getAgentLabel(agentId)} is working...`,
+      content: isBusy ? `${this.resolveAgentLabel(agentId)} queued...` : `${this.resolveAgentLabel(agentId)} is working...`,
       status: "running",
       parentMessageId: sourceMessage.id,
       routeDepth,
@@ -176,8 +182,8 @@ export class RunManager {
     this.appendActivity(run, activityText);
 
     const contentText = phase === "before start"
-      ? `${getAgentLabel(run.agentId)} queued run was cancelled.`
-      : `${getAgentLabel(run.agentId)} run was interrupted.`;
+      ? `${this.resolveAgentLabel(run.agentId)} queued run was cancelled.`
+      : `${this.resolveAgentLabel(run.agentId)} run was interrupted.`;
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: contentText,
@@ -237,7 +243,7 @@ export class RunManager {
 
     // Reflect runStatus transition on the UI message
     this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} is working...`,
+      content: `${this.resolveAgentLabel(run.agentId)} is working...`,
       runStatus: "running",
       startedAt: run.startedAt,
     });
@@ -313,7 +319,7 @@ export class RunManager {
     this.appendActivity(run, `Run failed: ${errorSummary}`);
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} failed: ${errorSummary}`,
+      content: `${this.resolveAgentLabel(run.agentId)} failed: ${errorSummary}`,
       status: "error",
       runStatus: "failed",
       activity: run.activity,
@@ -333,7 +339,7 @@ export class RunManager {
 
     const startedAt = new Date().toISOString();
     const updated = this.options.messages.update(next.resultMessageId, {
-      content: `${getAgentLabel(agentId)} is working...`,
+      content: `${this.resolveAgentLabel(agentId)} is working...`,
       status: "running",
       runStatus: "running",
       activity: next.activity,
@@ -479,10 +485,6 @@ function createRunId(agentId: AgentId): string {
 
 function createActivity(text: string): AgentActivityEvent {
   return { type: "status", text, timestamp: new Date().toISOString() };
-}
-
-function getAgentLabel(agentId: AgentId): string {
-  return agentId;
 }
 
 function findLastTopLevelClose(text: string): number {

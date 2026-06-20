@@ -1013,6 +1013,47 @@ test("enqueue sets origin based on sourceMessage kind", () => {
   assert.equal(supervisorRun.origin, "supervisor");
 });
 
+test("uses provided getAgentLabel for run message content", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.shift()!.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+    getAgentLabel: (agentId) => (agentId === "supervisor" ? "监督者（supervisor）" : agentId),
+  });
+
+  const source = createSourceMessage();
+  manager.enqueue("supervisor", "first", source);
+  const queued = manager.enqueue("supervisor", "second", source);
+
+  // Enqueued content uses the resolved display name, not the raw agent id.
+  assert.equal(messages.get(queued.resultMessageId)?.content, "监督者（supervisor） queued...");
+
+  manager.cancel(queued.id);
+  assert.match(
+    messages.get(queued.resultMessageId)?.content ?? "",
+    /监督者（supervisor） queued run was cancelled\./,
+  );
+
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
 test("enqueue respects explicit origin parameter over sourceMessage kind", () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
