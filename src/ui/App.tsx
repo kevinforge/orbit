@@ -197,6 +197,7 @@ export function App() {
   }, [workspaces, state.workspace.id]);
 
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
+  const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
   const hasCoordinator = useMemo(() => state.agents.some((agent) => agent.role === "coordinator" && hasActiveChannelWatchTriggers(agent.triggers)), [state.agents]);
@@ -1029,6 +1030,8 @@ export function App() {
                 key={message.id}
                 message={message}
                 agent={message.agentId ? agentsById.get(message.agentId) : undefined}
+                parentMessage={message.parentMessageId ? messagesById.get(message.parentMessageId) : undefined}
+                agentsById={agentsById}
               />
             ))
           )}
@@ -1341,10 +1344,21 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
   );
 }
 
-function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentState }) {
+function MessageRow({
+  message,
+  agent,
+  parentMessage,
+  agentsById,
+}: {
+  message: ChatMessage;
+  agent?: AgentState;
+  parentMessage?: ChatMessage;
+  agentsById: Map<AgentId, AgentState>;
+}) {
   const author = message.kind === "user" ? "You" : message.kind === "agent" ? message.agentId ?? "agent" : "system";
   const isRunning = message.status === "running";
   const isQueued = message.runStatus === "queued";
+  const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
   const [cancelling, setCancelling] = useState(false);
 
   async function cancelRun() {
@@ -1397,6 +1411,7 @@ function MessageRow({ message, agent }: { message: ChatMessage; agent?: AgentSta
           {message.runIndex ? <span>run #{message.runIndex}</span> : null}
         </div>
       ) : null}
+      {handoffSummary ? <div className="handoffSummary">{handoffSummary}</div> : null}
       <div className="messageBody">
         {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} /> : null}
         {message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
@@ -2470,6 +2485,59 @@ function formatDuration(ms: number): string {
   const hours = Math.floor(totalMinutes / 60);
   const remainingMinutes = totalMinutes % 60;
   return `${hours}h ${remainingMinutes}m`;
+}
+
+export function getAgentHandoffSummary(
+  message: ChatMessage,
+  parentMessage: ChatMessage | undefined,
+  agentsById: ReadonlyMap<AgentId, Pick<AgentState, "id" | "label">>,
+): string | null {
+  if (message.kind !== "agent" || !message.parentMessageId) {
+    return null;
+  }
+
+  const sourceLabel = getHandoffSourceLabel(parentMessage, message.parentMessageId, agentsById);
+  const originLabel = parentMessage?.kind === "agent"
+    ? "数字员工交接"
+    : parentMessage?.kind === "system"
+      ? "系统触发"
+      : parentMessage?.kind === "user"
+        ? "用户指派"
+        : "上游消息";
+  const parts = [originLabel, `来自 ${sourceLabel}`];
+
+  if (typeof message.routeDepth === "number") {
+    parts.push(`第 ${message.routeDepth} 层`);
+  }
+
+  return parts.join(" · ");
+}
+
+function getHandoffSourceLabel(
+  source: ChatMessage | undefined,
+  fallbackMessageId: string,
+  agentsById: ReadonlyMap<AgentId, Pick<AgentState, "id" | "label">>,
+): string {
+  if (!source) {
+    return `消息 ${formatShortMessageId(fallbackMessageId)}`;
+  }
+
+  if (source.kind === "agent") {
+    const agentId = source.agentId ?? "agent";
+    const label = source.agentId ? agentsById.get(source.agentId)?.label : undefined;
+    return `${label ?? agentId} 的消息 ${formatShortMessageId(source.id)}`;
+  }
+
+  if (source.kind === "system") {
+    return `系统消息 ${formatShortMessageId(source.id)}`;
+  }
+
+  return `用户消息 ${formatShortMessageId(source.id)}`;
+}
+
+function formatShortMessageId(messageId: string): string {
+  const suffix = messageId.includes("_") ? messageId.split("_").at(-1) : messageId.slice(-6);
+  return `#${suffix || messageId}`;
 }
 
 function scrollMessagesToBottom(element: HTMLDivElement | null): void {

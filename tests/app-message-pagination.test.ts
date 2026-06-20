@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { getConversationRunningLabel, getWorkspaceCreationAction, mergeOlderMessagesPage } from "../src/ui/App.tsx";
+import {
+  getAgentHandoffSummary,
+  getConversationRunningLabel,
+  getWorkspaceCreationAction,
+  mergeOlderMessagesPage,
+} from "../src/ui/App.tsx";
 import type { AgentState, AppState, ChatMessage, MessagePage, RunningSummary } from "../src/shared/types.ts";
 
 function message(id: string, content: string): ChatMessage {
@@ -79,4 +84,65 @@ test("conversation running label is absent when the conversation has no active e
   ];
 
   assert.equal(getConversationRunningLabel(summaries, agents, "ws1", "conv1"), null);
+});
+
+test("agent handoff summary describes direct user assignments", () => {
+  const source = message("msg_000001", "@developer: implement this");
+  const agentMessage: ChatMessage = {
+    id: "msg_000002",
+    kind: "agent",
+    agentId: "developer",
+    content: "developer is working...",
+    createdAt: "2026-01-01T00:00:02.000Z",
+    parentMessageId: source.id,
+    routeDepth: 1,
+  };
+
+  assert.equal(
+    getAgentHandoffSummary(agentMessage, source, new Map()),
+    "用户指派 · 来自 用户消息 #000001 · 第 1 层",
+  );
+});
+
+test("agent handoff summary describes agent-to-agent handoff without internal route names", () => {
+  const source: ChatMessage = {
+    id: "msg_000010",
+    kind: "agent",
+    agentId: "pm",
+    content: "@developer: build this",
+    createdAt: "2026-01-01T00:00:10.000Z",
+  };
+  const agentMessage: ChatMessage = {
+    id: "msg_000011",
+    kind: "agent",
+    agentId: "developer",
+    content: "developer is working...",
+    createdAt: "2026-01-01T00:00:11.000Z",
+    parentMessageId: source.id,
+    routeDepth: 2,
+  };
+  const agentsById = new Map([["pm", { id: "pm", label: "产品经理" }]]);
+
+  const summary = getAgentHandoffSummary(agentMessage, source, agentsById);
+
+  assert.equal(summary, "数字员工交接 · 来自 产品经理 的消息 #000010 · 第 2 层");
+  assert.ok(!summary?.includes("routeState"));
+  assert.ok(!summary?.includes("parentMessageId"));
+});
+
+test("agent handoff summary falls back when parent message is not loaded", () => {
+  const agentMessage: ChatMessage = {
+    id: "msg_000011",
+    kind: "agent",
+    agentId: "developer",
+    content: "developer is working...",
+    createdAt: "2026-01-01T00:00:11.000Z",
+    parentMessageId: "msg_000010",
+    routeDepth: 2,
+  };
+
+  assert.equal(
+    getAgentHandoffSummary(agentMessage, undefined, new Map()),
+    "上游消息 · 来自 消息 #000010 · 第 2 层",
+  );
 });

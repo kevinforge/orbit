@@ -30,8 +30,9 @@ test("package has build script using Bun compile", () => {
   assert.match(manifest.scripts?.build ?? "", /--sourcemap=none/);
 });
 
-test("default test script includes preset matching coverage", () => {
+test("default test script uses complete cross-platform discovery", () => {
   const manifest = readPackageJson();
 
-  assert.match(manifest.scripts?.test ?? "", /tests\/preset-match\.test\.ts/);
+  assert.equal(manifest.scripts?.test, "node scripts/run-tests.mjs");
+  assert.equal(manifest.scripts?.["test:glob"], "npm run test");
 });
