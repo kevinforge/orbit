@@ -829,6 +829,83 @@ test("run failures store a concise error instead of raw stream output", async ()
   assert.ok(lastActivity?.type === "status" && lastActivity.text.length < 2_100);
 });
 
+test("CLI crash that streamed assistant text surfaces that text, not the generic fallback", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const failure = deferred();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return { send() { return failure.promise; }, interrupt() { return true; } };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "first", createSourceMessage());
+  // Non-zero exit with incomplete stream-json: an assistant text event was
+  // streamed, but there is no result/error event to extract.
+  const partial = JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "text", text: "I was halfway through editing src/app.ts when the process died." }] },
+  });
+  failure.reject(new Error(partial));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const failed = messages.get(run.resultMessageId);
+  assert.equal(failed?.status, "error");
+  assert.ok(
+    failed?.content.includes("I was halfway through editing src/app.ts"),
+    `expected the streamed assistant text in the failure content, got: ${failed?.content}`,
+  );
+  assert.ok(
+    !failed?.content.includes("Runtime failed. Check the transcript"),
+    `expected not to fall back to the generic message, got: ${failed?.content}`,
+  );
+});
+
+test("CLI crash with no extractable signal gives a specific clue, not the generic fallback", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const failure = deferred();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return { send() { return failure.promise; }, interrupt() { return true; } };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "first", createSourceMessage());
+  // Non-zero exit with stream-json that carries no error/result/assistant signal.
+  const noise = JSON.stringify({ type: "system", subtype: "hook_started", hook_id: "x".repeat(200) });
+  failure.reject(new Error(noise));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const failed = messages.get(run.resultMessageId);
+  assert.equal(failed?.status, "error");
+  assert.ok(
+    !failed?.content.includes("Runtime failed. Check the transcript"),
+    `expected not to fall back to the generic message, got: ${failed?.content}`,
+  );
+  assert.ok(
+    /运行异常终止|未收到.*最终结果/.test(failed?.content ?? ""),
+    `expected a specific no-result clue, got: ${failed?.content}`,
+  );
+  assert.ok(!failed?.content.includes("hook_id"), "raw JSON fields should not leak into content");
+});
+
 test("interruptCurrentChain cancels all queued runs", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
