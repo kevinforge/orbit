@@ -88,7 +88,7 @@ export class RunManager {
     const isBusy = this.active.has(agentId);
     const now = new Date().toISOString();
     const activity = [
-      createActivity(isBusy ? "Queued behind the current run." : "Run accepted and starting."),
+      createActivity(isBusy ? "排队等待执行。" : "已接收任务，开始执行。"),
     ];
 
     const agentMessage = this.options.messages.add({
@@ -182,8 +182,8 @@ export class RunManager {
     this.appendActivity(run, activityText);
 
     const contentText = phase === "before start"
-      ? `${this.resolveAgentLabel(run.agentId)} queued run was cancelled.`
-      : `${this.resolveAgentLabel(run.agentId)} run was interrupted.`;
+      ? `${this.resolveAgentLabel(run.agentId)} 排队任务已取消。`
+      : `${this.resolveAgentLabel(run.agentId)} 运行已中断。`;
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: contentText,
@@ -248,7 +248,7 @@ export class RunManager {
       startedAt: run.startedAt,
     });
 
-    this.appendActivity(run, "Run started.");
+    this.appendActivity(run, "运行已开始。");
 
     const imagePaths = run.sourceAttachments?.map((a) => a.path);
     const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, run.sourceMessage.id, imagePaths);
@@ -274,7 +274,7 @@ export class RunManager {
     this.active.delete(run.agentId);
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
-    this.appendActivity(run, "Run completed.");
+    this.appendActivity(run, "运行已完成。");
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: runResult.content,
@@ -316,7 +316,7 @@ export class RunManager {
     this.active.delete(run.agentId);
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
-    this.appendActivity(run, `Run failed: ${errorSummary}`);
+    this.appendActivity(run, `运行失败：${errorSummary}`);
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: `${this.resolveAgentLabel(run.agentId)} failed: ${errorSummary}`,

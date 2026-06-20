@@ -590,7 +590,7 @@ test("cancel a queued run prevents it from starting when the active run complete
   const cancelledMsg = messages.get(queued.resultMessageId);
   assert.equal(cancelledMsg?.status, "cancelled");
   assert.equal(cancelledMsg?.runStatus, "cancelled");
-  assert.ok(cancelledMsg?.content.includes("cancelled"));
+  assert.ok(cancelledMsg?.content.includes("排队任务已取消"));
 
   // Complete the active run — cancelled queued run should NOT start
   first.resolve({ content: "first done" });
@@ -1047,11 +1047,63 @@ test("uses provided getAgentLabel for run message content", async () => {
   manager.cancel(queued.id);
   assert.match(
     messages.get(queued.resultMessageId)?.content ?? "",
-    /监督者（supervisor） queued run was cancelled\./,
+    /监督者（supervisor） 排队任务已取消。/,
   );
 
   first.resolve({ content: "done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+test("run lifecycle content and activity do not leak the raw 'run' codeword", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  // Only runs that actually start consume a deferred; a queued-then-cancelled
+  // run never calls send(), so we queue deferreds in start order.
+  const interrupted = deferred(); // run1: interrupted, promise abandoned
+  const completed = deferred();   // run3: completes
+  const failing = deferred();     // run4: fails
+  const sendQueue = [interrupted, completed, failing];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return sendQueue.shift()!.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+    getAgentLabel: () => "开发（developer）",
+  });
+
+  const source = createSourceMessage();
+  const running = manager.enqueue("developer", "first", source);  // running
+  const queued = manager.enqueue("developer", "second", source);  // queued behind running
+  manager.cancel(queued.id);                                      // cancel before start
+  manager.cancel(running.id);                                     // interrupt running run
+  manager.enqueue("developer", "third", source);                 // running again
+  completed.resolve({ content: "third done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  manager.enqueue("developer", "fourth", source);                 // running again
+  failing.reject(new Error("boom"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Scan every persisted message's content + status/error activity text.
+  const collected: string[] = [];
+  for (const message of messages.list()) {
+    collected.push(message.content ?? "");
+    for (const activity of message.activity ?? []) {
+      if (activity.type === "status") collected.push(activity.text);
+      else if (activity.type === "error") collected.push(activity.message);
+    }
+  }
+  const joined = collected.join("\n");
+  assert.equal(/\brun\b/i.test(joined), false, `expected no bare 'run' codeword in lifecycle text, got: ${joined}`);
 });
 
 test("enqueue respects explicit origin parameter over sourceMessage kind", () => {
