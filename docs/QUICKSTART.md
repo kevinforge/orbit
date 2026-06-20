@@ -64,6 +64,8 @@ If none of the commands work, install at least one runtime:
 | OpenAI Codex | Product, architecture, general work | `npm install -g @openai/codex` |
 | CodeBuddy | Testing or custom agents | `npm install -g @tencent-ai/codebuddy-code` |
 
+Orbit shows the same install command in the agent settings panel when a runtime is missing. You can copy that command from the UI, install the CLI in a terminal, complete the CLI's own login flow, and then re-detect the runtime in Orbit.
+
 If npm installs hang, time out, or cannot download packages, your network may not be able to reach the npm registry reliably. Use a network/proxy that can access npm, or temporarily switch to a mirror:
 
 ```powershell
@@ -152,7 +154,7 @@ If no agents are enabled:
 4. Check that each agent runtime is available.
 5. Click Save.
 
-If Orbit says a runtime is missing, use the install link shown in the UI. After installation or login, return to Orbit and click re-detect runtime environment.
+If Orbit says a runtime is missing, copy the install command shown in the UI or open the install link next to it. After installation or login, return to Orbit and click re-detect runtime environment.
 
 ## Step 5: Send Your First Task
 
@@ -218,7 +220,7 @@ codex --version
 codebuddy --version
 ```
 
-You only need to check the runtime you use. After installing or logging in, return to Orbit and click re-detect runtime environment.
+You only need to check the runtime you use. If the command is missing, use the install command shown in Orbit for that runtime. After installing or logging in, return to Orbit and click re-detect runtime environment.
 
 ### Where Does Orbit Store Data?
 
