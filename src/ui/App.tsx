@@ -820,8 +820,10 @@ export function App() {
                     </div>
                     {isWorkspaceConversationOpen ? (
                       <div className="navList conversationList">
-                        {(conversationsByWorkspace[ws.id] ?? []).map((conv) => (
-                          <div className={`conversationRow ${conv.id === state.conversation.id ? "active" : ""}`} key={conv.id}>
+                        {(conversationsByWorkspace[ws.id] ?? []).map((conv) => {
+                          const runningLabel = getConversationRunningLabel(state.runningSummaries, state.agents, ws.id, conv.id);
+                          return (
+                            <div className={`conversationRow ${conv.id === state.conversation.id ? "active" : ""}`} key={conv.id}>
                             {editingConversationId === conv.id ? (
                               <form
                                 className="rowRenameForm"
@@ -848,9 +850,9 @@ export function App() {
                                 <button type="button" onClick={() => switchConversation(conv.id, ws.id)} title={conv.name}>
                                   <span>{conv.name}</span>
                                 </button>
-                                {isConversationRunning(state.runningSummaries, ws.id, conv.id) && (
-                                  <span className="conversationRunningDot" title="Agent running" />
-                                )}
+                                {runningLabel ? (
+                                  <span className="conversationRunningDot" title={runningLabel} aria-label={runningLabel} role="img" />
+                                ) : null}
                               </div>
                             )}
                             <div className="rowMenuWrap">
@@ -881,8 +883,9 @@ export function App() {
                                 </div>
                               ) : null}
                             </div>
-                          </div>
-                        ))}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : null}
                   </div>
@@ -2386,14 +2389,22 @@ export function getWorkspaceCreationAction(presets: readonly WorkspacePreset[]):
   return presets.length > 0 ? { kind: "choosePreset" } : { kind: "create" };
 }
 
-function isConversationRunning(
+export function getConversationRunningLabel(
   summaries: RunningSummary[],
+  agents: AgentState[],
   workspaceId: string,
   conversationId: string,
-): boolean {
-  return summaries.some(
+): string | null {
+  const summary = summaries.find(
     (r) => r.workspaceId === workspaceId && r.conversationId === conversationId,
   );
+  if (!summary?.runningAgentIds.length) {
+    return null;
+  }
+
+  const labelsById = new Map(agents.map((agent) => [agent.id, agent.label]));
+  const labels = [...new Set(summary.runningAgentIds)].map((agentId) => labelsById.get(agentId) ?? agentId);
+  return `数字员工正在工作：${labels.join("、")}`;
 }
 
 function loadSidebarWidth(): number {

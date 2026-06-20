@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { getWorkspaceCreationAction, mergeOlderMessagesPage } from "../src/ui/App.tsx";
-import type { AppState, ChatMessage, MessagePage } from "../src/shared/types.ts";
+import { getConversationRunningLabel, getWorkspaceCreationAction, mergeOlderMessagesPage } from "../src/ui/App.tsx";
+import type { AgentState, AppState, ChatMessage, MessagePage, RunningSummary } from "../src/shared/types.ts";
 
 function message(id: string, content: string): ChatMessage {
   return { id, kind: "user", content, createdAt: `2026-01-01T00:00:0${id.slice(-1)}.000Z` };
@@ -50,4 +50,33 @@ test("mergeOlderMessagesPage prepends older messages and deduplicates current me
 
 test("workspace creation falls back to blank creation when presets are unavailable", () => {
   assert.deepEqual(getWorkspaceCreationAction([]), { kind: "create" });
+});
+
+const agents: AgentState[] = [
+  { id: "developer", label: "开发", runtime: "claude-code", status: "running", role: "developer" },
+  { id: "tester", label: "测试", runtime: "codebuddy", status: "running", role: "tester" },
+];
+
+test("conversation running label lists employee display names once in summary order", () => {
+  const summaries: RunningSummary[] = [
+    { workspaceId: "ws1", conversationId: "conv1", runningAgentIds: ["tester", "developer", "tester"] },
+  ];
+
+  assert.equal(getConversationRunningLabel(summaries, agents, "ws1", "conv1"), "数字员工正在工作：测试、开发");
+});
+
+test("conversation running label falls back to an unknown employee id", () => {
+  const summaries: RunningSummary[] = [
+    { workspaceId: "ws1", conversationId: "conv1", runningAgentIds: ["custom-agent"] },
+  ];
+
+  assert.equal(getConversationRunningLabel(summaries, agents, "ws1", "conv1"), "数字员工正在工作：custom-agent");
+});
+
+test("conversation running label is absent when the conversation has no active employees", () => {
+  const summaries: RunningSummary[] = [
+    { workspaceId: "ws1", conversationId: "conv2", runningAgentIds: ["developer"] },
+  ];
+
+  assert.equal(getConversationRunningLabel(summaries, agents, "ws1", "conv1"), null);
 });
