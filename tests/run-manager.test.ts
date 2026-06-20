@@ -1257,6 +1257,43 @@ test("enqueue respects explicit origin parameter over sourceMessage kind", () =>
   assert.equal(run.origin, "supervisor");
 });
 
+test("supervisor-origin run records a low route-depth base instead of inheriting the trigger's depth", () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() { return { send() { return new Promise<RunResult>(() => {}); }, interrupt() { return true; } }; },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  // ChannelWatchService passes the real triggering message (here a deep agent
+  // result at routeDepth 9) to enqueue(), not a synthetic depth-0 system message.
+  const deepTrigger: ChatMessage = {
+    id: "deep-trigger",
+    kind: "agent",
+    agentId: "developer",
+    content: "deep result with no further @agent: assignment",
+    createdAt: new Date().toISOString(),
+    status: "done",
+    routeDepth: 9,
+  };
+
+  const run = manager.enqueue("supervisor", "coordinate", deepTrigger, "supervisor");
+  const supervisorMessage = messages.get(run.resultMessageId);
+
+  // Before the fix this inherited 9 + 1 = 10, leaving no depth budget for the
+  // supervisor's own @agent: assignments and tripping maxRouteDepth(10) early.
+  // Supervisor runs are rate-limited by ChannelWatchService (maxTriggers), so a
+  // fresh low base is safe and matches the pre-change synthetic-message behavior.
+  assert.equal(supervisorMessage?.routeDepth, 1, "supervisor run must start from a low depth base");
+});
+
 test("supervisor-triggered runs keep their source message in conversation history", () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

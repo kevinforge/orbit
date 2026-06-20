@@ -84,7 +84,13 @@ export class RunManager {
 
   enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage, origin?: RunOrigin): ManagedRun {
     const runId = createRunId(agentId);
-    const routeDepth = (sourceMessage.routeDepth ?? 0) + 1;
+    const resolvedOrigin: RunOrigin = origin ?? (sourceMessage.kind === "system" ? "supervisor" : sourceMessage.kind === "agent" ? "agent" : "user");
+    // Supervisor runs are triggered by ChannelWatchService (already rate-limited
+    // via maxTriggers) and represent a fresh coordination check, so they start
+    // from a low route-depth base instead of inheriting the triggering message's
+    // depth. Otherwise a supervisor reply that assigns more work (@agent:) would
+    // keep counting from an already-deep chain and could trip maxRouteDepth early.
+    const routeDepth = resolvedOrigin === "supervisor" ? 1 : (sourceMessage.routeDepth ?? 0) + 1;
     const isBusy = this.active.has(agentId);
     const now = new Date().toISOString();
     const activity = [
@@ -103,8 +109,6 @@ export class RunManager {
       activity,
     } satisfies NewChatMessage);
     this.options.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
-
-    const resolvedOrigin: RunOrigin = origin ?? (sourceMessage.kind === "system" ? "supervisor" : sourceMessage.kind === "agent" ? "agent" : "user");
 
     const run: ManagedRun = {
       id: runId,
