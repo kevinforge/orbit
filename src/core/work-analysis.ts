@@ -23,11 +23,23 @@ export type BuildWorkAnalysisOptions = {
   now?: Date;
 };
 
+/**
+ * Lower-bound timestamp (ms) of the analysis window: the local start-of-day
+ * `days` ago. Shared with the read path so the window-bounded shard scan uses
+ * exactly the same cutoff the precise task filter does.
+ */
+export function workAnalysisSinceMs(now: Date, days: number): number {
+  const dayCount = Math.max(1, Math.floor(days));
+  const since = startOfLocalDay(new Date(now.getTime()));
+  since.setDate(since.getDate() - (dayCount - 1));
+  return since.getTime();
+}
+
 export function buildWorkAnalysis(options: BuildWorkAnalysisOptions): WorkAnalysis {
   const now = options.now ?? new Date();
   const days = Math.max(1, Math.floor(options.days));
-  const since = startOfLocalDay(new Date(now.getTime()));
-  since.setDate(since.getDate() - (days - 1));
+  const sinceMs = workAnalysisSinceMs(now, days);
+  const since = new Date(sinceMs);
   const tasks = options.conversations
     .flatMap(({ conversation, messages }) => buildConversationTasks(conversation, messages, options.agentLabels, now))
     .filter((task) => {

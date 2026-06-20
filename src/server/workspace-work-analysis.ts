@@ -4,8 +4,8 @@ import type { AgentConfigStore } from "../core/agent-config-store.ts";
 import type { ConversationStore } from "../core/conversation-store.ts";
 import { MessageStore } from "../core/message-store.ts";
 import type { WorkspaceStore } from "../core/workspace-store.ts";
-import { buildWorkAnalysis } from "../core/work-analysis.ts";
-import type { ChatMessage, WorkAnalysis } from "../shared/types.ts";
+import { buildWorkAnalysis, workAnalysisSinceMs } from "../core/work-analysis.ts";
+import type { WorkAnalysis } from "../shared/types.ts";
 
 export function buildWorkspaceWorkAnalysis(options: {
   workspaceId: string;
@@ -15,6 +15,11 @@ export function buildWorkspaceWorkAnalysis(options: {
   agentConfigStore: AgentConfigStore;
   now?: Date;
 }): WorkAnalysis {
+  const now = options.now ?? new Date();
+  // Read only shards overlapping the analysis window per conversation, instead of
+  // paging through every conversation's full history. Inactive conversations
+  // (no shard in the window) read zero message shards — only their manifest.
+  const sinceMs = workAnalysisSinceMs(now, options.days);
   const conversations = options.conversationStore.list(options.workspaceId).map((conversation) => {
     const messagesPath = path.join(
       options.workspaceStore.channelsDir(options.workspaceId, conversation.id),
@@ -22,7 +27,7 @@ export function buildWorkspaceWorkAnalysis(options: {
     );
     return {
       conversation,
-      messages: readAllMessages(new MessageStore(messagesPath)),
+      messages: new MessageStore(messagesPath, { historyRead: true }).historySince(sinceMs),
     };
   });
   const agentLabels = new Map(
@@ -34,22 +39,6 @@ export function buildWorkspaceWorkAnalysis(options: {
     conversations,
     agentLabels,
     days: options.days,
-    now: options.now,
+    now,
   });
-}
-
-function readAllMessages(store: MessageStore): ChatMessage[] {
-  const pages: ChatMessage[][] = [];
-  let cursor: string | null = null;
-  const seenCursors = new Set<string>();
-
-  while (true) {
-    const page = store.listBefore(cursor, 500);
-    pages.unshift(page.messages);
-    if (!page.hasOlderMessages || !page.olderCursor || seenCursors.has(page.olderCursor)) break;
-    seenCursors.add(page.olderCursor);
-    cursor = page.olderCursor;
-  }
-
-  return pages.flat();
 }

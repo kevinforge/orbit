@@ -23,12 +23,20 @@ export type MessageManifest = {
 export type MessageStoreOptions = {
   recentShardCount?: number;
   now?: () => Date;
+  /**
+   * Open the manifest only, skipping the full shard load and nextId validation.
+   * Use this for read-only history scans (e.g. work analysis) where only a
+   * date-bounded subset of shards will be read via historySince(). The full
+   * load reads every shard and is wasted I/O for that path.
+   */
+  historyRead?: boolean;
 };
 
 const MANIFEST_FILE = "manifest.json";
 const DEFAULT_RECENT_SHARDS = parsePositiveIntEnv("ORBIT_MESSAGE_RECENT_SHARDS", 3);
 const FILE_REPLACE_RETRIES = 5;
 const FILE_REPLACE_RETRY_DELAY_MS = 25;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 export class MessageStore {
   private messages: ChatMessage[] = [];
@@ -45,8 +53,44 @@ export class MessageStore {
     this.recentShardCount = Math.max(1, options.recentShardCount ?? DEFAULT_RECENT_SHARDS);
     this.now = options.now ?? (() => new Date());
     if (filePath) {
-      this.load();
+      if (options.historyRead) {
+        this.openForHistoryRead();
+      } else {
+        this.load();
+      }
     }
+  }
+
+  /**
+   * Lightweight opener for read-only history scans: loads the manifest (and
+   * migrates a legacy blob once, matching normal load) but skips the per-shard
+   * nextId validation and the recent-shard preload. historySince() reads only
+   * the shards it needs directly from the manifest.
+   */
+  private openForHistoryRead(): void {
+    this.ensureMigrated();
+    this.manifest = this.loadManifest();
+    this.nextId = this.manifest.nextId;
+  }
+
+  /**
+   * Read messages from shards whose latest activity could fall inside
+   * [sinceMs, now]. A one-day buffer is subtracted from sinceMs so the local-day
+   * window boundary (vs UTC shard dates) and tasks rooted just before the window
+   * are still covered. Shards fully older than the cutoff are never opened, which
+   * bounds I/O for work analysis over long histories. Callers (buildWorkAnalysis)
+   * still apply the precise window filter, so this only needs to be a safe
+   * over-inclusive lower bound.
+   *
+   * Trade-off: a task whose root message predates the window by more than a day
+   * but which completed inside it (e.g. an abandoned run re-stamped on restart)
+   * lives in an older shard and won't be surfaced. Normal tasks complete within
+   * minutes, so this only affects genuinely long-spanning edge cases.
+   */
+  historySince(sinceMs: number): ChatMessage[] {
+    const cutoff = sinceMs - ONE_DAY_MS;
+    const relevant = this.manifest.shards.filter((shard) => Date.parse(shard.lastCreatedAt) >= cutoff);
+    return sortMessages(relevant.flatMap((shard) => this.readShard(shard.name)));
   }
 
   append(message: NewChatMessage): ChatMessage {
