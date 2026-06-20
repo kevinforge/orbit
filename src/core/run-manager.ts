@@ -749,32 +749,57 @@ function stripRawJsonNoise(value: string): string {
     return value;
   }
 
-  const parsedMessages = parseJsonObjects(value)
-    .map((event) => {
-      const record = event as {
-        type?: unknown;
-        message?: { content?: unknown };
-        error?: unknown;
-        result?: unknown;
-        item?: { type?: unknown; exit_code?: unknown; status?: unknown; aggregated_output?: unknown };
-      };
+  const structured: string[] = [];
+  const assistantText: string[] = [];
 
-      if (typeof record.error === "string") return record.error;
-      if (typeof record.message === "string") return record.message;
-      if (typeof record.result === "string") return record.result;
-      if (record.item?.type === "command_execution" && record.item.status === "failed") {
-        const output = typeof record.item.aggregated_output === "string" ? record.item.aggregated_output : "";
-        return output || `Command failed${typeof record.item.exit_code === "number" ? ` with exit ${record.item.exit_code}` : ""}`;
+  for (const event of parseJsonObjects(value)) {
+    const record = event as {
+      type?: unknown;
+      message?: unknown;
+      error?: unknown;
+      result?: unknown;
+      item?: { type?: unknown; exit_code?: unknown; status?: unknown; aggregated_output?: unknown };
+    };
+
+    if (typeof record.error === "string" && record.error.trim()) {
+      structured.push(record.error);
+    }
+    if (typeof record.message === "string" && record.message.trim()) {
+      structured.push(record.message);
+    }
+    if (typeof record.result === "string" && record.result.trim()) {
+      structured.push(record.result);
+    }
+    if (record.item?.type === "command_execution" && record.item.status === "failed") {
+      const output = typeof record.item.aggregated_output === "string" ? record.item.aggregated_output : "";
+      structured.push(output || `Command failed${typeof record.item.exit_code === "number" ? ` with exit ${record.item.exit_code}` : ""}`);
+    }
+
+    // Surface assistant text the CLI streamed before crashing. When a run dies
+    // mid-flight there is often no result/error event — this partial answer is
+    // usually the most useful clue, and must not be silently discarded.
+    if (record.type === "assistant" && typeof record.message === "object" && record.message !== null) {
+      const content = (record.message as { content?: unknown }).content;
+      if (Array.isArray(content)) {
+        for (const part of content as Array<{ type?: unknown; text?: unknown }>) {
+          if (part?.type === "text" && typeof part.text === "string" && part.text.trim()) {
+            assistantText.push(part.text);
+          }
+        }
       }
-      return "";
-    })
-    .filter(Boolean);
-
-  if (parsedMessages.length > 0) {
-    return parsedMessages.join(" ");
+    }
   }
 
-  return "Runtime failed. Check the transcript for details.";
+  if (structured.length > 0) {
+    return structured.join(" ");
+  }
+  if (assistantText.length > 0) {
+    return assistantText.join(" ");
+  }
+
+  // Nothing extractable: be specific that the CLI produced no final result
+  // rather than showing a bare generic apology that hides the failure.
+  return "运行异常终止：未收到数字员工的最终结果，请查看运行日志了解详情。";
 }
 
 function findLastToolName(activities: AgentActivityEvent[]): string {
