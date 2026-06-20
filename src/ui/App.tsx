@@ -650,6 +650,7 @@ export function App() {
       body: JSON.stringify({}),
     });
     if (!response.ok) return;
+    setActiveView("conversation");
     // Expand the workspace so user sees the new conversation
     setExpandedWorkspaceIds((ids) => {
       const next = new Set(ids);

@@ -61,4 +61,19 @@ describe("switchConversation always returns to the conversation view", () => {
         "Got body:\n" + body,
     );
   });
+
+  test("successful conversation creation opens the new conversation view", () => {
+    const body = extractFunctionBody(appSource, "createConversation");
+    assert.ok(body, "Could not find createConversation() in App.tsx");
+
+    const responseGuardIdx = body.indexOf("if (!response.ok) return");
+    const viewIdx = body.indexOf('setActiveView("conversation")');
+
+    assert.notStrictEqual(responseGuardIdx, -1, "failed conversation creation should still be guarded");
+    assert.notStrictEqual(viewIdx, -1, "successful conversation creation must open the conversation view");
+    assert.ok(
+      viewIdx > responseGuardIdx,
+      "the view should switch only after conversation creation succeeds",
+    );
+  });
 });
