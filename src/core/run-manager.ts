@@ -50,6 +50,8 @@ export type RunManagerOptions = {
   eventBus: EventBus;
   buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => string;
   onRunCompleted: (message: ChatMessage) => void;
+  /** Resolves a user-facing display name for an agent id (defaults to the raw id). */
+  getAgentLabel?: (agentId: AgentId) => string;
 };
 
 export class RunManager {
@@ -69,6 +71,10 @@ export class RunManager {
     this.unsubscribe();
   }
 
+  private resolveAgentLabel(agentId: AgentId): string {
+    return this.options.getAgentLabel?.(agentId) ?? agentId;
+  }
+
   hasQueuedRuns(): boolean {
     for (const queue of this.queues.values()) {
       if (queue.length > 0) return true;
@@ -82,7 +88,7 @@ export class RunManager {
     const isBusy = this.active.has(agentId);
     const now = new Date().toISOString();
     const activity = [
-      createActivity(isBusy ? "Queued behind the current run." : "Run accepted and starting."),
+      createActivity(isBusy ? "排队等待执行。" : "已接收任务，开始执行。"),
     ];
 
     const agentMessage = this.options.messages.add({
@@ -90,7 +96,7 @@ export class RunManager {
       agentId,
       runId,
       runStatus: isBusy ? "queued" : "running",
-      content: isBusy ? `${getAgentLabel(agentId)} queued...` : `${getAgentLabel(agentId)} is working...`,
+      content: isBusy ? `${this.resolveAgentLabel(agentId)} queued...` : `${this.resolveAgentLabel(agentId)} is working...`,
       status: "running",
       parentMessageId: sourceMessage.id,
       routeDepth,
@@ -176,8 +182,8 @@ export class RunManager {
     this.appendActivity(run, activityText);
 
     const contentText = phase === "before start"
-      ? `${getAgentLabel(run.agentId)} queued run was cancelled.`
-      : `${getAgentLabel(run.agentId)} run was interrupted.`;
+      ? `${this.resolveAgentLabel(run.agentId)} 排队任务已取消。`
+      : `${this.resolveAgentLabel(run.agentId)} 运行已中断。`;
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: contentText,
@@ -195,6 +201,14 @@ export class RunManager {
       runId: run.id,
       resultMessageId: updated.id,
     });
+
+    // A running run was interrupted, freeing the agent's slot — start the next
+    // queued run so the queue doesn't stall (and FIFO is preserved via shift).
+    // Late settlement of the killed run is no-op: complete()/fail() early-return
+    // on status === "cancelled", so they won't touch the newly-active run.
+    if (phase === "during execution") {
+      this.startNext(run.agentId);
+    }
   }
 
   /** Interrupt the current auto-collaboration chain without killing running CLI processes.
@@ -237,12 +251,12 @@ export class RunManager {
 
     // Reflect runStatus transition on the UI message
     this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} is working...`,
+      content: `${this.resolveAgentLabel(run.agentId)} is working...`,
       runStatus: "running",
       startedAt: run.startedAt,
     });
 
-    this.appendActivity(run, "Run started.");
+    this.appendActivity(run, "运行已开始。");
 
     const imagePaths = run.sourceAttachments?.map((a) => a.path);
     const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, run.sourceMessage.id, imagePaths);
@@ -268,7 +282,7 @@ export class RunManager {
     this.active.delete(run.agentId);
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
-    this.appendActivity(run, "Run completed.");
+    this.appendActivity(run, "运行已完成。");
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: runResult.content,
@@ -310,10 +324,10 @@ export class RunManager {
     this.active.delete(run.agentId);
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
-    this.appendActivity(run, `Run failed: ${errorSummary}`);
+    this.appendActivity(run, `运行失败：${errorSummary}`);
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} failed: ${errorSummary}`,
+      content: `${this.resolveAgentLabel(run.agentId)} failed: ${errorSummary}`,
       status: "error",
       runStatus: "failed",
       activity: run.activity,
@@ -333,7 +347,7 @@ export class RunManager {
 
     const startedAt = new Date().toISOString();
     const updated = this.options.messages.update(next.resultMessageId, {
-      content: `${getAgentLabel(agentId)} is working...`,
+      content: `${this.resolveAgentLabel(agentId)} is working...`,
       status: "running",
       runStatus: "running",
       activity: next.activity,
@@ -479,10 +493,6 @@ function createRunId(agentId: AgentId): string {
 
 function createActivity(text: string): AgentActivityEvent {
   return { type: "status", text, timestamp: new Date().toISOString() };
-}
-
-function getAgentLabel(agentId: AgentId): string {
-  return agentId;
 }
 
 function findLastTopLevelClose(text: string): number {
@@ -739,32 +749,57 @@ function stripRawJsonNoise(value: string): string {
     return value;
   }
 
-  const parsedMessages = parseJsonObjects(value)
-    .map((event) => {
-      const record = event as {
-        type?: unknown;
-        message?: { content?: unknown };
-        error?: unknown;
-        result?: unknown;
-        item?: { type?: unknown; exit_code?: unknown; status?: unknown; aggregated_output?: unknown };
-      };
+  const structured: string[] = [];
+  const assistantText: string[] = [];
 
-      if (typeof record.error === "string") return record.error;
-      if (typeof record.message === "string") return record.message;
-      if (typeof record.result === "string") return record.result;
-      if (record.item?.type === "command_execution" && record.item.status === "failed") {
-        const output = typeof record.item.aggregated_output === "string" ? record.item.aggregated_output : "";
-        return output || `Command failed${typeof record.item.exit_code === "number" ? ` with exit ${record.item.exit_code}` : ""}`;
+  for (const event of parseJsonObjects(value)) {
+    const record = event as {
+      type?: unknown;
+      message?: unknown;
+      error?: unknown;
+      result?: unknown;
+      item?: { type?: unknown; exit_code?: unknown; status?: unknown; aggregated_output?: unknown };
+    };
+
+    if (typeof record.error === "string" && record.error.trim()) {
+      structured.push(record.error);
+    }
+    if (typeof record.message === "string" && record.message.trim()) {
+      structured.push(record.message);
+    }
+    if (typeof record.result === "string" && record.result.trim()) {
+      structured.push(record.result);
+    }
+    if (record.item?.type === "command_execution" && record.item.status === "failed") {
+      const output = typeof record.item.aggregated_output === "string" ? record.item.aggregated_output : "";
+      structured.push(output || `Command failed${typeof record.item.exit_code === "number" ? ` with exit ${record.item.exit_code}` : ""}`);
+    }
+
+    // Surface assistant text the CLI streamed before crashing. When a run dies
+    // mid-flight there is often no result/error event — this partial answer is
+    // usually the most useful clue, and must not be silently discarded.
+    if (record.type === "assistant" && typeof record.message === "object" && record.message !== null) {
+      const content = (record.message as { content?: unknown }).content;
+      if (Array.isArray(content)) {
+        for (const part of content as Array<{ type?: unknown; text?: unknown }>) {
+          if (part?.type === "text" && typeof part.text === "string" && part.text.trim()) {
+            assistantText.push(part.text);
+          }
+        }
       }
-      return "";
-    })
-    .filter(Boolean);
-
-  if (parsedMessages.length > 0) {
-    return parsedMessages.join(" ");
+    }
   }
 
-  return "Runtime failed. Check the transcript for details.";
+  if (structured.length > 0) {
+    return structured.join(" ");
+  }
+  if (assistantText.length > 0) {
+    return assistantText.join(" ");
+  }
+
+  // Nothing extractable: be specific that the CLI produced no final result
+  // rather than showing a bare generic apology that hides the failure.
+  return "运行异常终止：未收到数字员工的最终结果，请查看运行日志了解详情。";
 }
 
 function findLastToolName(activities: AgentActivityEvent[]): string {

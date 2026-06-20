@@ -1384,7 +1384,7 @@ function MessageRow({
   parentMessage?: ChatMessage;
   agentsById: Map<AgentId, AgentState>;
 }) {
-  const author = message.kind === "user" ? "You" : message.kind === "agent" ? message.agentId ?? "agent" : "system";
+  const author = message.kind === "user" ? "You" : message.kind === "agent" ? agent?.label ?? message.agentId ?? "agent" : "system";
   const isRunning = message.status === "running";
   const isQueued = message.runStatus === "queued";
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
@@ -1437,7 +1437,7 @@ function MessageRow({
           {message.sessionId ? (
             <span>session: {message.sessionId}</span>
           ) : null}
-          {message.runIndex ? <span>run #{message.runIndex}</span> : null}
+          {message.runIndex ? <span>第 {message.runIndex} 次执行</span> : null}
         </div>
       ) : null}
       {handoffSummary ? <div className="handoffSummary">{handoffSummary}</div> : null}

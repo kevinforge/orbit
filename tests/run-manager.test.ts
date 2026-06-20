@@ -590,7 +590,7 @@ test("cancel a queued run prevents it from starting when the active run complete
   const cancelledMsg = messages.get(queued.resultMessageId);
   assert.equal(cancelledMsg?.status, "cancelled");
   assert.equal(cancelledMsg?.runStatus, "cancelled");
-  assert.ok(cancelledMsg?.content.includes("cancelled"));
+  assert.ok(cancelledMsg?.content.includes("排队任务已取消"));
 
   // Complete the active run — cancelled queued run should NOT start
   first.resolve({ content: "first done" });
@@ -637,6 +637,58 @@ test("cancel a running run triggers interrupt and succeeds", async () => {
   const msg = messages.get(run.resultMessageId);
   assert.equal(msg?.status, "cancelled");
   assert.ok(msg?.activity?.some((a) => "text" in a && a.text === "Interrupted by user during execution."));
+});
+
+test("cancelling a running run starts the next queued run (no stall, FIFO preserved)", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();   // R1, interrupted
+  const second = deferred();  // R2, should start after R1 is cancelled
+  const pending = [first, second];
+  const calls: Array<{ runId: string; prompt: string }> = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string, prompt: string) {
+            calls.push({ runId, prompt });
+            return pending.shift()?.promise ?? Promise.reject(new Error("unexpected run"));
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const r1 = manager.enqueue("developer", "R1", source);   // running
+  const r2 = manager.enqueue("developer", "R2", source);   // queued behind r1
+  assert.equal(r2.status, "queued");
+
+  // Interrupt the running R1 — R2 must start instead of stalling forever.
+  manager.cancel(r1.id);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(calls.map((c) => c.prompt), ["R1", "R2"], "R2 should start after R1 is cancelled");
+  assert.equal(r2.status, "running", "R2 should now be running");
+
+  // The killed R1 process may settle late; it must not disturb the now-running R2.
+  first.reject(new Error("killed"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(r2.status, "running", "late settlement of cancelled R1 must not stop R2");
+
+  // FIFO: a new R3 enqueued after must queue behind R2, not jump ahead of it.
+  const r3 = manager.enqueue("developer", "R3", source);
+  assert.equal(r3.status, "queued", "R3 must queue behind the running R2 (FIFO preserved)");
+
+  second.resolve({ content: "R2 done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
 });
 
 test("cancel a non-existent run returns not_found error", async () => {
@@ -829,6 +881,83 @@ test("run failures store a concise error instead of raw stream output", async ()
   assert.ok(lastActivity?.type === "status" && lastActivity.text.length < 2_100);
 });
 
+test("CLI crash that streamed assistant text surfaces that text, not the generic fallback", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const failure = deferred();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return { send() { return failure.promise; }, interrupt() { return true; } };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "first", createSourceMessage());
+  // Non-zero exit with incomplete stream-json: an assistant text event was
+  // streamed, but there is no result/error event to extract.
+  const partial = JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "text", text: "I was halfway through editing src/app.ts when the process died." }] },
+  });
+  failure.reject(new Error(partial));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const failed = messages.get(run.resultMessageId);
+  assert.equal(failed?.status, "error");
+  assert.ok(
+    failed?.content.includes("I was halfway through editing src/app.ts"),
+    `expected the streamed assistant text in the failure content, got: ${failed?.content}`,
+  );
+  assert.ok(
+    !failed?.content.includes("Runtime failed. Check the transcript"),
+    `expected not to fall back to the generic message, got: ${failed?.content}`,
+  );
+});
+
+test("CLI crash with no extractable signal gives a specific clue, not the generic fallback", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const failure = deferred();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return { send() { return failure.promise; }, interrupt() { return true; } };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "first", createSourceMessage());
+  // Non-zero exit with stream-json that carries no error/result/assistant signal.
+  const noise = JSON.stringify({ type: "system", subtype: "hook_started", hook_id: "x".repeat(200) });
+  failure.reject(new Error(noise));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const failed = messages.get(run.resultMessageId);
+  assert.equal(failed?.status, "error");
+  assert.ok(
+    !failed?.content.includes("Runtime failed. Check the transcript"),
+    `expected not to fall back to the generic message, got: ${failed?.content}`,
+  );
+  assert.ok(
+    /运行异常终止|未收到.*最终结果/.test(failed?.content ?? ""),
+    `expected a specific no-result clue, got: ${failed?.content}`,
+  );
+  assert.ok(!failed?.content.includes("hook_id"), "raw JSON fields should not leak into content");
+});
+
 test("interruptCurrentChain cancels all queued runs", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
@@ -1011,6 +1140,99 @@ test("enqueue sets origin based on sourceMessage kind", () => {
   assert.equal(userRun.origin, "user");
   assert.equal(agentRun.origin, "agent");
   assert.equal(supervisorRun.origin, "supervisor");
+});
+
+test("uses provided getAgentLabel for run message content", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.shift()!.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+    getAgentLabel: (agentId) => (agentId === "supervisor" ? "监督者（supervisor）" : agentId),
+  });
+
+  const source = createSourceMessage();
+  manager.enqueue("supervisor", "first", source);
+  const queued = manager.enqueue("supervisor", "second", source);
+
+  // Enqueued content uses the resolved display name, not the raw agent id.
+  assert.equal(messages.get(queued.resultMessageId)?.content, "监督者（supervisor） queued...");
+
+  manager.cancel(queued.id);
+  assert.match(
+    messages.get(queued.resultMessageId)?.content ?? "",
+    /监督者（supervisor） 排队任务已取消。/,
+  );
+
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+test("run lifecycle content and activity do not leak the raw 'run' codeword", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  // Only runs that actually start consume a deferred; a queued-then-cancelled
+  // run never calls send(), so we queue deferreds in start order.
+  const interrupted = deferred(); // run1: interrupted, promise abandoned
+  const completed = deferred();   // run3: completes
+  const failing = deferred();     // run4: fails
+  const sendQueue = [interrupted, completed, failing];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return sendQueue.shift()!.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+    getAgentLabel: () => "开发（developer）",
+  });
+
+  const source = createSourceMessage();
+  const running = manager.enqueue("developer", "first", source);  // running
+  const queued = manager.enqueue("developer", "second", source);  // queued behind running
+  manager.cancel(queued.id);                                      // cancel before start
+  manager.cancel(running.id);                                     // interrupt running run
+  manager.enqueue("developer", "third", source);                 // running again
+  completed.resolve({ content: "third done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  manager.enqueue("developer", "fourth", source);                 // running again
+  failing.reject(new Error("boom"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Scan every persisted message's content + status/error activity text.
+  const collected: string[] = [];
+  for (const message of messages.list()) {
+    collected.push(message.content ?? "");
+    for (const activity of message.activity ?? []) {
+      if (activity.type === "status") collected.push(activity.text);
+      else if (activity.type === "error") collected.push(activity.message);
+    }
+  }
+  const joined = collected.join("\n");
+  assert.equal(/\brun\b/i.test(joined), false, `expected no bare 'run' codeword in lifecycle text, got: ${joined}`);
 });
 
 test("enqueue respects explicit origin parameter over sourceMessage kind", () => {
