@@ -639,6 +639,58 @@ test("cancel a running run triggers interrupt and succeeds", async () => {
   assert.ok(msg?.activity?.some((a) => "text" in a && a.text === "Interrupted by user during execution."));
 });
 
+test("cancelling a running run starts the next queued run (no stall, FIFO preserved)", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();   // R1, interrupted
+  const second = deferred();  // R2, should start after R1 is cancelled
+  const pending = [first, second];
+  const calls: Array<{ runId: string; prompt: string }> = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string, prompt: string) {
+            calls.push({ runId, prompt });
+            return pending.shift()?.promise ?? Promise.reject(new Error("unexpected run"));
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const r1 = manager.enqueue("developer", "R1", source);   // running
+  const r2 = manager.enqueue("developer", "R2", source);   // queued behind r1
+  assert.equal(r2.status, "queued");
+
+  // Interrupt the running R1 — R2 must start instead of stalling forever.
+  manager.cancel(r1.id);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(calls.map((c) => c.prompt), ["R1", "R2"], "R2 should start after R1 is cancelled");
+  assert.equal(r2.status, "running", "R2 should now be running");
+
+  // The killed R1 process may settle late; it must not disturb the now-running R2.
+  first.reject(new Error("killed"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(r2.status, "running", "late settlement of cancelled R1 must not stop R2");
+
+  // FIFO: a new R3 enqueued after must queue behind R2, not jump ahead of it.
+  const r3 = manager.enqueue("developer", "R3", source);
+  assert.equal(r3.status, "queued", "R3 must queue behind the running R2 (FIFO preserved)");
+
+  second.resolve({ content: "R2 done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
 test("cancel a non-existent run returns not_found error", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
