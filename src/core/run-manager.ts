@@ -50,6 +50,8 @@ export type RunManagerOptions = {
   eventBus: EventBus;
   buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => string;
   onRunCompleted: (message: ChatMessage) => void;
+  /** Resolves a user-facing display name for an agent id (defaults to the raw id). */
+  getAgentLabel?: (agentId: AgentId) => string;
 };
 
 export class RunManager {
@@ -69,6 +71,10 @@ export class RunManager {
     this.unsubscribe();
   }
 
+  private resolveAgentLabel(agentId: AgentId): string {
+    return this.options.getAgentLabel?.(agentId) ?? agentId;
+  }
+
   hasQueuedRuns(): boolean {
     for (const queue of this.queues.values()) {
       if (queue.length > 0) return true;
@@ -82,7 +88,7 @@ export class RunManager {
     const isBusy = this.active.has(agentId);
     const now = new Date().toISOString();
     const activity = [
-      createActivity(isBusy ? "Queued behind the current run." : "Run accepted and starting."),
+      createActivity(isBusy ? "排队等待执行。" : "已接收任务，开始执行。"),
     ];
 
     const agentMessage = this.options.messages.add({
@@ -90,7 +96,7 @@ export class RunManager {
       agentId,
       runId,
       runStatus: isBusy ? "queued" : "running",
-      content: isBusy ? `${getAgentLabel(agentId)} queued...` : `${getAgentLabel(agentId)} is working...`,
+      content: isBusy ? `${this.resolveAgentLabel(agentId)} queued...` : `${this.resolveAgentLabel(agentId)} is working...`,
       status: "running",
       parentMessageId: sourceMessage.id,
       routeDepth,
@@ -176,8 +182,8 @@ export class RunManager {
     this.appendActivity(run, activityText);
 
     const contentText = phase === "before start"
-      ? `${getAgentLabel(run.agentId)} queued run was cancelled.`
-      : `${getAgentLabel(run.agentId)} run was interrupted.`;
+      ? `${this.resolveAgentLabel(run.agentId)} 排队任务已取消。`
+      : `${this.resolveAgentLabel(run.agentId)} 运行已中断。`;
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: contentText,
@@ -237,12 +243,12 @@ export class RunManager {
 
     // Reflect runStatus transition on the UI message
     this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} is working...`,
+      content: `${this.resolveAgentLabel(run.agentId)} is working...`,
       runStatus: "running",
       startedAt: run.startedAt,
     });
 
-    this.appendActivity(run, "Run started.");
+    this.appendActivity(run, "运行已开始。");
 
     const imagePaths = run.sourceAttachments?.map((a) => a.path);
     const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, run.sourceMessage.id, imagePaths);
@@ -268,7 +274,7 @@ export class RunManager {
     this.active.delete(run.agentId);
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
-    this.appendActivity(run, "Run completed.");
+    this.appendActivity(run, "运行已完成。");
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: runResult.content,
@@ -310,10 +316,10 @@ export class RunManager {
     this.active.delete(run.agentId);
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
-    this.appendActivity(run, `Run failed: ${errorSummary}`);
+    this.appendActivity(run, `运行失败：${errorSummary}`);
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: `${getAgentLabel(run.agentId)} failed: ${errorSummary}`,
+      content: `${this.resolveAgentLabel(run.agentId)} failed: ${errorSummary}`,
       status: "error",
       runStatus: "failed",
       activity: run.activity,
@@ -333,7 +339,7 @@ export class RunManager {
 
     const startedAt = new Date().toISOString();
     const updated = this.options.messages.update(next.resultMessageId, {
-      content: `${getAgentLabel(agentId)} is working...`,
+      content: `${this.resolveAgentLabel(agentId)} is working...`,
       status: "running",
       runStatus: "running",
       activity: next.activity,
@@ -479,10 +485,6 @@ function createRunId(agentId: AgentId): string {
 
 function createActivity(text: string): AgentActivityEvent {
   return { type: "status", text, timestamp: new Date().toISOString() };
-}
-
-function getAgentLabel(agentId: AgentId): string {
-  return agentId;
 }
 
 function findLastTopLevelClose(text: string): number {
