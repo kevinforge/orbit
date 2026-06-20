@@ -20,20 +20,20 @@ function run(input: {
   id: string;
   parentMessageId: string;
   agentId: string;
-  status: "completed" | "failed" | "cancelled" | "running";
-  startedAt: string;
+  status: "queued" | "completed" | "failed" | "cancelled" | "running";
+  startedAt?: string;
   completedAt?: string;
 }): ChatMessage {
   return {
     id: input.id,
     kind: "agent",
     content: `${input.agentId} result`,
-    createdAt: input.startedAt,
+    createdAt: input.startedAt ?? "2026-06-19T10:00:00.000Z",
     parentMessageId: input.parentMessageId,
     agentId: input.agentId,
     runId: `run-${input.id}`,
     runStatus: input.status,
-    status: input.status === "completed" ? "done" : input.status === "running" ? "running" : input.status === "failed" ? "error" : "cancelled",
+    status: input.status === "completed" ? "done" : input.status === "running" || input.status === "queued" ? "running" : input.status === "failed" ? "error" : "cancelled",
     startedAt: input.startedAt,
     completedAt: input.completedAt,
   };
@@ -63,7 +63,7 @@ test("buildWorkAnalysis groups downstream employee runs into one task", () => {
   assert.equal(analysis.tasks[0].title, "实现登录功能");
 });
 
-test("buildWorkAnalysis excludes unfinished and out-of-range tasks", () => {
+test("buildWorkAnalysis includes ongoing tasks and excludes out-of-range tasks", () => {
   const messages: ChatMessage[] = [
     user("old", "@pm: old", "2026-04-01T10:00:00.000Z"),
     run({ id: "old-run", parentMessageId: "old", agentId: "pm", status: "completed", startedAt: "2026-04-01T10:00:00.000Z", completedAt: "2026-04-01T10:01:00.000Z" }),
@@ -79,7 +79,11 @@ test("buildWorkAnalysis excludes unfinished and out-of-range tasks", () => {
     now: new Date("2026-06-20T12:00:00.000Z"),
   });
 
-  assert.equal(analysis.summary.totalTasks, 0);
+  assert.equal(analysis.summary.totalTasks, 1);
+  assert.equal(analysis.summary.runningTasks, 1);
+  assert.equal(analysis.summary.completedTasks, 0);
+  assert.equal(analysis.tasks[0].status, "running");
+  assert.equal(analysis.tasks[0].durationMs, 26 * 60 * 60 * 1000);
   assert.equal(analysis.trend.length, 30);
 });
 
@@ -101,6 +105,7 @@ test("buildWorkAnalysis reports failed and cancelled tasks without counting them
 
   assert.deepEqual(analysis.summary, {
     totalTasks: 2,
+    runningTasks: 0,
     completedTasks: 0,
     failedTasks: 1,
     cancelledTasks: 1,
@@ -108,6 +113,44 @@ test("buildWorkAnalysis reports failed and cancelled tasks without counting them
     multiAgentRate: 0,
     medianDurationMs: 0,
   });
+});
+
+test("buildWorkAnalysis includes a supervisor-only task", () => {
+  const messages: ChatMessage[] = [
+    user("root", "整理项目进展", "2026-06-19T10:00:00.000Z"),
+    run({ id: "supervisor-run", parentMessageId: "root", agentId: "supervisor", status: "completed", startedAt: "2026-06-19T10:00:05.000Z", completedAt: "2026-06-19T10:01:00.000Z" }),
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map([["supervisor", "主管"]]),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.summary.totalTasks, 1);
+  assert.deepEqual(analysis.tasks[0].agents.map((agent) => agent.label), ["主管"]);
+  assert.deepEqual(analysis.tasks[0].runs.map((item) => item.agentId), ["supervisor"]);
+});
+
+test("buildWorkAnalysis exposes overlapping runs as parallel timeline entries", () => {
+  const messages: ChatMessage[] = [
+    user("root", "并行检查功能", "2026-06-19T10:00:00.000Z"),
+    run({ id: "developer-run", parentMessageId: "root", agentId: "developer", status: "completed", startedAt: "2026-06-19T10:00:10.000Z", completedAt: "2026-06-19T10:02:10.000Z" }),
+    run({ id: "tester-run", parentMessageId: "root", agentId: "tester", status: "completed", startedAt: "2026-06-19T10:01:00.000Z", completedAt: "2026-06-19T10:03:00.000Z" }),
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map(),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.tasks[0].hasParallelRuns, true);
+  assert.deepEqual(analysis.tasks[0].runs.map((item) => item.offsetMs), [10_000, 60_000]);
 });
 
 test("buildWorkAnalysis treats a recovered failed run as a completed task", () => {

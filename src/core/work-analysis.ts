@@ -1,4 +1,14 @@
-import type { AgentId, ChatMessage, Conversation, WorkAnalysis, WorkTask, WorkTaskAgent, WorkTaskStatus } from "../shared/types.ts";
+import type {
+  AgentId,
+  ChatMessage,
+  Conversation,
+  WorkAnalysis,
+  WorkTask,
+  WorkTaskAgent,
+  WorkTaskRun,
+  WorkTaskRunStatus,
+  WorkTaskStatus,
+} from "../shared/types.ts";
 
 export type ConversationMessages = {
   conversation: Conversation;
@@ -19,9 +29,12 @@ export function buildWorkAnalysis(options: BuildWorkAnalysisOptions): WorkAnalys
   const since = startOfLocalDay(new Date(now.getTime()));
   since.setDate(since.getDate() - (days - 1));
   const tasks = options.conversations
-    .flatMap(({ conversation, messages }) => buildConversationTasks(conversation, messages, options.agentLabels))
-    .filter((task) => Date.parse(task.completedAt) >= since.getTime() && Date.parse(task.completedAt) <= now.getTime())
-    .sort((a, b) => b.completedAt.localeCompare(a.completedAt));
+    .flatMap(({ conversation, messages }) => buildConversationTasks(conversation, messages, options.agentLabels, now))
+    .filter((task) => {
+      const rangeDate = task.completedAt ?? task.createdAt;
+      return Date.parse(rangeDate) >= since.getTime() && Date.parse(rangeDate) <= now.getTime();
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   const completed = tasks.filter((task) => task.status === "completed");
   const participatingAgents = new Set(tasks.flatMap((task) => task.agents.map((agent) => agent.agentId))).size;
@@ -33,6 +46,7 @@ export function buildWorkAnalysis(options: BuildWorkAnalysisOptions): WorkAnalys
     generatedAt: now.toISOString(),
     summary: {
       totalTasks: tasks.length,
+      runningTasks: tasks.filter((task) => task.status === "running").length,
       completedTasks: completed.length,
       failedTasks: tasks.filter((task) => task.status === "failed").length,
       cancelledTasks: tasks.filter((task) => task.status === "cancelled").length,
@@ -49,6 +63,7 @@ function buildConversationTasks(
   conversation: Conversation,
   messages: ChatMessage[],
   agentLabels: ReadonlyMap<AgentId, string>,
+  now: Date,
 ): WorkTask[] {
   const messagesById = new Map(messages.map((message) => [message.id, message]));
   const rootCache = new Map<string, string | null>();
@@ -63,12 +78,13 @@ function buildConversationTasks(
 
   const tasks: WorkTask[] = [];
   for (const [rootId, runs] of runsByRoot) {
-    if (runs.some((run) => run.runStatus === "running" || run.runStatus === "queued" || !run.completedAt)) continue;
     const root = messagesById.get(rootId);
     if (!root) continue;
     const status = taskStatus(leafRuns(runs, messagesById));
-    const completedAt = runs.map((run) => run.completedAt!).sort().at(-1)!;
-    const agents = aggregateAgents(runs, agentLabels);
+    const completedAt = status === "running" ? undefined : runs.flatMap((run) => run.completedAt ?? []).sort().at(-1);
+    const updatedAt = completedAt ?? latestRunActivity(runs) ?? root.createdAt;
+    const agents = aggregateAgents(runs, agentLabels, now);
+    const taskRuns = buildTaskRuns(runs, messagesById, agentLabels, root.createdAt, now);
     tasks.push({
       id: root.id,
       conversationId: conversation.id,
@@ -77,8 +93,11 @@ function buildConversationTasks(
       status,
       createdAt: root.createdAt,
       completedAt,
-      durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(root.createdAt)),
+      updatedAt,
+      durationMs: Math.max(0, Date.parse(completedAt ?? now.toISOString()) - Date.parse(root.createdAt)),
       agents,
+      runs: taskRuns,
+      hasParallelRuns: hasParallelRuns(taskRuns, now),
     });
   }
   return tasks;
@@ -106,6 +125,7 @@ function findRootUserMessageId(
 }
 
 function taskStatus(runs: ChatMessage[]): WorkTaskStatus {
+  if (runs.some((run) => run.runStatus === "running" || run.runStatus === "queued" || !run.completedAt)) return "running";
   if (runs.some((run) => run.runStatus === "failed")) return "failed";
   if (runs.some((run) => run.runStatus === "cancelled")) return "cancelled";
   return "completed";
@@ -129,7 +149,7 @@ function leafRuns(runs: ChatMessage[], messagesById: ReadonlyMap<string, ChatMes
   return runs.filter((run) => !parentRunIds.has(run.id));
 }
 
-function aggregateAgents(runs: ChatMessage[], agentLabels: ReadonlyMap<AgentId, string>): WorkTaskAgent[] {
+function aggregateAgents(runs: ChatMessage[], agentLabels: ReadonlyMap<AgentId, string>, now: Date): WorkTaskAgent[] {
   const byAgent = new Map<AgentId, ChatMessage[]>();
   for (const run of runs) {
     if (!run.agentId) continue;
@@ -138,10 +158,10 @@ function aggregateAgents(runs: ChatMessage[], agentLabels: ReadonlyMap<AgentId, 
   return Array.from(byAgent, ([agentId, agentRuns]) => ({
     agentId,
     label: agentLabels.get(agentId) ?? agentId,
-    status: taskStatus([agentRuns.at(-1)!]),
+    status: runStatus(agentRuns.at(-1)!),
     durationMs: agentRuns.reduce((total, run) => {
       const startedAt = run.startedAt ?? run.createdAt;
-      return total + Math.max(0, Date.parse(run.completedAt!) - Date.parse(startedAt));
+      return total + Math.max(0, Date.parse(run.completedAt ?? now.toISOString()) - Date.parse(startedAt));
     }, 0),
     runCount: agentRuns.length,
   })).sort((a, b) => {
@@ -149,6 +169,72 @@ function aggregateAgents(runs: ChatMessage[], agentLabels: ReadonlyMap<AgentId, 
     const firstB = runs.findIndex((run) => run.agentId === b.agentId);
     return firstA - firstB;
   });
+}
+
+function buildTaskRuns(
+  runs: ChatMessage[],
+  messagesById: ReadonlyMap<string, ChatMessage>,
+  agentLabels: ReadonlyMap<AgentId, string>,
+  taskCreatedAt: string,
+  now: Date,
+): WorkTaskRun[] {
+  const runIds = new Set(runs.map((run) => run.id));
+  return runs
+    .filter((run): run is ChatMessage & { agentId: AgentId } => Boolean(run.agentId))
+    .map((run) => {
+      const startedAt = run.runStatus === "queued" ? run.startedAt : (run.startedAt ?? run.createdAt);
+      return {
+        id: run.id,
+        agentId: run.agentId,
+        label: agentLabels.get(run.agentId) ?? run.agentId,
+        status: runStatus(run),
+        startedAt,
+        completedAt: run.completedAt,
+        durationMs: startedAt ? Math.max(0, Date.parse(run.completedAt ?? now.toISOString()) - Date.parse(startedAt)) : 0,
+        offsetMs: startedAt ? Math.max(0, Date.parse(startedAt) - Date.parse(taskCreatedAt)) : 0,
+        parentRunId: findParentRunId(run, messagesById, runIds),
+      };
+    })
+    .sort((a, b) => (a.startedAt ?? taskCreatedAt).localeCompare(b.startedAt ?? taskCreatedAt));
+}
+
+function findParentRunId(
+  run: ChatMessage,
+  messagesById: ReadonlyMap<string, ChatMessage>,
+  runIds: ReadonlySet<string>,
+): string | undefined {
+  const visited = new Set<string>();
+  let parent = run.parentMessageId ? messagesById.get(run.parentMessageId) : undefined;
+  while (parent && !visited.has(parent.id)) {
+    visited.add(parent.id);
+    if (runIds.has(parent.id)) return parent.id;
+    parent = parent.parentMessageId ? messagesById.get(parent.parentMessageId) : undefined;
+  }
+  return undefined;
+}
+
+function hasParallelRuns(runs: WorkTaskRun[], now: Date): boolean {
+  const timedRuns = runs.filter((run) => run.startedAt && run.status !== "queued");
+  return timedRuns.some((run, index) => timedRuns.slice(index + 1).some((other) => {
+    if (run.agentId === other.agentId) return false;
+    const start = Date.parse(run.startedAt!);
+    const end = Date.parse(run.completedAt ?? now.toISOString());
+    const otherStart = Date.parse(other.startedAt!);
+    const otherEnd = Date.parse(other.completedAt ?? now.toISOString());
+    return start < otherEnd && otherStart < end;
+  }));
+}
+
+function runStatus(run: ChatMessage): WorkTaskRunStatus {
+  if (run.runStatus === "queued") return "queued";
+  if (run.runStatus === "running" || !run.completedAt) return "running";
+  if (run.runStatus === "failed") return "failed";
+  if (run.runStatus === "cancelled") return "cancelled";
+  return "completed";
+}
+
+function latestRunActivity(runs: ChatMessage[]): string | undefined {
+  return runs.flatMap((run) => run.completedAt ?? run.startedAt ?? run.createdAt).sort().at(-1);
 }
 
 function taskTitle(content: string): string {
@@ -162,7 +248,7 @@ function buildTrend(tasks: WorkTask[], since: Date, days: number): WorkAnalysis[
     const day = new Date(since);
     day.setDate(since.getDate() + index);
     const date = localDateKey(day);
-    const completed = tasks.filter((task) => task.status === "completed" && localDateKey(new Date(task.completedAt)) === date);
+    const completed = tasks.filter((task) => task.status === "completed" && task.completedAt && localDateKey(new Date(task.completedAt)) === date);
     return {
       date,
       completedTasks: completed.length,

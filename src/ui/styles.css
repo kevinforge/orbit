@@ -2810,7 +2810,7 @@ button:active:not(:disabled) {
 }
 
 .taskStatus.completed,
-.taskFlowDot.completed {
+.taskTimelineBar.completed {
   background: var(--success-subtle);
   color: var(--success);
   border-color: var(--success-border);
@@ -2821,7 +2821,7 @@ button:active:not(:disabled) {
 }
 
 .taskStatus.failed,
-.taskFlowDot.failed {
+.taskTimelineBar.failed {
   background: var(--error-subtle);
   color: var(--error);
   border-color: var(--error-border);
@@ -2832,7 +2832,7 @@ button:active:not(:disabled) {
 }
 
 .taskStatus.cancelled,
-.taskFlowDot.cancelled {
+.taskTimelineBar.cancelled {
   background: var(--warning-subtle);
   color: var(--warning);
   border-color: var(--warning-border);
@@ -2840,6 +2840,11 @@ button:active:not(:disabled) {
 
 .taskStatus.cancelled {
   background: var(--warning);
+}
+
+.taskStatus.running {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
 }
 
 .taskIdentity,
@@ -2926,6 +2931,11 @@ button:active:not(:disabled) {
   color: var(--warning);
 }
 
+.taskStatusLabel.running {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
 .taskChevron {
   color: var(--text-muted);
   font-size: 16px;
@@ -2946,53 +2956,77 @@ button:active:not(:disabled) {
   background: var(--bg-muted);
 }
 
-.taskFlow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 28px;
+.taskTimeline {
+  display: grid;
+  flex: 1 1 620px;
+  gap: 8px;
+  max-width: 760px;
 }
 
-.taskFlowStep {
+.taskTimelineHeading {
   display: flex;
   align-items: center;
-  gap: 9px;
-  position: relative;
+  gap: 8px;
+  margin-bottom: 2px;
 }
 
-.taskFlowStep:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  top: 13px;
-  left: calc(100% + 7px);
-  width: 14px;
-  height: 1px;
-  background: var(--border);
+.taskTimelineHeading strong {
+  font-size: 11px;
 }
 
-.taskFlowDot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border);
+.taskTimelineHeading span {
+  padding: 3px 7px;
   border-radius: var(--radius-full);
+  background: var(--accent-subtle);
+  color: var(--accent);
   font-size: 9px;
   font-weight: 800;
 }
 
-.taskFlowStep > div {
+.taskTimelineRun {
   display: grid;
-  gap: 2px;
+  grid-template-columns: minmax(72px, 110px) minmax(180px, 1fr) 100px;
+  align-items: center;
+  gap: 10px;
 }
 
-.taskFlowStep strong {
+.taskTimelineLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
+  font-weight: 700;
 }
 
-.taskFlowStep small {
+.taskTimelineRun small {
   color: var(--text-muted);
   font-size: 9px;
+  white-space: nowrap;
+}
+
+.taskTimelineTrack {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--border-light);
+}
+
+.taskTimelineBar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 3px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+}
+
+.taskTimelineBar.running {
+  background: var(--accent);
+}
+
+.taskTimelineBar.queued {
+  background: var(--text-muted);
 }
 
 .openConversationBtn {
@@ -3110,6 +3144,14 @@ button:active:not(:disabled) {
     align-items: stretch;
     flex-direction: column;
     padding: 4px 16px 16px 34px;
+  }
+
+  .taskTimelineRun {
+    grid-template-columns: minmax(64px, 90px) minmax(100px, 1fr);
+  }
+
+  .taskTimelineRun small {
+    grid-column: 2;
   }
 }
 

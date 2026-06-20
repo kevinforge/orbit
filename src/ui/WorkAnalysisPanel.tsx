@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { WorkAnalysis, WorkTask, WorkTaskStatus } from "../shared/types.ts";
+import type { WorkAnalysis, WorkTask, WorkTaskRunStatus, WorkTaskStatus } from "../shared/types.ts";
 
 type TaskFilter = "all" | WorkTaskStatus;
 
@@ -82,7 +82,7 @@ export function WorkAnalysisPanel(props: {
         {analysis ? (
           <>
             <section className="analysisSummary" aria-label="工作分析总览">
-              <SummaryCard label="已完成任务" value={String(analysis.summary.completedTasks)} detail={`${analysis.summary.totalTasks} 项已结束任务`} tone="accent" />
+              <SummaryCard label="已完成任务" value={String(analysis.summary.completedTasks)} detail={analysis.summary.runningTasks ? `${analysis.summary.runningTasks} 项进行中` : `${analysis.summary.totalTasks} 项已结束任务`} tone="accent" />
               <SummaryCard label="参与数字员工" value={String(analysis.summary.participatingAgents)} detail="统计范围内去重" />
               <SummaryCard label="多员工协作率" value={formatPercent(analysis.summary.multiAgentRate)} detail="至少 2 位数字员工参与" />
               <SummaryCard label="任务耗时中位数" value={formatDuration(analysis.summary.medianDurationMs)} detail="仅统计已完成任务" />
@@ -103,10 +103,10 @@ export function WorkAnalysisPanel(props: {
               <div className="analysisPanelHeading taskPanelHeading">
                 <div>
                   <p className="analysisKicker">任务记录</p>
-                  <h2>最近结束的任务</h2>
+                  <h2>最近的任务</h2>
                 </div>
                 <div className="taskFilters" aria-label="按状态筛选任务">
-                  {(["all", "completed", "failed", "cancelled"] as TaskFilter[]).map((status) => (
+                  {(["all", "running", "completed", "failed", "cancelled"] as TaskFilter[]).map((status) => (
                     <button
                       key={status}
                       type="button"
@@ -122,7 +122,7 @@ export function WorkAnalysisPanel(props: {
               {visibleTasks.length === 0 ? (
                 <div className="analysisEmpty">
                   <strong>{analysis.tasks.length === 0 ? "还没有可分析的任务" : "没有符合筛选条件的任务"}</strong>
-                  <span>{analysis.tasks.length === 0 ? "数字员工完成任务后，结果会自动出现在这里。" : "换一个状态看看其他任务。"}</span>
+                  <span>{analysis.tasks.length === 0 ? "数字员工开始执行任务后，记录会出现在这里。" : "换一个状态看看其他任务。"}</span>
                 </div>
               ) : (
                 <div className="taskList">
@@ -186,7 +186,7 @@ function TaskRow(props: { task: WorkTask; expanded: boolean; onToggle: () => voi
         <span className={`taskStatus ${task.status}`} aria-label={statusLabel(task.status)} />
         <span className="taskIdentity">
           <strong>{task.title}</strong>
-          <small>{task.conversationName} · {formatDateTime(task.completedAt)}</small>
+          <small>{task.conversationName} · {task.completedAt ? formatDateTime(task.completedAt) : `开始于 ${formatDateTime(task.createdAt)}`}</small>
         </span>
         <span className="taskAgents" title={task.agents.map((agent) => agent.label).join("、")}>
           <span className="agentStack" aria-hidden="true">
@@ -200,16 +200,30 @@ function TaskRow(props: { task: WorkTask; expanded: boolean; onToggle: () => voi
       </button>
       {props.expanded ? (
         <div className="taskDetail">
-          <div className="taskFlow">
-            {task.agents.map((agent, index) => (
-              <div className="taskFlowStep" key={agent.agentId}>
-                <span className={`taskFlowDot ${agent.status}`}>{index + 1}</span>
-                <div>
-                  <strong>{agent.label}</strong>
-                  <small>{statusLabel(agent.status)} · {formatDuration(agent.durationMs)}{agent.runCount > 1 ? ` · ${agent.runCount} 次执行` : ""}</small>
+          <div className="taskTimeline">
+            <div className="taskTimelineHeading">
+              <strong>执行时间轴</strong>
+              {task.hasParallelRuns ? <span>并行执行</span> : null}
+            </div>
+            {task.runs.map((run) => {
+              const left = task.durationMs ? Math.min(100, run.offsetMs / task.durationMs * 100) : 0;
+              const width = run.status === "queued"
+                ? 2
+                : Math.max(2, Math.min(100 - left, task.durationMs ? run.durationMs / task.durationMs * 100 : 2));
+              return (
+                <div className="taskTimelineRun" key={run.id}>
+                  <span className="taskTimelineLabel" title={run.label}>{run.label}</span>
+                  <span className="taskTimelineTrack">
+                    <span
+                      className={`taskTimelineBar ${run.status}`}
+                      style={{ left: `${left}%`, width: `${width}%` }}
+                      title={`${run.label} · ${runStatusLabel(run.status)} · ${formatDuration(run.durationMs)}`}
+                    />
+                  </span>
+                  <small>{runStatusLabel(run.status)} · {formatDuration(run.durationMs)}</small>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <button className="openConversationBtn" type="button" onClick={props.onOpenConversation}>打开相关会话</button>
         </div>
@@ -227,7 +241,11 @@ function AnalysisError({ message }: { message: string }) {
 }
 
 function statusLabel(status: WorkTaskStatus): string {
-  return status === "completed" ? "已完成" : status === "failed" ? "失败" : "已取消";
+  return status === "running" ? "进行中" : status === "completed" ? "已完成" : status === "failed" ? "失败" : "已取消";
+}
+
+function runStatusLabel(status: WorkTaskRunStatus): string {
+  return status === "queued" ? "等待中" : statusLabel(status);
 }
 
 function filterLabel(filter: TaskFilter): string {

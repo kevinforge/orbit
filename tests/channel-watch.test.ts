@@ -253,14 +253,16 @@ test("user message without @agent: triggers supervisor", async () => {
     profiles,
   );
 
+  const userMessage = createUserMessage("Build a login feature.");
   eventBus.publish({
     type: "message.created",
     conversationId: "conv-1",
-    message: createUserMessage("Build a login feature."),
+    message: userMessage,
   });
 
   assert.equal(enqueueCalls.length, 1);
   assert.equal(enqueueCalls[0].agentId, "supervisor");
+  assert.equal(enqueueCalls[0].sourceMessage.id, userMessage.id);
 
   service.dispose();
 });
@@ -1244,6 +1246,18 @@ test("Issue #82: run.failed triggers supervisor with onRunFailed configured", as
     profiles,
   );
 
+  const source = messages.add({ kind: "user", content: "Fix the API", status: "sent" });
+  const failedRun = messages.add({
+    kind: "agent",
+    agentId: "developer",
+    content: "developer failed",
+    status: "error",
+    runId: "run_1",
+    runStatus: "failed",
+    parentMessageId: source.id,
+    completedAt: new Date().toISOString(),
+  });
+
   // Developer run fails
   eventBus.publish({
     type: "run.failed",
@@ -1258,8 +1272,8 @@ test("Issue #82: run.failed triggers supervisor with onRunFailed configured", as
   assert.equal(enqueueCalls[0].agentId, "supervisor");
   // The prompt should be a supervisor check prompt
   assert.ok(enqueueCalls[0].prompt.includes("Supervisor Check"));
-  // The source message passed to enqueue is a synthetic message with the prompt as content
-  assert.ok(enqueueCalls[0].sourceMessage.content.includes("Supervisor Check"));
+  // Preserve the persisted failed run as the parent so supervisor remains in the task chain.
+  assert.equal(enqueueCalls[0].sourceMessage.id, failedRun.id);
 
   service.dispose();
 });

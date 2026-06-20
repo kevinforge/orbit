@@ -157,8 +157,10 @@ export class ChannelWatchService {
       if (ctx.agentId === agentId) continue; // Don't trigger the failed agent itself
       if (!ctx.triggers.onRunFailed) continue; // Only trigger if onRunFailed is configured
 
-      // Create a synthetic message for the trigger
-      const syntheticMessage: ChatMessage = {
+      const failedMessage = this.messages.list().find(
+        (message) => message.kind === "agent" && message.agentId === agentId && message.runId === runId,
+      );
+      const triggerMessage: ChatMessage = failedMessage ?? {
         id: `failure_${agentId}_${runId}_${Date.now()}`,
         kind: "system",
         content: `[Agent ${agentId} failed]\nRun ${runId} encountered an error: ${error ?? "Unknown error"}`,
@@ -168,7 +170,7 @@ export class ChannelWatchService {
 
       // Trigger supervisor with relaxIdleCheck=true so it can run even when other agents are busy
       // (the failed agent might still be in error state)
-      this.tryTrigger(ctx, syntheticMessage, { relaxIdleCheck: true });
+      this.tryTrigger(ctx, triggerMessage, { relaxIdleCheck: true });
     }
   }
 
@@ -204,16 +206,7 @@ export class ChannelWatchService {
     const isLast = ctx.triggerCount >= ctx.maxTriggers;
     const prompt = buildSupervisorPrompt(ctx.agentId, ctx.triggerCount, isLast, ctx.maxTriggers);
 
-    const syntheticSource: ChatMessage = {
-      id: `trigger_${ctx.agentId}_${Date.now()}_${ctx.triggerCount}`,
-      kind: "system",
-      content: prompt,
-      createdAt: new Date().toISOString(),
-      // Preserve attachments from the original message so supervisor can see images
-      attachments: sourceMessage.attachments?.length ? sourceMessage.attachments : undefined,
-    };
-
-    this.runManager.enqueue(ctx.agentId, prompt, syntheticSource);
+    this.runManager.enqueue(ctx.agentId, prompt, sourceMessage, "supervisor");
   }
 }
 

@@ -154,14 +154,27 @@ export type RunningSummary = {
   runningAgentIds: AgentId[];
 };
 
-export type WorkTaskStatus = "completed" | "failed" | "cancelled";
+export type WorkTaskStatus = "running" | "completed" | "failed" | "cancelled";
+export type WorkTaskRunStatus = "queued" | WorkTaskStatus;
 
 export type WorkTaskAgent = {
   agentId: AgentId;
   label: string;
-  status: WorkTaskStatus;
+  status: WorkTaskRunStatus;
   durationMs: number;
   runCount: number;
+};
+
+export type WorkTaskRun = {
+  id: string;
+  agentId: AgentId;
+  label: string;
+  status: WorkTaskRunStatus;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs: number;
+  offsetMs: number;
+  parentRunId?: string;
 };
 
 export type WorkTask = {
@@ -171,9 +184,12 @@ export type WorkTask = {
   title: string;
   status: WorkTaskStatus;
   createdAt: string;
-  completedAt: string;
+  completedAt?: string;
+  updatedAt: string;
   durationMs: number;
   agents: WorkTaskAgent[];
+  runs: WorkTaskRun[];
+  hasParallelRuns: boolean;
 };
 
 export type WorkAnalysisTrendPoint = {
@@ -187,7 +203,8 @@ export type WorkAnalysis = {
   days: number;
   generatedAt: string;
   summary: {
-    totalTasks: number;
+      totalTasks: number;
+      runningTasks: number;
     completedTasks: number;
     failedTasks: number;
     cancelledTasks: number;
