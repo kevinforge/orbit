@@ -44,7 +44,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/workspace-config-store.ts` | Load/save per-workspace configuration (systemPrompt, rules) |
 | `src/core/conversation-store.ts` | Conversation metadata persistence per workspace |
 | `src/core/message-store.ts` | Workspace-persisted channel messages, shard manifests, and pagination |
-| `src/core/work-analysis.ts` | Aggregates completed message trees into task, collaboration, and duration metrics |
+| `src/core/work-analysis.ts` | Aggregates message trees into task outcomes, collaboration, timelines, and duration metrics |
 | `src/server/workspace-work-analysis.ts` | Loads workspace conversation history for `GET /api/work-analysis` |
 | `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
 | `src/core/workspace-store.ts` | Workspace CRUD, isolation, and user directory persistence |
@@ -80,8 +80,8 @@ These defaults can be modified, disabled, or removed through the settings UI. Cu
 `AgentConfigStore` (`src/core/agent-config-store.ts`) handles:
 - **load**: Reads `agents.json`, returns seed defaults if missing or corrupted
 - **save**: Validates then writes with atomic file swap
-- **reset**: Restores the four built-in default configs
-- **validateAgentConfigs**: Checks id format, uniqueness, reserved names, runtime validity, systemPrompt, name, permissionProfile.allowedDirectories, and at least one enabled agent
+- **reset**: Restores the five built-in default configs
+- **validateAgentConfigs**: Checks id format, uniqueness, reserved names, runtime validity, systemPrompt, name, permission boundaries, coordinator uniqueness, and coordinator prerequisites
 
 ### Runtime Refresh
 
@@ -109,7 +109,7 @@ This is not a general workflow engine. It is a lightweight team-channel routing 
 
 ### Route Depth
 
-Agent-to-agent routing chains are capped at a fixed depth of 5. Each agent reply that contains new assignments increments the chain depth. When a message would exceed the limit, routing is blocked and a system message is posted.
+Agent-to-agent routing chains are capped at a fixed depth of 10. Each agent reply that contains new assignments increments the chain depth. When a message would exceed the limit, routing is blocked and a system message is posted.
 
 ### Workspace Configuration
 
@@ -173,17 +173,18 @@ Each project directory gets its own isolated workspace via `src/core/workspace-s
   - `conversations/<workspace-id>/conversations.json` - conversation metadata (`ConversationStore`)
   - `transcripts/<workspace-id>/<conversationId>/<agentId>/<YYYY-MM-DD>-<sequence>.log` - per-agent terminal transcript segments (`TerminalTranscriptStore`)
   - `last-active.json` - last active workspace and conversation for restart recovery
-- **Lifecycle**: on startup, the server checks `last-active.json` for the previously active workspace/conversation, falling back to `WorkspaceStore.resolve(cwd)` for first-run. Switching is blocked while agents are running.
+- **Lifecycle**: on startup, the server checks `last-active.json` for the previously active workspace/conversation. Switching does not stop active work; running conversation contexts remain alive in the context map.
 
 ## Workspace & Conversation Management
 
-The server maintains a single active context at a time, managed through `src/server/conversation-context.ts`:
+The server keeps one active UI pointer while retaining multiple live conversation contexts through `src/server/conversation-context.ts`:
 
-- **ConversationContext**: bundles per-conversation runtime state (MessageStore, TerminalTranscriptStore, AgentRegistry, RunManager, MessageRouter). Created when switching workspace or conversation, disposed on the next switch.
-- **WorkspaceStore CRUD**: list, create, update, delete workspaces. Deleting a workspace removes all associated sessions, channels, and transcripts.
-- **ConversationStore**: manages conversation metadata per workspace stored in `channels/<workspaceId>/default/conversations.json`. Auto-migrates existing "default" conversations on first load.
-- **Switch protection**: switching workspace or conversation is blocked while any agent is running (409 response).
-- **Delete protection**: cannot delete the active workspace or conversation.
+- **ConversationContext**: bundles per-conversation runtime state (MessageStore, TerminalTranscriptStore, AgentRegistry, RunManager, MessageRouter).
+- **Context map**: contexts are keyed by workspace and conversation, created lazily, and retained while users switch elsewhere so work can continue in the background.
+- **LRU bound**: up to 10 inactive contexts are retained; idle contexts may be evicted, but contexts with running agents are never evicted.
+- **WorkspaceStore CRUD**: list, create, update, delete workspaces. Deleting a workspace removes its live contexts and persisted data.
+- **ConversationStore**: manages conversation metadata per workspace at `conversations/<workspaceId>/conversations.json`.
+- **Running summaries**: `/api/state` reports active employees for all retained contexts so the sidebar can identify background work.
 
 Codex uses the user's normal Codex CLI home. Orbit does not create per-agent `CODEX_HOME` directories; agent-level continuity is handled by the session store above, which passes each agent's own saved session ID back to the runtime on the next run.
 
@@ -243,11 +244,20 @@ Retention and load limits can be tuned with:
 - `ORBIT_TRANSCRIPT_TAIL_BYTES`
 - `ORBIT_MESSAGE_RECENT_SHARDS`
 
-This keeps P0 simple. Persistent storage should be added behind existing stores rather than mixed into UI or runtime code.
+## Collaboration Insights
+
+`GET /api/work-analysis` builds workspace-scoped task metrics from persisted message trees without loading every historical shard. A task is anchored to its originating user message (or the highest in-window ancestor for long-running work) and includes:
+
+- completed, running, failed, and cancelled outcomes
+- unique participating digital employees and multi-employee collaboration rate
+- end-to-end duration from task creation to the final outcome
+- per-run offsets and durations for sequential/parallel timeline rendering
+
+Completed-task median duration excludes running, failed, and cancelled tasks. Cancelling an intermediate queued branch does not override a later successful outcome.
 
 ## Future Extension Points
 
 - Add persistent SQLite storage behind `MessageStore` and transcript storage if shard files stop scaling.
 - Add runtime adapters for other agent backends.
-- Add richer queue controls: cancel, retry, pause, and priority.
+- Add richer queue controls: retry, pause, and priority.
 - Add branch/PR workflow integration as a separate layer, not inside the runtime adapter.

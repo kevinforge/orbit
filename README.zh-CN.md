@@ -1,6 +1,6 @@
 # Orbit
 
-Orbit 是一个本地优先的 Agent 协作控制台，用一个共享频道协调多个 CLI 后端 Agent 工作。
+Orbit 是一个本地优先的数字员工协作工作台，可在相互隔离的工作区与会话中协调多个 CLI 后端数字员工。
 
 ## 安装
 
@@ -22,23 +22,25 @@ orbit
 
 打开 `http://localhost:4317`。
 
+第一次使用请阅读[中文快速上手](docs/QUICKSTART.zh-CN.md)，英文版见 [Quickstart](docs/QUICKSTART.md)。
+
 ## 环境要求
 
-Orbit 协调 CLI 后端 Agent，Agent 需要以下运行时：
+Orbit 协调 CLI 后端数字员工，数字员工需要以下运行时：
 
 | 运行时 | 安装方式 |
 |--------|----------|
 | Claude Code | `npm install -g @anthropic-ai/claude-code` |
 | Codex | `npm install -g @openai/codex` |
-| CodeBuddy | 参考官方文档 |
+| CodeBuddy | `npm install -g @tencent-ai/codebuddy-code` |
 
 ## 功能
 
-- 四个内置 Agent：`@pm:`、`@architect:`、`@developer:`、`@tester:`
-- 通过 UI 创建和配置自定义 Agent
-- 每个 Agent 可配置权限（读写/运行/安装/git 提交）
-- 支持一条消息同时给多个 Agent 派活
-- 每个 Agent 有独立运行队列
-- 工作区任务分析：完成量、数字员工协作情况与耗时趋势
-- Agent 回复支持 Markdown 渲染
-- 会话持久化，Agent 在多次运行间保留对话上下文
+- 五个内置数字员工模板：产品经理（pm）、架构师（architect）、开发（developer）、测试（tester）、监督者（supervisor）
+- 通过 UI 创建和配置自定义数字员工及其权限
+- 空白工作区和多数字员工协作模板
+- 多会话后台执行，并在侧栏显示正在工作的数字员工
+- 明确指派、员工交接和每位数字员工的独立任务队列
+- 协作洞察：任务结果、协作规模、执行时间轴与耗时趋势
+- 数字员工回复支持 Markdown，运行过程提供可读活动与失败线索
+- 会话持久化，数字员工在多次运行间保留上下文

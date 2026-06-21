@@ -109,10 +109,10 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/agent-context-builder.ts`** — Builds private system prompt injected into each agent run
 - **`src/core/agent-history-builder.ts`** — Builds scoped conversation history (messages since agent's last completed run)
 - **`src/core/session-store.ts`** — Per-agent session persistence for `--resume`
-- **`src/core/agent-profiles.ts`** — Four built-in agent profiles (pm, architect, developer, tester)
+- **`src/core/agent-profiles.ts`** — Five built-in agent profiles (pm, architect, developer, tester, supervisor)
 - **`src/core/agent-session.ts`** — Manages one agent's lifecycle (idle/running/error/stopped)
 - **`src/core/agent-registry.ts`** — Owns AgentSession instances, exposes agent state
-- **`src/core/message-store.ts`** — Message persistence (in-memory + optional file-based storage)
+- **`src/core/message-store.ts`** — Persisted message shards, manifest recovery, and cursor pagination
 - **`src/core/event-bus.ts`** — Typed pub/sub event bus for runtime events
 - **`src/core/terminal-transcript-store.ts`** — Per-agent terminal output logging with ANSI stripping
 - **`src/core/workspace-store.ts`** — Workspace resolution and metadata (path-based isolation)
@@ -122,6 +122,8 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/agent-prompt.ts`** — Prompt templates for agent role instructions
 - **`src/core/migrate-channel-layer.ts`** — One-time migration for flattening legacy directory structure
 - **`src/core/workspace-config-store.ts`** — Workspace-level system prompt and rules persistence
+- **`src/core/work-analysis.ts`** — Workspace task, collaboration, outcome, and duration aggregation
+- **`src/server/workspace-work-analysis.ts`** — Bounded history loading for collaboration insights
 
 ### UI Module
 
@@ -137,6 +139,7 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 | architect | No | Yes | No |
 | developer | Yes | Yes | Yes |
 | tester | No | Yes | No |
+| supervisor | No | No | No |
 
 The developer agent creates feature branches, commits, pushes, and opens draft PRs. Other agents cannot git commit. Profiles are hardcoded in `agent-profiles.ts`.
 
@@ -146,11 +149,16 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 |---|---|---|
 | GET | `/api/state` | Full state snapshot |
 | POST | `/api/messages` | Send user message (`{ content: string }`) |
+| GET | `/api/messages?before=<id>&limit=<n>` | Load older messages for the active conversation |
+| POST | `/api/conversation/interrupt` | Stop follow-up routing for the active collaboration chain |
+| POST | `/api/runs/:id/cancel` | Cancel a queued or running employee task |
 | GET | `/api/agents` | List agent configurations |
 | PUT | `/api/agents` | Update agent configurations |
 | POST | `/api/agents/reset` | Reset agents to default configuration |
 | GET | `/api/workspace-config` | Get workspace-level prompt and rules |
 | PUT | `/api/workspace-config` | Update workspace-level prompt and rules |
+| GET | `/api/workspace-presets` | List built-in workspace setup templates |
+| GET | `/api/work-analysis?days=<n>` | Build workspace collaboration insights |
 | GET | `/api/workspaces` | List workspaces |
 | POST | `/api/workspaces` | Create workspace |
 | PUT | `/api/workspaces/:id` | Update workspace |
@@ -176,10 +184,13 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 
 ```
 ~/.orbit/
-├── conversations/{workspaceId}/{conversationId}/messages.json
 ├── conversations/{workspaceId}/conversations.json
-├── transcripts/{workspaceId}/{conversationId}/{agentId}.log
-├── sessions/{workspaceId}/{runtime}/{conversationId}/{agentId}.json
+├── conversations/{workspaceId}/{conversationId}/messages/
+│   ├── manifest.json
+│   └── YYYY-MM-DD.ndjson
+├── transcripts/{workspaceId}/{conversationId}/{agentId}/
+│   └── YYYY-MM-DD-<sequence>.log
+├── sessions/{workspaceId}/{runtime}/{channelId}/{conversationId}/{agentId}.json
 └── workspaces/{workspaceId}/
     ├── workspace.json
     ├── agents.json

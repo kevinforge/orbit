@@ -22,7 +22,6 @@ git checkout -b feature/short-description
 ```powershell
 npm run test
 npm run build
-npm run pack:check
 ```
 
 6. Commit with a concise imperative message.
@@ -46,6 +45,7 @@ Keep repository documentation small:
 - `README.md` for product overview, setup, and daily commands.
 - `README.zh-CN.md` for the Simplified Chinese README.
 - `docs/ARCHITECTURE.md` for current architecture.
+- `docs/QUICKSTART.md` and `docs/QUICKSTART.zh-CN.md` for first-run guidance.
 - `CONTRIBUTING.md` for workflow and standards.
 - `AGENTS.md` for the required agent workflow.
 

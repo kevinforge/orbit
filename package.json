@@ -1,8 +1,8 @@
 {
   "name": "orbit",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "private": false,
-  "description": "Local-first chat control surface for coordinating Claude Code agents.",
+  "description": "Local-first workspace for coordinating CLI-backed digital employees.",
   "type": "module",
   "bin": {
     "orbit": "./bin/orbit.js"

@@ -4,6 +4,40 @@
 
 ---
 
+## v0.9.5 — 2026-06-21
+
+### New things you can do
+
+- **Understand how work gets done.** The new Collaboration Insights page shows
+  completed and in-progress tasks, participating digital employees, completion
+  trends, end-to-end duration, and a per-run execution timeline that makes
+  sequential and parallel work visible.
+- **See work continue across conversations.** Conversations keep running in the
+  background, and the sidebar identifies which digital employees are active in
+  each conversation.
+- **Follow handoffs clearly.** Agent cards now show where an assignment came
+  from, making multi-employee delegation chains easier to inspect.
+
+### Improvements & fixes
+
+- **More reliable coordination.** Supervisor-only work is included in task
+  analysis, supervisor follow-ups retain the triggering message in context, and
+  dependency-aware workspace rules avoid assigning sequential work in parallel.
+- **Better task outcomes.** Cancelling an intermediate queued run no longer
+  marks an otherwise completed task as cancelled; genuine final cancellation,
+  failure, and recovery remain visible on the timeline.
+- **Queues keep moving.** Cancelling a running task immediately starts the next
+  queued task for that employee.
+- **Actionable runtime failures.** CLI crashes preserve useful failure clues
+  instead of falling back to a generic transcript message.
+- **Safer local history.** Message-shard recovery and retention were hardened
+  against malformed or missing files, while user-facing lifecycle text no
+  longer leaks internal codewords.
+- **Clearer setup.** Runtime installation guidance and release-package install
+  instructions now match the commands shown in Orbit.
+
+---
+
 ## v0.9.4 — 2026-06-14
 
 ### Fixes & reliability
