@@ -46,7 +46,10 @@ test("multi-agent-collaboration preset has readable Chinese copy", () => {
   assert.ok(mac.systemPrompt.includes("架构师"), "systemPrompt should mention 架构师");
   assert.ok(mac.systemPrompt.includes("开发人员"), "systemPrompt should mention 开发人员");
   assert.ok(mac.systemPrompt.includes("测试人员"), "systemPrompt should mention 测试人员");
-  assert.deepEqual(mac.rules, ["用户的语言是中文，请使用中文回答用户的问题。"]);
+  assert.deepEqual(mac.rules, [
+    "用户的语言是中文，请使用中文回答用户的问题。",
+    "当多个数字员工的工作存在前后依赖时，必须按顺序指派：先仅 @前置数字员工，等待其完成并返回结果后，再在下一条消息中 @后续数字员工；不要在同一条消息中同时 @存在依赖关系的数字员工。无依赖、可并行的任务可以同时指派。",
+  ]);
 });
 
 test("preset ids are unique", () => {

@@ -28,13 +28,13 @@ export function WorkAnalysisPanel(props: {
     setError(null);
     fetch(`/api/work-analysis?days=${days}`, { signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error("工作分析暂时无法加载");
+        if (!response.ok) throw new Error("协作洞察暂时无法加载");
         return response.json() as Promise<WorkAnalysis>;
       })
       .then(setAnalysis)
       .catch((reason: unknown) => {
         if ((reason as { name?: string }).name !== "AbortError") {
-          setError(reason instanceof Error ? reason.message : "工作分析暂时无法加载");
+          setError(reason instanceof Error ? reason.message : "协作洞察暂时无法加载");
         }
       })
       .finally(() => {
@@ -49,11 +49,11 @@ export function WorkAnalysisPanel(props: {
   );
 
   return (
-    <section className="analysisPage" aria-label="数字员工工作分析">
+    <section className="analysisPage" aria-label="数字员工协作洞察">
       <header className="analysisHeader">
         <div>
           <p className="eyebrow">{props.workspaceName || "当前工作区"}</p>
-          <h1>工作分析</h1>
+          <h1>协作洞察</h1>
           <p>回顾数字员工完成的任务、协作规模与实际耗时。</p>
         </div>
         <div className="analysisHeaderActions">
@@ -81,7 +81,7 @@ export function WorkAnalysisPanel(props: {
         {!loading && error && !analysis ? <AnalysisError message={error} /> : null}
         {analysis ? (
           <>
-            <section className="analysisSummary" aria-label="工作分析总览">
+            <section className="analysisSummary" aria-label="协作洞察总览">
               <SummaryCard label="已完成任务" value={String(analysis.summary.completedTasks)} detail={analysis.summary.runningTasks ? `${analysis.summary.runningTasks} 项进行中` : `${analysis.summary.totalTasks} 项已结束任务`} tone="accent" />
               <SummaryCard label="参与数字员工" value={String(analysis.summary.participatingAgents)} detail="统计范围内去重" />
               <SummaryCard label="多员工协作率" value={formatPercent(analysis.summary.multiAgentRate)} detail="至少 2 位数字员工参与" />
@@ -203,7 +203,6 @@ function TaskRow(props: { task: WorkTask; expanded: boolean; onToggle: () => voi
           <div className="taskTimeline">
             <div className="taskTimelineHeading">
               <strong>执行时间轴</strong>
-              {task.hasParallelRuns ? <span>并行执行</span> : null}
             </div>
             {task.runs.map((run) => {
               const left = task.durationMs ? Math.min(100, run.offsetMs / task.durationMs * 100) : 0;
@@ -237,7 +236,7 @@ function AnalysisLoading() {
 }
 
 function AnalysisError({ message }: { message: string }) {
-  return <div className="analysisState error"><strong>{message}</strong><span>稍后重新打开工作分析即可重试。</span></div>;
+  return <div className="analysisState error"><strong>{message}</strong><span>稍后重新打开协作洞察即可重试。</span></div>;
 }
 
 function statusLabel(status: WorkTaskStatus): string {

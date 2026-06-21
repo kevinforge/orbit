@@ -2209,6 +2209,11 @@ button:active:not(:disabled) {
   padding: 8px 10px;
 }
 
+.compactAgents .agentButton.statusHidden {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "text";
+}
+
 /* In compact mode, selected agent should not look like it's running */
 .compactAgents .agentButton.selected {
   border-color: transparent;
@@ -2937,8 +2942,8 @@ button:active:not(:disabled) {
 }
 
 .taskStatusLabel.running {
-  background: var(--accent-subtle);
-  color: var(--accent);
+  background: var(--warning-subtle);
+  color: var(--warning);
 }
 
 .taskChevron {
@@ -2977,15 +2982,6 @@ button:active:not(:disabled) {
 
 .taskTimelineHeading strong {
   font-size: 11px;
-}
-
-.taskTimelineHeading span {
-  padding: 3px 7px;
-  border-radius: var(--radius-full);
-  background: var(--accent-subtle);
-  color: var(--accent);
-  font-size: 9px;
-  font-weight: 800;
 }
 
 .taskTimelineRun {
