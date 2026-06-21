@@ -7,11 +7,12 @@ Orbit is a local-first collaboration workspace for coordinating multiple CLI-bac
 Install the release package provided by your administrator:
 
 ```powershell
-npm install -g .\orbit-<version>.tgz
+npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
-Install Orbit from the release tarball or private registry package provided by
-your administrator. Do not run `npm install -g orbit` against the public npm
+Download the package matching your operating system from the private GitHub
+Release, or use a private registry package provided by your administrator. Do
+not run `npm install -g orbit` against the public npm
 registry: that package name is owned by an unrelated project and can fail at
 startup with `ERR_PACKAGE_PATH_NOT_EXPORTED` for `uuid/v1`.
 
