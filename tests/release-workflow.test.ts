@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const root = path.resolve(import.meta.dirname, "..");
 const workflow = fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
+const standaloneBuilder = fs.readFileSync(path.join(root, "scripts/build-standalone.mjs"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
 
 test("release workflow only starts from semantic version tags", () => {
@@ -53,4 +54,9 @@ test("release tag verifier accepts the package version and rejects mismatches", 
   const invalid = spawnSync(process.execPath, [verifier, "v999.0.0"], { encoding: "utf8" });
   assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /does not match package\.json version/);
+});
+
+test("standalone builds remove generated source maps before packaging", () => {
+  assert.match(standaloneBuilder, /filename\.endsWith\("\.map"\)/);
+  assert.match(standaloneBuilder, /fs\.rmSync\(path\.join\(outDir, filename\)\)/);
 });

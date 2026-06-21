@@ -18,7 +18,7 @@
   "scripts": {
     "postinstall": "node install.cjs",
     "dev": "tsx src/server/index.ts",
-    "build": "tsc --noEmit && vite build && bun build src/standalone-entry.ts --compile --bytecode --minify --sourcemap=none --outfile=dist/bin/orbit",
+    "build": "tsc --noEmit && vite build && node scripts/build-standalone.mjs",
     "build:all": "tsc --noEmit && vite build && node scripts/build-standalone.mjs --all",
     "test": "node scripts/run-tests.mjs",
     "test:glob": "npm run test",

@@ -18,16 +18,16 @@ test("npm package publishes only the CLI launcher and built artifacts", () => {
   assert.deepEqual(manifest.files, ["bin/", "dist/", "install.cjs"]);
 });
 
-test("package has build script using Bun compile", () => {
+test("package build delegates to the protected standalone builder", () => {
   const manifest = readPackageJson();
+  const standaloneBuilder = fs.readFileSync("scripts/build-standalone.mjs", "utf8");
 
   assert.equal(manifest.engines?.node, ">=20");
-  assert.ok(manifest.scripts?.build, "build script exists");
-  assert.match(manifest.scripts?.build ?? "", /bun build/);
-  assert.match(manifest.scripts?.build ?? "", /--compile/);
-  assert.match(manifest.scripts?.build ?? "", /--bytecode/);
-  assert.match(manifest.scripts?.build ?? "", /--minify/);
-  assert.match(manifest.scripts?.build ?? "", /--sourcemap=none/);
+  assert.match(manifest.scripts?.build ?? "", /node scripts\/build-standalone\.mjs/);
+  assert.match(standaloneBuilder, /"--compile"/);
+  assert.match(standaloneBuilder, /"--bytecode"/);
+  assert.match(standaloneBuilder, /"--minify"/);
+  assert.match(standaloneBuilder, /"--sourcemap=none"/);
 });
 
 test("default test script uses complete cross-platform discovery", () => {

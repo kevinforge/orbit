@@ -92,6 +92,14 @@ function buildStandalone(platformKey) {
     throw new Error(`Bun build failed for ${platformKey}`);
   }
 
+  // Bun compile can leave an entry-point source map next to the executable
+  // even when --sourcemap=none is set. Release packages must never include it.
+  for (const filename of fs.readdirSync(outDir)) {
+    if (filename.endsWith(".map")) {
+      fs.rmSync(path.join(outDir, filename));
+    }
+  }
+
   console.log(`✅ Built: ${outfile}`);
 
   const stats = fs.statSync(outfile);
