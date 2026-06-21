@@ -155,8 +155,18 @@ function findTaskRootId(
 function taskStatus(runs: ChatMessage[]): WorkTaskStatus {
   if (runs.some((run) => run.runStatus === "running" || run.runStatus === "queued" || !run.completedAt)) return "running";
   if (runs.some((run) => run.runStatus === "failed")) return "failed";
-  if (runs.some((run) => run.runStatus === "cancelled")) return "cancelled";
-  return "completed";
+
+  // Cancelling a queued run is branch-level cleanup and must not override work
+  // that subsequently completed. A cancellation that actually started remains
+  // an effective terminal outcome; the latest such outcome decides whether the
+  // collaboration ended cancelled or recovered with a later completion.
+  const terminalRuns = runs.filter((run) => run.completedAt);
+  const effectiveRuns = terminalRuns.filter((run) => !(run.runStatus === "cancelled" && !run.startedAt));
+  const outcomeRuns = effectiveRuns.length > 0 ? effectiveRuns : terminalRuns;
+  const latestOutcome = [...outcomeRuns].sort((a, b) =>
+    (a.completedAt ?? a.createdAt).localeCompare(b.completedAt ?? b.createdAt)
+  ).at(-1);
+  return latestOutcome?.runStatus === "cancelled" ? "cancelled" : "completed";
 }
 
 function leafRuns(runs: ChatMessage[], messagesById: ReadonlyMap<string, ChatMessage>): ChatMessage[] {

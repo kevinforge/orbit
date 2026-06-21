@@ -115,6 +115,59 @@ test("buildWorkAnalysis reports failed and cancelled tasks without counting them
   });
 });
 
+test("buildWorkAnalysis ignores a cancelled queued branch when later work completes", () => {
+  const messages: ChatMessage[] = [
+    user("root", "完成协作任务", "2026-06-19T10:00:00.000Z"),
+    run({ id: "queued-cancel", parentMessageId: "root", agentId: "supervisor", status: "cancelled", completedAt: "2026-06-19T10:00:20.000Z" }),
+    run({ id: "completed", parentMessageId: "root", agentId: "developer", status: "completed", startedAt: "2026-06-19T10:00:30.000Z", completedAt: "2026-06-19T10:01:00.000Z" }),
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map(),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.tasks[0].status, "completed");
+});
+
+test("buildWorkAnalysis marks a task cancelled when its final started branch is cancelled", () => {
+  const messages: ChatMessage[] = [
+    user("root", "停止协作任务", "2026-06-19T10:00:00.000Z"),
+    run({ id: "completed", parentMessageId: "root", agentId: "developer", status: "completed", startedAt: "2026-06-19T10:00:05.000Z", completedAt: "2026-06-19T10:00:20.000Z" }),
+    run({ id: "cancelled", parentMessageId: "root", agentId: "tester", status: "cancelled", startedAt: "2026-06-19T10:00:25.000Z", completedAt: "2026-06-19T10:00:40.000Z" }),
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map(),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.tasks[0].status, "cancelled");
+});
+
+test("buildWorkAnalysis marks a task cancelled when all queued work is cancelled before starting", () => {
+  const messages: ChatMessage[] = [
+    user("root", "取消尚未开始的任务", "2026-06-19T10:00:00.000Z"),
+    run({ id: "queued-cancel", parentMessageId: "root", agentId: "developer", status: "cancelled", completedAt: "2026-06-19T10:00:10.000Z" }),
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map(),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.tasks[0].status, "cancelled");
+});
+
 test("buildWorkAnalysis includes a supervisor-only task", () => {
   const messages: ChatMessage[] = [
     user("root", "整理项目进展", "2026-06-19T10:00:00.000Z"),
