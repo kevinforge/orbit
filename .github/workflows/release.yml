@@ -59,19 +59,27 @@ jobs:
   build:
     name: Package ${{ matrix.asset }}
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: windows
             asset: windows-x64
+            runner: windows-latest
+            binary: orbit.exe
           - platform: linux
             asset: linux-x64
+            runner: ubuntu-latest
+            binary: orbit
           - platform: macos
             asset: macos-x64
+            runner: macos-15-intel
+            binary: orbit
           - platform: macosArm
             asset: macos-arm64
+            runner: macos-15
+            binary: orbit
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -93,19 +101,36 @@ jobs:
       - name: Build UI and standalone binary
         shell: bash
         run: |
+          rm -rf dist
           npx tsc --noEmit
           npx vite build
           node scripts/build-standalone.mjs --platform=${{ matrix.platform }}
+
+      - name: Smoke test standalone binary
+        shell: bash
+        run: '"./dist/bin/${{ matrix.binary }}" --machine-id'
 
       - name: Create npm installation package
         shell: bash
         env:
           ASSET: ${{ matrix.asset }}
+          BINARY: ${{ matrix.binary }}
         run: |
           version="$(node -p "require('./package.json').version")"
           mkdir -p release
           packed="$(npm pack --pack-destination release --silent)"
-          mv "release/${packed}" "release/orbit-${version}-${ASSET}.tgz"
+          package_path="release/orbit-${version}-${ASSET}.tgz"
+          mv "release/${packed}" "${package_path}"
+          while IFS= read -r entry; do
+            case "${entry}" in
+              package/package.json|package/README.md|package/README.zh-CN.md|package/install.cjs|package/bin/orbit.js|package/dist/bin/"${BINARY}"|package/dist/ui/*)
+                ;;
+              *)
+                echo "Unexpected file in release package: ${entry}" >&2
+                exit 1
+                ;;
+            esac
+          done < <(tar -tzf "${package_path}")
 
       - name: Upload packaged asset
         uses: actions/upload-artifact@v4

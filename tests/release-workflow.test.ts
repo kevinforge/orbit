@@ -22,6 +22,17 @@ test("release workflow verifies, creates an npm package for every supported targ
   assert.match(workflow, /platform: linux/);
   assert.match(workflow, /platform: macos\s/);
   assert.match(workflow, /platform: macosArm/);
+  assert.match(workflow, /runner: windows-latest/);
+  assert.match(workflow, /runner: ubuntu-latest/);
+  assert.match(workflow, /runner: macos-15-intel/);
+  assert.match(workflow, /runner: macos-15/);
+  assert.match(workflow, /runs-on: \$\{\{ matrix\.runner \}\}/);
+  assert.match(workflow, /Smoke test standalone binary/);
+  assert.match(workflow, /\.\/dist\/bin\/\$\{\{ matrix\.binary \}\}.*--machine-id/);
+  assert.match(workflow, /rm -rf dist/);
+  assert.match(workflow, /Unexpected file in release package/);
+  assert.match(workflow, /package\/dist\/bin\/"\$\{BINARY\}"/);
+  assert.match(workflow, /package\/dist\/ui\/\*/);
   assert.match(workflow, /needs: verify/);
   assert.match(workflow, /needs: build/);
   assert.match(workflow, /if: github\.event_name == 'push'/);

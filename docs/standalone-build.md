@@ -30,8 +30,8 @@ npm install -g .\orbit-<version>.tgz
 
 1. 校验 tag 与 `package.json` 版本一致，且 tag 指向 `main` 已包含的提交。
 2. 运行完整测试。
-3. 构建 Windows x64、Linux x64、macOS x64 和 macOS ARM64 可执行文件。
-4. 为每个平台生成可通过 npm 安装的 `.tgz` 附件，并生成 SHA-256 校验文件。
+3. 在对应操作系统的原生 GitHub runner 上构建 Windows x64、Linux x64、macOS x64 和 macOS ARM64 可执行文件，并实际启动进行冒烟测试。
+4. 为每个平台生成可通过 npm 安装的 `.tgz` 附件，校验包内不包含源码、测试、source map 或其他构建残留，并生成 SHA-256 校验文件。
 5. 创建 GitHub Release 并上传所有附件；失败的测试或构建不会创建 Release。
 
 发布步骤：
