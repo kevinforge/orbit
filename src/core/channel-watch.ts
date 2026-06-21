@@ -7,7 +7,6 @@ import type { MessageStore } from "./message-store.ts";
 
 const MAX_TRIGGERS_PER_CONVERSATION = 5;
 const DEBOUNCE_MS = 2_000;
-const MAX_ROUTE_DEPTH = 10;
 
 type TriggerContext = {
   agentId: AgentId;
@@ -157,8 +156,10 @@ export class ChannelWatchService {
       if (ctx.agentId === agentId) continue; // Don't trigger the failed agent itself
       if (!ctx.triggers.onRunFailed) continue; // Only trigger if onRunFailed is configured
 
-      // Create a synthetic message for the trigger
-      const syntheticMessage: ChatMessage = {
+      const failedMessage = this.messages.list().find(
+        (message) => message.kind === "agent" && message.agentId === agentId && message.runId === runId,
+      );
+      const triggerMessage: ChatMessage = failedMessage ?? {
         id: `failure_${agentId}_${runId}_${Date.now()}`,
         kind: "system",
         content: `[Agent ${agentId} failed]\nRun ${runId} encountered an error: ${error ?? "Unknown error"}`,
@@ -168,14 +169,16 @@ export class ChannelWatchService {
 
       // Trigger supervisor with relaxIdleCheck=true so it can run even when other agents are busy
       // (the failed agent might still be in error state)
-      this.tryTrigger(ctx, syntheticMessage, { relaxIdleCheck: true });
+      this.tryTrigger(ctx, triggerMessage, { relaxIdleCheck: true });
     }
   }
 
   private tryTrigger(ctx: TriggerContext, sourceMessage: ChatMessage, options?: { relaxIdleCheck?: boolean }): void {
-    // Honour the same route-depth limit as MessageRouter
-    const nextDepth = (sourceMessage.routeDepth ?? 0) + 1;
-    if (nextDepth > MAX_ROUTE_DEPTH) return;
+    // Note: the completing message's route depth is deliberately NOT used to
+    // gate this trigger. A supervisor run resets to a low route depth on enqueue
+    // (see RunManager.enqueue) and is rate-limited by maxTriggers + debounce, so
+    // gating on the source depth would only block the wrap-up check exactly when
+    // a deepest-level delegation finishes and most needs concluding.
 
     if (!options?.relaxIdleCheck) {
       if (!this.isChannelTrulyIdle(ctx.agentId)) return;
@@ -204,16 +207,7 @@ export class ChannelWatchService {
     const isLast = ctx.triggerCount >= ctx.maxTriggers;
     const prompt = buildSupervisorPrompt(ctx.agentId, ctx.triggerCount, isLast, ctx.maxTriggers);
 
-    const syntheticSource: ChatMessage = {
-      id: `trigger_${ctx.agentId}_${Date.now()}_${ctx.triggerCount}`,
-      kind: "system",
-      content: prompt,
-      createdAt: new Date().toISOString(),
-      // Preserve attachments from the original message so supervisor can see images
-      attachments: sourceMessage.attachments?.length ? sourceMessage.attachments : undefined,
-    };
-
-    this.runManager.enqueue(ctx.agentId, prompt, syntheticSource);
+    this.runManager.enqueue(ctx.agentId, prompt, sourceMessage, "supervisor");
   }
 }
 

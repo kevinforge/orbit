@@ -4,6 +4,7 @@ import { permissionProfile } from "../core/agent-profiles.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
 import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
@@ -16,8 +17,24 @@ const initialState: AppState = {
   runtimeAvailability: [],
 };
 
+type ActiveView = "conversation" | "analysis";
+const ACTIVE_VIEW_STORAGE_KEY = "orbit.activeView";
+
+export function resolveActiveView(storedView: string | null): ActiveView {
+  return storedView === "analysis" ? "analysis" : "conversation";
+}
+
+function loadActiveView(): ActiveView {
+  try {
+    return resolveActiveView(window.localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY));
+  } catch {
+    return "conversation";
+  }
+}
+
 export function App() {
   const [state, setState] = useState<AppState>(initialState);
+  const [activeView, setActiveView] = useState<ActiveView>(loadActiveView);
   const [content, setContent] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
@@ -64,6 +81,14 @@ export function App() {
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const isNearBottomRef = useRef(true);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, activeView);
+    } catch {
+      // The view still works when storage is unavailable; only reload persistence is lost.
+    }
+  }, [activeView]);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
   const hasAnyQueuedRun = state.messages.some((m) => m.runStatus === "queued");
@@ -309,6 +334,16 @@ export function App() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [scrollKey]);
+
+  useLayoutEffect(() => {
+    if (activeView !== "conversation") return;
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
+    setShowNewMessageHint(false);
+    scrollMessagesToBottom(messagesRef.current);
+    const frame = window.requestAnimationFrame(() => scrollMessagesToBottom(messagesRef.current));
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeView, state.conversation.id]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -605,6 +640,10 @@ export function App() {
     }
 
   async function switchConversation(conversationId: string, targetWorkspaceId?: string) {
+    // Always return to the conversation view when a conversation is clicked,
+    // even if it is already the active one (e.g. returning from 协作洞察).
+    // The guard below only skips the redundant /switch request.
+    setActiveView("conversation");
     if (conversationId === state.conversation.id) return;
     const wsParam = targetWorkspaceId && targetWorkspaceId !== state.workspace.id ? `?workspaceId=${targetWorkspaceId}` : "";
     const response = await fetch(`/api/conversations/${conversationId}/switch${wsParam}`, { method: "POST" });
@@ -621,6 +660,7 @@ export function App() {
       body: JSON.stringify({}),
     });
     if (!response.ok) return;
+    setActiveView("conversation");
     // Expand the workspace so user sees the new conversation
     setExpandedWorkspaceIds((ids) => {
       const next = new Set(ids);
@@ -913,6 +953,7 @@ export function App() {
                   key={agentId}
                   agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", role: "general", status: "idle" }}
                   selected={selectedAgent === agentId}
+                  showLiveStatus={activeView === "conversation"}
                   onClick={() => chooseAgent(agentId)}
                   onConfig={() => { setFocusedAgentId(agentId); setShowAgentManager(true); }}
                 />
@@ -923,6 +964,16 @@ export function App() {
 
         {/* 底部设置区 */}
         <div className="sidebarBottom">
+          <button
+            type="button"
+            className={`sidebarUtilityBtn ${activeView === "analysis" ? "active" : ""}`}
+            onClick={() => setActiveView("analysis")}
+            disabled={!hasWorkspace}
+            title="协作洞察"
+          >
+            <NavIcon kind="analytics" />
+            <span>协作洞察</span>
+          </button>
           <button
             type="button"
             className="sidebarSettingsBtn"
@@ -955,6 +1006,13 @@ export function App() {
         }}
       />
 
+      {activeView === "analysis" ? (
+        <WorkAnalysisPanel
+          workspaceId={state.workspace.id}
+          workspaceName={state.workspace.name}
+          onOpenConversation={(conversationId) => { void switchConversation(conversationId); }}
+        />
+      ) : (
       <section className="conversation" aria-label="Chat conversation">
         <header className={`conversationHeader ${headerCollapsed ? "collapsed" : ""}`}>
           {headerCollapsed ? (
@@ -1142,6 +1200,7 @@ export function App() {
           </div>
         </form>
       </section>
+      )}
       {showSettings ? (
         <SystemSettingsPanel
           onClose={() => setShowSettings(false)}
@@ -1240,7 +1299,7 @@ function MentionMenu(props: {
   );
 }
 
-function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "settings" | "collapse" | "expand" | "edit" }) {
+function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "settings" | "collapse" | "expand" | "edit" | "analytics" }) {
   if (kind === "workspace") {
     return (
       <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
@@ -1260,6 +1319,14 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
       <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
         <path d="M8 3.2a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Z" />
         <path d="M3.8 13a4.2 4.2 0 0 1 8.4 0" />
+      </svg>
+    );
+  }
+  if (kind === "analytics") {
+    return (
+      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M2.5 13.5h11" />
+        <path d="M4 11V8.5M8 11V4.5M12 11V6.5" />
       </svg>
     );
   }
@@ -1293,18 +1360,19 @@ function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "se
   );
 }
 
-function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () => void; onConfig?: () => void }) {
-  const isRunning = props.agent.status === "running" || props.agent.status === "starting";
+function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStatus?: boolean; onClick: () => void; onConfig?: () => void }) {
+  const showStatus = props.showLiveStatus !== false || props.agent.runtimeAvailable === false;
+  const isRunning = props.showLiveStatus !== false && (props.agent.status === "running" || props.agent.status === "starting");
   const isRuntimeMissing = props.agent.runtimeAvailable === false;
   const meta = runtimeMeta(props.agent.runtime);
   return (
     <button
-      className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""}`}
+      className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""} ${showStatus ? "" : "statusHidden"}`}
       onClick={props.onClick}
       type="button"
       title={isRuntimeMissing ? `${meta.label} 未安装，该数字员工无法运行` : undefined}
     >
-      <span className={`statusDot ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`} aria-hidden="true" />
+      {showStatus ? <span className={`statusDot ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`} aria-hidden="true" /> : null}
       <span className="agentText">
         <span className="agentTextRow">
           <strong>
@@ -1337,9 +1405,11 @@ function AgentButton(props: { agent: AgentState; selected: boolean; onClick: () 
           ) : null}
         </small>
       </span>
-      <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
-        {isRuntimeMissing ? "missing" : props.agent.status}
-      </span>
+      {showStatus ? (
+        <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
+          {isRuntimeMissing ? "missing" : props.agent.status}
+        </span>
+      ) : null}
     </button>
   );
 }

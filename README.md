@@ -42,5 +42,6 @@ Orbit coordinates CLI-backed agents. The agents require:
 - Per-agent permissions (read/write/run/install/git commit)
 - Multiple agent assignments in one message
 - Per-agent run queue
+- Workspace work analysis for completed tasks, employee collaboration, and duration trends
 - Markdown rendering for agent replies
 - Session persistence across runs

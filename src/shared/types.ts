@@ -154,6 +154,68 @@ export type RunningSummary = {
   runningAgentIds: AgentId[];
 };
 
+export type WorkTaskStatus = "running" | "completed" | "failed" | "cancelled";
+export type WorkTaskRunStatus = "queued" | WorkTaskStatus;
+
+export type WorkTaskAgent = {
+  agentId: AgentId;
+  label: string;
+  status: WorkTaskRunStatus;
+  durationMs: number;
+  runCount: number;
+};
+
+export type WorkTaskRun = {
+  id: string;
+  agentId: AgentId;
+  label: string;
+  status: WorkTaskRunStatus;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs: number;
+  offsetMs: number;
+  parentRunId?: string;
+};
+
+export type WorkTask = {
+  id: string;
+  conversationId: string;
+  conversationName: string;
+  title: string;
+  status: WorkTaskStatus;
+  createdAt: string;
+  completedAt?: string;
+  updatedAt: string;
+  durationMs: number;
+  agents: WorkTaskAgent[];
+  runs: WorkTaskRun[];
+  hasParallelRuns: boolean;
+};
+
+export type WorkAnalysisTrendPoint = {
+  date: string;
+  completedTasks: number;
+  medianDurationMs: number;
+};
+
+export type WorkAnalysis = {
+  workspaceId: string;
+  days: number;
+  generatedAt: string;
+  summary: {
+    totalTasks: number;
+    runningTasks: number;
+    completedTasks: number;
+    failedTasks: number;
+    cancelledTasks: number;
+    participatingAgents: number;
+    multiAgentRate: number;
+    medianDurationMs: number;
+  };
+  trend: WorkAnalysisTrendPoint[];
+  tasks: WorkTask[];
+};
+
 export type MessageHistoryState = {
   hasOlderMessages: boolean;
   olderCursor: string | null;

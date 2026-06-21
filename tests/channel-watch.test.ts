@@ -236,6 +236,51 @@ test("run.completed with @agent: does NOT trigger supervisor", async () => {
   service.dispose();
 });
 
+test("run.completed at max route depth still triggers supervisor wrap-up", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", dev: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // The deepest delegation (routeDepth = MAX_ROUTE_DEPTH) finishes. The
+  // supervisor must still run its wrap-up check — its own run resets to a low
+  // route depth (rate-limited by maxTriggers), so the completing message's
+  // depth must not gate the trigger.
+  const agentReply = messages.add({
+    kind: "agent",
+    agentId: "dev",
+    content: "Deepest delegation done.",
+    status: "done",
+    runId: "run_deep",
+    runStatus: "completed",
+    routeDepth: 10,
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "dev",
+    runId: "run_deep",
+    resultMessageId: agentReply.id,
+  });
+
+  assert.equal(enqueueCalls.length, 1);
+  assert.equal(enqueueCalls[0].agentId, "supervisor");
+
+  service.dispose();
+});
+
 test("user message without @agent: triggers supervisor", async () => {
   const eventBus = new EventBus();
   const messages = new MessageStore();
@@ -253,14 +298,16 @@ test("user message without @agent: triggers supervisor", async () => {
     profiles,
   );
 
+  const userMessage = createUserMessage("Build a login feature.");
   eventBus.publish({
     type: "message.created",
     conversationId: "conv-1",
-    message: createUserMessage("Build a login feature."),
+    message: userMessage,
   });
 
   assert.equal(enqueueCalls.length, 1);
   assert.equal(enqueueCalls[0].agentId, "supervisor");
+  assert.equal(enqueueCalls[0].sourceMessage.id, userMessage.id);
 
   service.dispose();
 });
@@ -1244,6 +1291,18 @@ test("Issue #82: run.failed triggers supervisor with onRunFailed configured", as
     profiles,
   );
 
+  const source = messages.add({ kind: "user", content: "Fix the API", status: "sent" });
+  const failedRun = messages.add({
+    kind: "agent",
+    agentId: "developer",
+    content: "developer failed",
+    status: "error",
+    runId: "run_1",
+    runStatus: "failed",
+    parentMessageId: source.id,
+    completedAt: new Date().toISOString(),
+  });
+
   // Developer run fails
   eventBus.publish({
     type: "run.failed",
@@ -1258,8 +1317,8 @@ test("Issue #82: run.failed triggers supervisor with onRunFailed configured", as
   assert.equal(enqueueCalls[0].agentId, "supervisor");
   // The prompt should be a supervisor check prompt
   assert.ok(enqueueCalls[0].prompt.includes("Supervisor Check"));
-  // The source message passed to enqueue is a synthetic message with the prompt as content
-  assert.ok(enqueueCalls[0].sourceMessage.content.includes("Supervisor Check"));
+  // Preserve the persisted failed run as the parent so supervisor remains in the task chain.
+  assert.equal(enqueueCalls[0].sourceMessage.id, failedRun.id);
 
   service.dispose();
 });

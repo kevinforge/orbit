@@ -84,7 +84,13 @@ export class RunManager {
 
   enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage, origin?: RunOrigin): ManagedRun {
     const runId = createRunId(agentId);
-    const routeDepth = (sourceMessage.routeDepth ?? 0) + 1;
+    const resolvedOrigin: RunOrigin = origin ?? (sourceMessage.kind === "system" ? "supervisor" : sourceMessage.kind === "agent" ? "agent" : "user");
+    // Supervisor runs are triggered by ChannelWatchService (already rate-limited
+    // via maxTriggers) and represent a fresh coordination check, so they start
+    // from a low route-depth base instead of inheriting the triggering message's
+    // depth. Otherwise a supervisor reply that assigns more work (@agent:) would
+    // keep counting from an already-deep chain and could trip maxRouteDepth early.
+    const routeDepth = resolvedOrigin === "supervisor" ? 1 : (sourceMessage.routeDepth ?? 0) + 1;
     const isBusy = this.active.has(agentId);
     const now = new Date().toISOString();
     const activity = [
@@ -103,8 +109,6 @@ export class RunManager {
       activity,
     } satisfies NewChatMessage);
     this.options.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
-
-    const resolvedOrigin: RunOrigin = origin ?? (sourceMessage.kind === "system" ? "supervisor" : sourceMessage.kind === "agent" ? "agent" : "user");
 
     const run: ManagedRun = {
       id: runId,
@@ -259,7 +263,11 @@ export class RunManager {
     this.appendActivity(run, "运行已开始。");
 
     const imagePaths = run.sourceAttachments?.map((a) => a.path);
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, run.sourceMessage.id, imagePaths);
+    // Supervisor prompts describe coordination intent, not the triggering message itself.
+    // Keep that source message in conversation history so the supervisor can see the
+    // employee result or user request it is expected to coordinate.
+    const excludedSourceMessageId = run.origin === "supervisor" ? undefined : run.sourceMessage.id;
+    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths);
     let result: Promise<RunResult>;
     try {
       result = this.options.agents.get(run.agentId).send(run.id, runtimePrompt, imagePaths);
@@ -327,7 +335,7 @@ export class RunManager {
     this.appendActivity(run, `运行失败：${errorSummary}`);
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: `${this.resolveAgentLabel(run.agentId)} failed: ${errorSummary}`,
+      content: `${this.resolveAgentLabel(run.agentId)} 运行失败：${errorSummary}`,
       status: "error",
       runStatus: "failed",
       activity: run.activity,

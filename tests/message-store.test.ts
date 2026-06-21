@@ -280,6 +280,85 @@ test("different file paths keep messages isolated", () => {
   }
 });
 
+test("historySince reads only window-overlapping shards and skips older ones", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const legacy: ChatMessage[] = [
+    { id: "msg_000001", kind: "user", content: "jan", createdAt: "2026-01-01T10:00:00.000Z" },
+    { id: "msg_000002", kind: "user", content: "feb", createdAt: "2026-02-01T10:00:00.000Z" },
+    { id: "msg_000003", kind: "user", content: "jun-19", createdAt: "2026-06-19T10:00:00.000Z" },
+    { id: "msg_000004", kind: "user", content: "jun-20", createdAt: "2026-06-20T10:00:00.000Z" },
+  ];
+  const originalReadFileSync = fs.readFileSync;
+  const readShards: string[] = [];
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ messages: legacy, nextId: 5 }, null, 2));
+
+    // Migrate the legacy blob into per-day shards.
+    new MessageStore(filePath);
+
+    // historyRead opens the manifest only — no full-shard load/nextId validation.
+    const store = new MessageStore(filePath, { historyRead: true });
+
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      const targetPath = String(args[0]);
+      if (targetPath.endsWith(".ndjson")) {
+        readShards.push(path.basename(targetPath));
+      }
+      return originalReadFileSync(...args);
+    }) as typeof fs.readFileSync;
+
+    // Window starts 2026-06-15; historySince subtracts a 1-day buffer (cutoff
+    // 2026-06-14) so the jan/feb shards must never be opened.
+    const messages = store.historySince(Date.parse("2026-06-15T00:00:00.000Z"));
+
+    assert.deepEqual(messages.map((m) => m.content), ["jun-19", "jun-20"]);
+    assert.deepEqual(
+      readShards.sort(),
+      ["2026-06-19.ndjson", "2026-06-20.ndjson"],
+      `expected only window shards read, got ${readShards.join(", ")}`,
+    );
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("historySince returns an empty result without reading shards for an inactive conversation", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  const legacy: ChatMessage[] = [
+    { id: "msg_000001", kind: "user", content: "jan", createdAt: "2026-01-01T10:00:00.000Z" },
+    { id: "msg_000002", kind: "user", content: "feb", createdAt: "2026-02-01T10:00:00.000Z" },
+  ];
+  const originalReadFileSync = fs.readFileSync;
+  const readShards: string[] = [];
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ messages: legacy, nextId: 3 }, null, 2));
+
+    new MessageStore(filePath);
+    const store = new MessageStore(filePath, { historyRead: true });
+
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      const targetPath = String(args[0]);
+      if (targetPath.endsWith(".ndjson")) {
+        readShards.push(path.basename(targetPath));
+      }
+      return originalReadFileSync(...args);
+    }) as typeof fs.readFileSync;
+
+    const messages = store.historySince(Date.parse("2026-06-15T00:00:00.000Z"));
+
+    assert.deepEqual(messages.map((m) => m.content), []);
+    assert.deepEqual(readShards, [], "inactive conversation must read no message shards");
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("listBefore reads only needed shards, not all history", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
   const filePath = path.join(dir, "messages.json");
