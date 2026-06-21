@@ -17,7 +17,7 @@ test("release workflow only starts from semantic version tags", () => {
   assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
 });
 
-test("release workflow verifies, builds every supported target, then publishes", () => {
+test("release workflow verifies, creates an npm package for every supported target, then publishes", () => {
   assert.match(workflow, /platform: windows/);
   assert.match(workflow, /platform: linux/);
   assert.match(workflow, /platform: macos\s/);
@@ -28,8 +28,10 @@ test("release workflow verifies, builds every supported target, then publishes",
   assert.match(workflow, /contents: write/);
   assert.match(workflow, /gh release create/);
   assert.match(workflow, /SHA256SUMS\.txt/);
-  assert.match(workflow, /release\/\$\{package\}\/dist\/bin/);
-  assert.match(workflow, /release\/\$\{package\}\/dist\/ui/);
+  assert.match(workflow, /npm pack --pack-destination release --silent/);
+  assert.match(workflow, /release\/orbit-\$\{version\}-\$\{ASSET\}\.tgz/);
+  assert.doesNotMatch(workflow, /\.zip"/);
+  assert.doesNotMatch(workflow, /\.tar\.gz"/);
 });
 
 test("release tag verifier accepts the package version and rejects mismatches", () => {

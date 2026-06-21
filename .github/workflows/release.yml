@@ -57,7 +57,7 @@ jobs:
         run: npm run test
 
   build:
-    name: Build ${{ matrix.asset }}
+    name: Package ${{ matrix.asset }}
     needs: verify
     runs-on: ubuntu-latest
     strategy:
@@ -66,20 +66,12 @@ jobs:
         include:
           - platform: windows
             asset: windows-x64
-            binary: orbit.exe
-            archive: zip
           - platform: linux
             asset: linux-x64
-            binary: orbit
-            archive: tar.gz
           - platform: macos
             asset: macos-x64
-            binary: orbit
-            archive: tar.gz
           - platform: macosArm
             asset: macos-arm64
-            binary: orbit
-            archive: tar.gz
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,27 +97,15 @@ jobs:
           npx vite build
           node scripts/build-standalone.mjs --platform=${{ matrix.platform }}
 
-      - name: Package release asset
+      - name: Create npm installation package
         shell: bash
         env:
           ASSET: ${{ matrix.asset }}
-          BINARY: ${{ matrix.binary }}
-          ARCHIVE: ${{ matrix.archive }}
         run: |
           version="$(node -p "require('./package.json').version")"
-          package="orbit-${version}-${ASSET}"
-          mkdir -p "release/${package}/dist/bin"
-          cp "dist/bin/${BINARY}" "release/${package}/dist/bin/${BINARY}"
-          cp -R dist/ui "release/${package}/dist/ui"
-          if [[ "${BINARY}" != *.exe ]]; then
-            chmod +x "release/${package}/dist/bin/${BINARY}"
-          fi
-          if [[ "${ARCHIVE}" == "zip" ]]; then
-            (cd release && zip -qr "${package}.zip" "${package}")
-          else
-            tar -C release -czf "release/${package}.tar.gz" "${package}"
-          fi
-          rm -rf "release/${package}"
+          mkdir -p release
+          packed="$(npm pack --pack-destination release --silent)"
+          mv "release/${packed}" "release/orbit-${version}-${ASSET}.tgz"
 
       - name: Upload packaged asset
         uses: actions/upload-artifact@v4

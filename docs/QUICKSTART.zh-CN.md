@@ -68,11 +68,13 @@ npm config set registry https://registry.npmmirror.com
 
 ## 第 1 步：安装 Orbit
 
-先从管理员处获取 Orbit 发布包，然后在发布包所在目录打开 PowerShell，执行：
+从管理员处获取与操作系统匹配的 Orbit 发布包，然后在发布包所在目录打开 PowerShell。Windows x64 用户执行：
 
 ```powershell
-npm install -g .\orbit-<version>.tgz
+npm install -g .\orbit-<version>-windows-x64.tgz
 ```
+
+Linux 和 macOS 用户请使用管理员提供的对应平台 `.tgz` 安装包。
 
 不要直接从公开 npm 安装 `orbit`。公开 npm 上的 `orbit` 是另一个同名项目。
 如果你已经执行过 `npm install -g orbit`，并且运行 `orbit --machine-id` 时看到
@@ -81,7 +83,7 @@ npm install -g .\orbit-<version>.tgz
 
 ```powershell
 npm uninstall -g orbit
-npm install -g .\orbit-<version>.tgz
+npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
 安装完成后，先获取机器码：
