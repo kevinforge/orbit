@@ -9,6 +9,7 @@ import type {
   WorkTaskRunStatus,
   WorkTaskStatus,
 } from "../shared/types.ts";
+import { assignmentPattern } from "./mention-router.ts";
 
 export type ConversationMessages = {
   conversation: Conversation;
@@ -78,13 +79,12 @@ function buildConversationTasks(
   now: Date,
 ): WorkTask[] {
   const messagesById = new Map(messages.map((message) => [message.id, message]));
-  const rootCache = new Map<string, string | null>();
+  const rootCache = new Map<string, string>();
   const runsByRoot = new Map<string, ChatMessage[]>();
 
   for (const message of messages) {
     if (message.kind !== "agent" || !message.runId) continue;
-    const rootId = findRootUserMessageId(message, messagesById, rootCache);
-    if (!rootId) continue;
+    const rootId = findTaskRootId(message, messagesById, rootCache);
     runsByRoot.set(rootId, [...(runsByRoot.get(rootId) ?? []), message]);
   }
 
@@ -92,21 +92,25 @@ function buildConversationTasks(
   for (const [rootId, runs] of runsByRoot) {
     const root = messagesById.get(rootId);
     if (!root) continue;
+    // When the user root is outside the in-window shard set, findTaskRootId
+    // falls back to the highest in-window ancestor; anchor such a task on the
+    // earliest in-window run instead of the (absent) root timestamp.
+    const taskCreatedAt = root.kind === "user" ? root.createdAt : earliestRunCreatedAt(runs);
     const status = taskStatus(leafRuns(runs, messagesById));
     const completedAt = status === "running" ? undefined : runs.flatMap((run) => run.completedAt ?? []).sort().at(-1);
-    const updatedAt = completedAt ?? latestRunActivity(runs) ?? root.createdAt;
+    const updatedAt = completedAt ?? latestRunActivity(runs) ?? taskCreatedAt;
     const agents = aggregateAgents(runs, agentLabels, now);
-    const taskRuns = buildTaskRuns(runs, messagesById, agentLabels, root.createdAt, now);
+    const taskRuns = buildTaskRuns(runs, messagesById, agentLabels, taskCreatedAt, now);
     tasks.push({
       id: root.id,
       conversationId: conversation.id,
       conversationName: conversation.name,
       title: taskTitle(root.content),
       status,
-      createdAt: root.createdAt,
+      createdAt: taskCreatedAt,
       completedAt,
       updatedAt,
-      durationMs: Math.max(0, Date.parse(completedAt ?? now.toISOString()) - Date.parse(root.createdAt)),
+      durationMs: Math.max(0, Date.parse(completedAt ?? now.toISOString()) - Date.parse(taskCreatedAt)),
       agents,
       runs: taskRuns,
       hasParallelRuns: hasParallelRuns(taskRuns, now),
@@ -115,14 +119,25 @@ function buildConversationTasks(
   return tasks;
 }
 
-function findRootUserMessageId(
+/**
+ * Resolve the id that anchors a task for a run: the originating user message if
+ * it is within the loaded (in-window) message set, otherwise the highest
+ * in-window ancestor. historySince() only reads shards overlapping the analysis
+ * window, so a long task whose user root predates the window has its root
+ * message absent here — falling back to the highest reachable ancestor keeps the
+ * task visible (e.g. in the in-progress view) instead of dropping it, and
+ * naturally groups a delegation chain rooted before the window into one task.
+ */
+function findTaskRootId(
   message: ChatMessage,
   messagesById: ReadonlyMap<string, ChatMessage>,
-  cache: Map<string, string | null>,
-): string | null {
-  if (cache.has(message.id)) return cache.get(message.id) ?? null;
+  cache: Map<string, string>,
+): string {
+  const cached = cache.get(message.id);
+  if (cached !== undefined) return cached;
   const visited = new Set<string>();
   let current: ChatMessage | undefined = message;
+  let fallback = message;
   while (current) {
     if (visited.has(current.id)) break;
     visited.add(current.id);
@@ -130,10 +145,11 @@ function findRootUserMessageId(
       cache.set(message.id, current.id);
       return current.id;
     }
+    fallback = current;
     current = current.parentMessageId ? messagesById.get(current.parentMessageId) : undefined;
   }
-  cache.set(message.id, null);
-  return null;
+  cache.set(message.id, fallback.id);
+  return fallback.id;
 }
 
 function taskStatus(runs: ChatMessage[]): WorkTaskStatus {
@@ -249,8 +265,14 @@ function latestRunActivity(runs: ChatMessage[]): string | undefined {
   return runs.flatMap((run) => run.completedAt ?? run.startedAt ?? run.createdAt).sort().at(-1);
 }
 
+function earliestRunCreatedAt(runs: ChatMessage[]): string {
+  return runs.map((run) => run.createdAt).sort().at(0) as string;
+}
+
 function taskTitle(content: string): string {
-  const title = content.replace(/@[a-z0-9_-]+\s*:/gi, "").replace(/\s+/g, " ").trim();
+  // Reuse the canonical assignment marker pattern so titles stay in sync with
+  // how @agent: mentions are parsed (including the fullwidth colon form).
+  const title = content.replace(assignmentPattern, "").replace(/\s+/g, " ").trim();
   if (!title) return "未命名任务";
   return title.length > 80 ? `${title.slice(0, 79)}…` : title;
 }

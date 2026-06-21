@@ -203,8 +203,8 @@ export type WorkAnalysis = {
   days: number;
   generatedAt: string;
   summary: {
-      totalTasks: number;
-      runningTasks: number;
+    totalTasks: number;
+    runningTasks: number;
     completedTasks: number;
     failedTasks: number;
     cancelledTasks: number;

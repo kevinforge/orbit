@@ -236,6 +236,51 @@ test("run.completed with @agent: does NOT trigger supervisor", async () => {
   service.dispose();
 });
 
+test("run.completed at max route depth still triggers supervisor wrap-up", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", dev: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // The deepest delegation (routeDepth = MAX_ROUTE_DEPTH) finishes. The
+  // supervisor must still run its wrap-up check — its own run resets to a low
+  // route depth (rate-limited by maxTriggers), so the completing message's
+  // depth must not gate the trigger.
+  const agentReply = messages.add({
+    kind: "agent",
+    agentId: "dev",
+    content: "Deepest delegation done.",
+    status: "done",
+    runId: "run_deep",
+    runStatus: "completed",
+    routeDepth: 10,
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "dev",
+    runId: "run_deep",
+    resultMessageId: agentReply.id,
+  });
+
+  assert.equal(enqueueCalls.length, 1);
+  assert.equal(enqueueCalls[0].agentId, "supervisor");
+
+  service.dispose();
+});
+
 test("user message without @agent: triggers supervisor", async () => {
   const eventBus = new EventBus();
   const messages = new MessageStore();

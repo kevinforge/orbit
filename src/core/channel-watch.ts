@@ -7,7 +7,6 @@ import type { MessageStore } from "./message-store.ts";
 
 const MAX_TRIGGERS_PER_CONVERSATION = 5;
 const DEBOUNCE_MS = 2_000;
-const MAX_ROUTE_DEPTH = 10;
 
 type TriggerContext = {
   agentId: AgentId;
@@ -175,9 +174,11 @@ export class ChannelWatchService {
   }
 
   private tryTrigger(ctx: TriggerContext, sourceMessage: ChatMessage, options?: { relaxIdleCheck?: boolean }): void {
-    // Honour the same route-depth limit as MessageRouter
-    const nextDepth = (sourceMessage.routeDepth ?? 0) + 1;
-    if (nextDepth > MAX_ROUTE_DEPTH) return;
+    // Note: the completing message's route depth is deliberately NOT used to
+    // gate this trigger. A supervisor run resets to a low route depth on enqueue
+    // (see RunManager.enqueue) and is rate-limited by maxTriggers + debounce, so
+    // gating on the source depth would only block the wrap-up check exactly when
+    // a deepest-level delegation finishes and most needs concluding.
 
     if (!options?.relaxIdleCheck) {
       if (!this.isChannelTrulyIdle(ctx.agentId)) return;

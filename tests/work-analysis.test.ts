@@ -153,6 +153,69 @@ test("buildWorkAnalysis exposes overlapping runs as parallel timeline entries", 
   assert.deepEqual(analysis.tasks[0].runs.map((item) => item.offsetMs), [10_000, 60_000]);
 });
 
+test("buildWorkAnalysis strips assignment markers (including the fullwidth colon) from the task title", () => {
+  const messages: ChatMessage[] = [
+    user("fw", "@pm：用全角冒号指派", "2026-06-19T10:00:00.000Z"),
+    run({ id: "fw-run", parentMessageId: "fw", agentId: "pm", status: "completed", startedAt: "2026-06-19T10:00:10.000Z", completedAt: "2026-06-19T10:00:40.000Z" }),
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map(),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.tasks[0].title, "用全角冒号指派");
+});
+
+test("buildWorkAnalysis surfaces a long task whose root user message predates the window", () => {
+  // Simulates the post-historySince state: the originating user message lives
+  // in an older shard that historySince excluded, so only the in-window run
+  // reaches buildWorkAnalysis. The task must still be surfaced (e.g. in the
+  // in-progress view) instead of being dropped.
+  const messages: ChatMessage[] = [
+    run({ id: "long-run", parentMessageId: "old-root", agentId: "developer", status: "running", startedAt: "2026-06-19T10:00:00.000Z" }),
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map([["developer", "开发"]]),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.summary.totalTasks, 1);
+  assert.equal(analysis.summary.runningTasks, 1);
+  assert.equal(analysis.tasks[0].status, "running");
+  assert.equal(analysis.tasks[0].agents[0].label, "开发");
+});
+
+test("buildWorkAnalysis groups in-window runs sharing an out-of-window root into one task", () => {
+  // A delegation chain rooted before the window: both runs are in-window, but
+  // their shared user root is outside it. They should collapse into one task
+  // anchored on the earliest in-window run, not become two orphan tasks.
+  const messages: ChatMessage[] = [
+    run({ id: "chain-a", parentMessageId: "old-root", agentId: "pm", status: "completed", startedAt: "2026-06-19T10:00:00.000Z", completedAt: "2026-06-19T10:01:00.000Z" }),
+    run({ id: "chain-b", parentMessageId: "chain-a", agentId: "developer", status: "running", startedAt: "2026-06-19T10:01:30.000Z" }),
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map([["pm", "产品"], ["developer", "开发"]]),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.summary.totalTasks, 1);
+  assert.equal(analysis.summary.runningTasks, 1);
+  assert.equal(analysis.tasks[0].status, "running");
+  assert.deepEqual(analysis.tasks[0].agents.map((agent) => agent.agentId), ["pm", "developer"]);
+});
+
 test("buildWorkAnalysis treats a recovered failed run as a completed task", () => {
   const messages: ChatMessage[] = [
     user("root", "@developer: 修复登录", "2026-06-19T10:00:00.000Z"),

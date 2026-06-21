@@ -267,11 +267,23 @@ function formatDuration(milliseconds: number): string {
 }
 
 function formatDate(date: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(`${date}T00:00:00Z`));
+  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(dateKeyToLocalDate(date));
 }
 
 function formatShortDate(date: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(`${date}T00:00:00Z`));
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(dateKeyToLocalDate(date));
+}
+
+/**
+ * Parse a "YYYY-MM-DD" local-day key (work-analysis emits it as a local
+ * calendar date) into a Date in LOCAL time. Date-only ISO strings and the
+ * `T00:00:00Z` form parse as UTC, which shifts the displayed day by one in
+ * UTC- timezones — building from numeric components keeps the calendar day
+ * stable in every timezone.
+ */
+function dateKeyToLocalDate(date: string): Date {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(year, month - 1, day);
 }
 
 function formatDateTime(date: string): string {

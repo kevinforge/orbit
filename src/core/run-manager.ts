@@ -335,7 +335,7 @@ export class RunManager {
     this.appendActivity(run, `运行失败：${errorSummary}`);
 
     const updated = this.options.messages.update(run.resultMessageId, {
-      content: `${this.resolveAgentLabel(run.agentId)} failed: ${errorSummary}`,
+      content: `${this.resolveAgentLabel(run.agentId)} 运行失败：${errorSummary}`,
       status: "error",
       runStatus: "failed",
       activity: run.activity,
