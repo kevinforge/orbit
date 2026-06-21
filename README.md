@@ -1,6 +1,6 @@
 # Orbit
 
-Orbit is a local-first chat control surface for coordinating multiple CLI-backed agents in one shared channel.
+Orbit is a local-first collaboration workspace for coordinating multiple CLI-backed digital employees across isolated workspaces and conversations.
 
 ## Install
 
@@ -40,8 +40,9 @@ Orbit coordinates CLI-backed agents. The agents require:
 - Five built-in agent templates: 产品经理（pm）, 架构师（architect）, 开发（developer）, 测试（tester）, 监督者（supervisor）
 - Custom agent creation and configuration via UI
 - Per-agent permissions (read/write/run/install/git commit)
-- Multiple agent assignments in one message
-- Per-agent run queue
-- Workspace work analysis for completed tasks, employee collaboration, and duration trends
+- Workspace templates for blank or multi-employee collaboration setups
+- Multiple conversations with background execution and visible running employees
+- Explicit assignments, handoffs, and per-agent run queues
+- Collaboration Insights for task outcomes, employee collaboration, execution timelines, and duration trends
 - Markdown rendering for agent replies
 - Session persistence across runs

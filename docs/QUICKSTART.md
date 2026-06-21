@@ -144,6 +144,8 @@ A workspace is the local project folder you want Orbit to work on.
 
 The multi-agent collaboration template enables 架构师（architect）, 开发（developer）, 测试（tester）, and 监督者（supervisor） by default, and assigns them to an available runtime. A blank workspace keeps agents disabled so you can configure them yourself.
 
+The collaboration template also tells the supervisor to assign dependent work in sequence: wait for the prerequisite employee to finish before assigning the next one. Independent work can still be assigned in parallel.
+
 ## Step 4: Check Agents and Runtimes
 
 If no agents are enabled:
@@ -177,6 +179,8 @@ If the supervisor is enabled, you can also describe the goal without an explicit
 ```text
 Please add login form validation to this project. Evaluate the plan first, then implement, then test.
 ```
+
+Open **协作洞察** at the bottom of the sidebar to review completed and in-progress tasks, participating employees, execution timelines, and end-to-end duration.
 
 ## Troubleshooting
 
