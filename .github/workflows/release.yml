@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag and main ancestry
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            node scripts/verify-release-tag.mjs "$GITHUB_REF_NAME"
+            git fetch origin main:refs/remotes/origin/main
+            tag_commit="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+            git merge-base --is-ancestor "$tag_commit" origin/main || {
+              echo "Release tag must point to a commit contained in origin/main." >&2
+              exit 1
+            }
+          else
+            package_version="$(node -p "require('./package.json').version")"
+            node scripts/verify-release-tag.mjs "v${package_version}"
+          fi
+
+      - name: Run tests
+        run: npm run test
+
+  build:
+    name: Build ${{ matrix.asset }}
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            asset: windows-x64
+            binary: orbit.exe
+            archive: zip
+          - platform: linux
+            asset: linux-x64
+            binary: orbit
+            archive: tar.gz
+          - platform: macos
+            asset: macos-x64
+            binary: orbit
+            archive: tar.gz
+          - platform: macosArm
+            asset: macos-arm64
+            binary: orbit
+            archive: tar.gz
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build UI and standalone binary
+        shell: bash
+        run: |
+          npx tsc --noEmit
+          npx vite build
+          node scripts/build-standalone.mjs --platform=${{ matrix.platform }}
+
+      - name: Package release asset
+        shell: bash
+        env:
+          ASSET: ${{ matrix.asset }}
+          BINARY: ${{ matrix.binary }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          package="orbit-${version}-${ASSET}"
+          mkdir -p "release/${package}/dist/bin"
+          cp "dist/bin/${BINARY}" "release/${package}/dist/bin/${BINARY}"
+          cp -R dist/ui "release/${package}/dist/ui"
+          if [[ "${BINARY}" != *.exe ]]; then
+            chmod +x "release/${package}/dist/bin/${BINARY}"
+          fi
+          if [[ "${ARCHIVE}" == "zip" ]]; then
+            (cd release && zip -qr "${package}.zip" "${package}")
+          else
+            tar -C release -czf "release/${package}.tar.gz" "${package}"
+          fi
+          rm -rf "release/${package}"
+
+      - name: Upload packaged asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-${{ matrix.asset }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish private GitHub Release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum orbit-* > SHA256SUMS.txt
+
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --verify-tag \
+              --title "Orbit $GITHUB_REF_NAME" \
+              --generate-notes \
+              --repo "$GITHUB_REPOSITORY"
+          fi

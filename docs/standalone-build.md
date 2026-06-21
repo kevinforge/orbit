@@ -1,6 +1,6 @@
-# npm 包安装
+# 构建与私有发布
 
-Orbit 通过 npm 包分发，内嵌 Bun 编译的独立可执行文件。
+Orbit 通过私有 GitHub Release 分发，发布包包含 Bun 编译的独立可执行文件和 UI 静态资源。
 
 ## 发布前构建
 
@@ -12,7 +12,7 @@ npm run build
 - `dist/bin/orbit.exe`（Windows）或 `dist/bin/orbit`（Linux/macOS）— 字节码编译的可执行文件
 - `dist/ui/` — UI 静态资源
 
-## 打包与安装
+## 本地 npm 打包验证
 
 ```powershell
 # 打包为 tgz
@@ -24,26 +24,55 @@ npm install -g .\orbit-<version>.tgz
 
 版本号由 `package.json` 的 `version` 字段决定。
 
-## 发布到 npm
+## GitHub Release 自动发布
+
+仓库通过 `.github/workflows/release.yml` 响应语义化版本 tag，例如 `v0.9.5`：
+
+1. 校验 tag 与 `package.json` 版本一致，且 tag 指向 `main` 已包含的提交。
+2. 运行完整测试。
+3. 构建 Windows x64、Linux x64、macOS x64 和 macOS ARM64 独立包。
+4. 为每个平台打包可执行文件与 `ui/` 静态资源，并生成 SHA-256 校验文件。
+5. 创建 GitHub Release 并上传所有附件；失败的测试或构建不会创建 Release。
+
+发布步骤：
 
 ```powershell
-npm publish
+git checkout main
+git pull --ff-only origin main
+git tag -a v0.9.5 -m "Orbit v0.9.5"
+git push origin v0.9.5
 ```
 
-`prepublishOnly` 钩子会自动运行测试和构建。
+tag 必须在版本修改和发布工作流合并到 `main` 后再推送。私有仓库的 Release 与附件仍受仓库读取权限保护；只有获授权并登录 GitHub 的用户可以访问。发布给用户的二进制仍应视为可被复制或分析的分发物。
 
-## 用户安装
+首次使用或修改构建流程后，可以先在 GitHub Actions 页面手动运行 **Release** 工作流。手动运行只验证和生成临时 Actions artifacts，不会创建 Release；确认四个平台均构建成功后再推送正式 tag。
+
+## 使用 Release 附件
+
+下载与操作系统匹配的附件并解压，保持 `dist/bin` 与 `dist/ui` 的相对目录不变：
+
+```text
+orbit-<version>-<platform>/
+└── dist/
+    ├── bin/
+    │   └── orbit.exe 或 orbit
+    └── ui/
+```
+
+Windows 启动：
 
 ```powershell
-npm install -g .\orbit-<version>.tgz
+.\dist\bin\orbit.exe
 ```
 
-除非已经把当前项目发布到会覆盖该包名的私有 npm 源，否则不要让用户直接对公开
-npm 源执行 `npm install -g orbit`。公开 npm 上的 `orbit` 是另一个同名项目，
-在较新的 Node 版本下可能会因为 `uuid/v1` 报
-`ERR_PACKAGE_PATH_NOT_EXPORTED`。
+Linux / macOS 启动：
 
-`postinstall` 脚本会自动检测平台，将匹配的二进制文件复制到 `bin/` 目录。
+```bash
+chmod +x ./dist/bin/orbit
+./dist/bin/orbit
+```
+
+不要从公开 npm 源安装 `orbit`：公开 npm 上的同名包与本项目无关。
 
 ## 环境变量
 
