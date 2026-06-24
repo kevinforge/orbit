@@ -10,22 +10,22 @@ const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester"
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const CURRENT_MIGRATION_VERSION = 3;
+const CURRENT_MIGRATION_VERSION = 4;
 
 const DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string> = {
   pm: "产品经理（pm）",
   architect: "架构师（architect）",
   developer: "开发（developer）",
   tester: "测试（tester）",
-  supervisor: "监督者（supervisor）",
+  supervisor: "协调员",
 };
 
-const LEGACY_DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string> = {
-  pm: "Product Manager",
-  architect: "Architect",
-  developer: "Developer",
-  tester: "Tester",
-  supervisor: "Supervisor",
+const LEGACY_DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string[]> = {
+  pm: ["Product Manager"],
+  architect: ["Architect"],
+  developer: ["Developer"],
+  tester: ["Tester"],
+  supervisor: ["Supervisor", "监督者（supervisor）"],
 };
 
 export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
@@ -322,7 +322,8 @@ export class AgentConfigStore {
         }
         for (const config of configs) {
           const nextName = DEFAULT_AGENT_DISPLAY_NAMES[config.id];
-          if (nextName && config.name === LEGACY_DEFAULT_AGENT_DISPLAY_NAMES[config.id]) {
+          const legacyNames = LEGACY_DEFAULT_AGENT_DISPLAY_NAMES[config.id] ?? [];
+          if (nextName && legacyNames.includes(config.name)) {
             config.name = nextName;
             migrated = true;
           }

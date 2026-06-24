@@ -38,7 +38,7 @@ Orbit coordinates CLI-backed agents. The agents require:
 
 ## Features
 
-- Five built-in agent templates: 产品经理（pm）, 架构师（architect）, 开发（developer）, 测试（tester）, 监督者（supervisor）
+- Five built-in agent templates: 产品经理（pm）, 架构师（architect）, 开发（developer）, 测试（tester）, 协调员
 - Custom agent creation and configuration via UI
 - Per-agent permissions (read/write/run/install/git commit)
 - Workspace templates for blank or multi-employee collaboration setups

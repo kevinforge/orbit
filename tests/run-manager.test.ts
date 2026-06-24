@@ -1163,7 +1163,7 @@ test("uses provided getAgentLabel for run message content", async () => {
     },
     buildPrompt(_agentId, prompt) { return prompt; },
     onRunCompleted() {},
-    getAgentLabel: (agentId) => (agentId === "supervisor" ? "监督者（supervisor）" : agentId),
+    getAgentLabel: (agentId) => (agentId === "supervisor" ? "协调员" : agentId),
   });
 
   const source = createSourceMessage();
@@ -1171,12 +1171,12 @@ test("uses provided getAgentLabel for run message content", async () => {
   const queued = manager.enqueue("supervisor", "second", source);
 
   // Enqueued content uses the resolved display name, not the raw agent id.
-  assert.equal(messages.get(queued.resultMessageId)?.content, "监督者（supervisor） queued...");
+  assert.equal(messages.get(queued.resultMessageId)?.content, "协调员 queued...");
 
   manager.cancel(queued.id);
   assert.match(
     messages.get(queued.resultMessageId)?.content ?? "",
-    /监督者（supervisor） 排队任务已取消。/,
+    /协调员 排队任务已取消。/,
   );
 
   first.resolve({ content: "done" });

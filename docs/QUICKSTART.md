@@ -10,7 +10,7 @@ Orbit is a local-first workspace for coordinating CLI-backed agents. The sidebar
 - 架构师（architect）
 - 开发（developer）
 - 测试（tester）
-- 监督者（supervisor）
+- 协调员
 
 Message routing still uses the fixed `@id:` marker:
 
@@ -18,7 +18,7 @@ Message routing still uses the fixed `@id:` marker:
 - `@architect:` asks the architect to inspect code, design a plan, and review risk.
 - `@developer:` asks the developer to edit code, run commands, and verify changes.
 - `@tester:` asks the tester to validate behavior and report issues.
-- `@supervisor:` asks the supervisor to coordinate the conversation toward completion.
+- `@supervisor:` asks the coordinator to move the conversation toward completion.
 - `@all:` sends a task to all currently enabled agents.
 
 For first-time use, choose the multi-agent collaboration workspace template. Orbit will enable a useful default set of agents for collaborative development.
@@ -145,9 +145,9 @@ A workspace is the local project folder you want Orbit to work on.
 4. If Orbit asks you to choose a template, first-time users should choose multi-agent collaboration.
 5. After creation, the workspace and a new conversation appear in the sidebar.
 
-The multi-agent collaboration template enables 架构师（architect）, 开发（developer）, 测试（tester）, and 监督者（supervisor） by default, and assigns them to an available runtime. A blank workspace keeps agents disabled so you can configure them yourself.
+The multi-agent collaboration template enables 架构师（architect）, 开发（developer）, 测试（tester）, and 协调员 by default, and assigns them to an available runtime. A blank workspace keeps agents disabled so you can configure them yourself.
 
-The collaboration template also tells the supervisor to assign dependent work in sequence: wait for the prerequisite employee to finish before assigning the next one. Independent work can still be assigned in parallel.
+The collaboration template also tells the coordinator to assign dependent work in sequence: wait for the prerequisite employee to finish before assigning the next one. Independent work can still be assigned in parallel.
 
 ## Step 4: Check Agents and Runtimes
 
@@ -155,7 +155,7 @@ If no agents are enabled:
 
 1. Click the `+` next to Agents.
 2. Turn on the agents you need.
-3. New users should enable at least 开发（developer）; for collaborative flow, also enable 架构师（architect）, 测试（tester）, and 监督者（supervisor）.
+3. New users should enable at least 开发（developer）; for collaborative flow, also enable 架构师（architect）, 测试（tester）, and 协调员.
 4. Check that each agent runtime is available.
 5. Click Save.
 
@@ -177,7 +177,7 @@ Or ask the developer to make a small change:
 @developer: Please add local startup steps to the README. Keep the change small, run relevant checks, and tell me which files changed.
 ```
 
-If the supervisor is enabled, you can also describe the goal without an explicit agent:
+If the coordinator is enabled, you can also describe the goal without an explicit agent:
 
 ```text
 Please add login form validation to this project. Evaluate the plan first, then implement, then test.

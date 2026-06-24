@@ -2146,7 +2146,7 @@ function AgentManagerPanel({
           <div className="settingsBody">
             <div className="agentManagerIntro">
               <strong>默认数字员工模板</strong>
-              <span>五个内置模板默认不启用。产品经理（pm）、架构师（architect）、开发（developer）、测试（tester）负责规划与实现，监督者（supervisor）负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
+              <span>五个内置模板默认不启用。产品经理（pm）、架构师（architect）、开发（developer）、测试（tester）负责规划与实现，协调员负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
             </div>
             <div className="runtimeProbeRow">
               <span>安装或更新命令行工具后，可以重新检测运行环境。</span>

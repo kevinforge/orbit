@@ -32,9 +32,16 @@ test("DEFAULT_AGENT_CONFIGS use Chinese built-in display names with stable ids",
       architect: "架构师（architect）",
       developer: "开发（developer）",
       tester: "测试（tester）",
-      supervisor: "监督者（supervisor）",
+      supervisor: "协调员",
     },
   );
+});
+
+test("DEFAULT_AGENT_CONFIGS do not expose internal supervisor codeword in display names", () => {
+  const supervisor = DEFAULT_AGENT_CONFIGS.find((config) => config.id === "supervisor");
+
+  assert.ok(supervisor, "supervisor config should exist");
+  assert.equal(supervisor.name.includes("supervisor"), false);
 });
 
 test("load returns seed configs when no file exists", () => {
@@ -475,8 +482,29 @@ test("load migrates legacy default agent names to Chinese names with ids while p
     assert.equal(loaded.find((config) => config.id === "architect")?.name, "架构师（architect）");
     assert.equal(loaded.find((config) => config.id === "developer")?.name, "开发（developer）");
     assert.equal(loaded.find((config) => config.id === "tester")?.name, "测试（tester）");
-    assert.equal(loaded.find((config) => config.id === "supervisor")?.name, "监督者（supervisor）");
+    assert.equal(loaded.find((config) => config.id === "supervisor")?.name, "协调员");
     assert.equal(loaded.find((config) => config.id === "custom")?.name, "My Developer");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("load migrates prior Chinese supervisor default name to coordinator label", () => {
+  const dir = tempDir();
+  try {
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const oldDefaults: AgentConfig[] = structuredClone(DEFAULT_AGENT_CONFIGS).map((config) => (
+      config.id === "supervisor"
+        ? { ...config, name: "监督者（supervisor）" }
+        : config
+    ));
+    fs.writeFileSync(filePath, JSON.stringify({ configs: oldDefaults, _meta: { migrationVersion: 3 } }, null, 2));
+
+    const store = new AgentConfigStore(dir);
+    const loaded = store.load("ws1");
+
+    assert.equal(loaded.find((config) => config.id === "supervisor")?.name, "协调员");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

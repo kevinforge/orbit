@@ -64,7 +64,7 @@ Agents are configured via `AgentConfigStore` and persisted per-workspace in `~/.
 | `@architect:` | 架构师（architect） | `codex` |
 | `@developer:` | 开发（developer） | `claude-code` |
 | `@tester:` | 测试（tester） | `codebuddy` |
-| `@supervisor:` | 监督者（supervisor） | `claude-code` |
+| `@supervisor:` | 协调员 | `claude-code` |
 
 These defaults can be modified, disabled, or removed through the settings UI. Custom agents can be added with any of the supported runtimes and configurable permissions. Only enabled agents participate in routing.
 
