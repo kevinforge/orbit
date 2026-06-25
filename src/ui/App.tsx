@@ -24,6 +24,15 @@ export function resolveActiveView(storedView: string | null): ActiveView {
   return storedView === "analysis" ? "analysis" : "conversation";
 }
 
+/**
+ * Whether the UI should re-fetch full state when the EventSource (re)opens.
+ * The first open is covered by the initial state fetch, so we skip it; every
+ * subsequent open is a reconnect after a dropped stream where runtime events
+ * (running-employee status, run lifecycle) were lost and must be reconciled.
+ */
+export function shouldResyncOnReconnect(hasConnectedBefore: boolean): boolean {
+  return hasConnectedBefore;
+}
 function loadActiveView(): ActiveView {
   try {
     return resolveActiveView(window.localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY));
@@ -146,6 +155,7 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let hasConnectedBefore = false;
 
     fetch("/api/state")
       .then((response) => {
@@ -166,7 +176,20 @@ export function App() {
       });
 
     const events = new EventSource("/events");
-    events.onopen = () => setConnectionState("live");
+    events.onopen = () => {
+      setConnectionState("live");
+      // Reconcile UI with server-side run state after a dropped stream; see
+      // shouldResyncOnReconnect for why the first open is skipped.
+      if (shouldResyncOnReconnect(hasConnectedBefore)) {
+        fetch("/api/state")
+          .then((r) => r.json())
+          .then((nextState: AppState) => {
+            if (!cancelled) setState(normalizeState(nextState));
+          })
+          .catch(() => {});
+      }
+      hasConnectedBefore = true;
+    };
     events.onerror = () => setConnectionState("offline");
     events.onmessage = (message) => {
       try {
