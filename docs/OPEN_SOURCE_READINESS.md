@@ -1,0 +1,154 @@
+# Orbit 1.0 Open Source Readiness
+
+This document tracks the work required before Orbit 1.0 can be published as an
+open source project. It is intentionally durable project documentation, not a
+temporary planning note.
+
+## Goal
+
+Orbit 1.0 should be safe and useful for external users to clone, install, run,
+test, package, and contribute to without private repository access or manual
+administrator steps.
+
+## Current Baseline
+
+- Version: `0.9.5`.
+- Verification: `npm run test` and `npm run build` pass locally.
+- Security baseline: `npm audit --audit-level=moderate` passes after refreshing
+  the lockfile.
+- Core product state: local-first workspace app with React UI, local HTTP/SSE
+  server, workspace and conversation persistence, configurable digital
+  employees, CLI runtime adapters for Claude Code, Codex, and CodeBuddy, run
+  queues, cancellation, handoffs, and collaboration insights.
+- Release state: CI runs tests and build on pull requests; release workflow
+  builds platform-specific npm installation packages and GitHub Release assets.
+
+## Release Gates
+
+All gates below must be closed before tagging `v1.0.0`.
+
+### 1. Open Source Legal And Governance
+
+- Choose and add a top-level `LICENSE` file.
+- Add the matching `license` field to `package.json`.
+- Add `SECURITY.md` with supported versions and vulnerability reporting policy.
+- Decide whether to add `CODE_OF_CONDUCT.md`; if omitted, document why.
+- Confirm all runtime and build dependencies have licenses compatible with the
+  chosen project license.
+- Remove private-release wording from public-facing docs and workflows.
+
+### 2. No Private Startup Blockers
+
+- Remove or disable the mandatory `license.json` startup gate for the open
+  source build.
+- Replace `orbit --machine-id` first-run instructions with normal open source
+  install and run instructions.
+- Keep any commercial/private licensing path behind an explicit build or
+  packaging switch, not in the default open source startup path.
+- Ensure a fresh clone can run `npm ci`, `npm run dev`, `npm run test`, and
+  `npm run build` without private files.
+
+### 3. Stability And Recovery
+
+- Keep `npm run test`, `npm run build`, and `npm audit --audit-level=moderate`
+  green before release.
+- Add or document a smoke test for starting the built app and reaching
+  `/api/state`.
+- Validate port recovery on Windows, macOS, and Linux.
+- Validate restart recovery: running and queued tasks must not remain stuck
+  after a crash or process kill.
+- Validate data safety for `~/.orbit`: messages, sessions, workspace config,
+  agent config, attachments, and transcripts must survive ordinary restarts.
+- Confirm queue cancellation always starts the next eligible queued task.
+
+### 4. Contributor Experience
+
+- Update `README.md` and `README.zh-CN.md` for public setup, development,
+  testing, packaging, and runtime prerequisites.
+- Keep `CONTRIBUTING.md` aligned with the public workflow.
+- Expand PR template enough for external contributors: change summary,
+  verification, screenshots when UI changes, and known risks.
+- Document how to run a single test file.
+- Document supported Node, npm, Bun, and OS versions.
+
+### 5. Release And Distribution
+
+- Rename release workflow language from private release to public release.
+- Decide whether 1.0 publishes to public npm, GitHub Releases only, or both.
+- If publishing to npm, confirm package name ownership and metadata:
+  repository, homepage, bugs, keywords, license, and files.
+- Keep package contents restricted to launcher, built UI, built binary, install
+  script, README files, and package metadata.
+- Generate checksums for all release assets.
+- Document installation from source and from release artifacts.
+
+### 6. Documentation Accuracy
+
+- Align architecture docs with current runtime support: Claude Code, Codex, and
+  CodeBuddy.
+- Remove stale statements that imply only Claude Code agents are supported.
+- Remove administrator/license setup from public quickstarts.
+- Document local data layout and how users can delete or back up `~/.orbit`.
+- Document the product terms used in the UI, especially "digital employee" and
+  routing markers such as `@developer:`.
+
+## Recommended Milestones
+
+### Milestone A: Public Repo Hygiene
+
+Target outcome: the repository can be made public without obvious legal,
+security, or private-infrastructure surprises.
+
+- Add `LICENSE`, `SECURITY.md`, package metadata, and dependency license review.
+- Remove private release wording.
+- Ensure no local artifacts, credentials, generated packages, or user data are
+  tracked.
+- Keep `npm audit --audit-level=moderate` clean.
+
+### Milestone B: Open Source First Run
+
+Target outcome: a new contributor can clone and run Orbit without asking the
+maintainer for a license file.
+
+- Remove or gate the startup license check from the default build.
+- Rewrite quickstarts and README files for public setup.
+- Add a local startup smoke check.
+- Verify dev and standalone startup on Windows first, then macOS and Linux.
+
+### Milestone C: Stability Hardening
+
+Target outcome: ordinary failures leave clear, recoverable state.
+
+- Add focused tests around startup recovery, interrupted queues, and persistent
+  data safety where gaps remain.
+- Add a manual release checklist for crash/restart, cancel, background
+  conversation work, attachment handling, and collaboration insights.
+- Review terminal transcript retention and message shard recovery for
+  user-data loss risks.
+
+### Milestone D: 1.0 Release Candidate
+
+Target outcome: `v1.0.0-rc.1` can be tested by external users.
+
+- Freeze public API and data layout expectations for 1.0.
+- Build release artifacts for all supported platforms.
+- Publish release notes with known limitations.
+- Gather external installation and first-run feedback.
+
+## Known Decisions Needed
+
+- Which open source license should Orbit use?
+- Should public 1.0 publish to npm, GitHub Releases, or both?
+- Should the commercial/private license gate remain in this repository behind a
+  flag, or move to a private packaging layer?
+- Which operating systems are officially supported for 1.0?
+- Which CLI runtimes are required for the default template, and which are
+  optional?
+
+## Immediate Next Changes
+
+1. Add top-level open source governance files and package metadata.
+2. Remove the default startup dependency on `license.json`.
+3. Rewrite public README and quickstarts without private administrator steps.
+4. Add a smoke test or documented smoke command for built app startup.
+5. Update release workflow naming and package metadata for public distribution.

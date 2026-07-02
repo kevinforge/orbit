@@ -46,6 +46,7 @@ Keep repository documentation small:
 - `README.zh-CN.md` for the Simplified Chinese README.
 - `docs/ARCHITECTURE.md` for current architecture.
 - `docs/QUICKSTART.md` and `docs/QUICKSTART.zh-CN.md` for first-run guidance.
+- `docs/OPEN_SOURCE_READINESS.md` for 1.0 open source release gates.
 - `CONTRIBUTING.md` for workflow and standards.
 - `AGENTS.md` for the required agent workflow.
 
