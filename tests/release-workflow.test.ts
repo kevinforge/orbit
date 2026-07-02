@@ -32,6 +32,7 @@ test("release workflow verifies, creates an npm package for every supported targ
   assert.match(workflow, /\.\/dist\/bin\/\$\{\{ matrix\.binary \}\}.*--help/);
   assert.match(workflow, /rm -rf dist/);
   assert.match(workflow, /Unexpected file in release package/);
+  assert.match(workflow, /package\/LICENSE/);
   assert.match(workflow, /package\/dist\/bin\/"\$\{BINARY\}"/);
   assert.match(workflow, /package\/dist\/ui\/\*/);
   assert.match(workflow, /needs: verify/);

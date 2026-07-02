@@ -24,6 +24,11 @@ administrator steps.
   queues, cancellation, handoffs, and collaboration insights.
 - Release state: CI runs tests and build on pull requests; release workflow
   builds platform-specific npm installation packages and GitHub Release assets.
+- Governance baseline: MIT `LICENSE`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and
+  public package metadata are present.
+- Dependency-license baseline: `docs/DEPENDENCY_LICENSES.md` records the
+  current reviewed license identifiers and tests guard against unexpected
+  additions.
 
 ## Release Gates
 
@@ -31,12 +36,12 @@ All gates below must be closed before tagging `v1.0.0`.
 
 ### 1. Open Source Legal And Governance
 
-- Choose and add a top-level `LICENSE` file.
-- Add the matching `license` field to `package.json`.
-- Add `SECURITY.md` with supported versions and vulnerability reporting policy.
-- Decide whether to add `CODE_OF_CONDUCT.md`; if omitted, document why.
-- Confirm all runtime and build dependencies have licenses compatible with the
-  chosen project license.
+- Keep the top-level `LICENSE` file aligned with `package.json`.
+- Keep `SECURITY.md` current with supported versions and vulnerability
+  reporting policy.
+- Keep `CODE_OF_CONDUCT.md` available for public collaboration.
+- Keep `docs/DEPENDENCY_LICENSES.md` aligned with `package-lock.json`; review
+  any newly introduced dependency license identifiers before release.
 - Remove private-release wording from public-facing docs and workflows.
 
 ### 2. No Private Startup Blockers
@@ -101,7 +106,9 @@ All gates below must be closed before tagging `v1.0.0`.
 Target outcome: the repository can be made public without obvious legal,
 security, or private-infrastructure surprises.
 
-- Add `LICENSE`, `SECURITY.md`, package metadata, and dependency license review.
+- Keep `LICENSE`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and package metadata in
+  place.
+- Keep dependency license review current.
 - Remove private release wording.
 - Ensure no local artifacts, credentials, generated packages, or user data are
   tracked.
@@ -139,7 +146,8 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 
 ## Known Decisions Needed
 
-- Which open source license should Orbit use?
+- MIT is the current project license. Confirm before `v1.0.0` if the project
+  should switch to another license.
 - Should public 1.0 publish to npm, GitHub Releases, or both?
 - Should the commercial/private license gate remain in this repository behind a
   flag, or move to a private packaging layer?
@@ -149,8 +157,8 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 
 ## Immediate Next Changes
 
-1. Add top-level open source governance files and package metadata.
-2. Add a local startup smoke check that reaches `/api/state`.
-3. Update package metadata for public distribution.
-4. Choose the open source license and publish security policy.
-5. Verify dev and standalone startup on Windows, macOS, and Linux.
+1. Add a local startup smoke check that reaches `/api/state`.
+2. Verify dev and standalone startup on Windows, macOS, and Linux.
+3. Decide public distribution channel: GitHub Releases only, npm, or both.
+4. Update architecture docs where they still imply Claude Code only.
+5. Decide whether private licensed build support should remain in this repo.

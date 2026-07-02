@@ -54,3 +54,8 @@ Orbit coordinates CLI-backed agents. The agents require:
 - Collaboration Insights for task outcomes, employee collaboration, execution timelines, and duration trends
 - Markdown rendering for agent replies
 - Session persistence across runs
+
+## License And Security
+
+Orbit is released under the [MIT License](LICENSE). Please report security
+issues through the policy in [SECURITY.md](SECURITY.md).
