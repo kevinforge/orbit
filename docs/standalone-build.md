@@ -1,6 +1,6 @@
-# 构建与私有发布
+# 构建与发布
 
-Orbit 通过私有 GitHub Release 分发按平台构建的 npm 安装包。安装包内包含 Bun 编译的独立可执行文件和 UI 静态资源。
+Orbit 通过 GitHub Release 分发按平台构建的 npm 安装包。安装包内包含 Bun 编译的独立可执行文件和 UI 静态资源。
 
 ## 发布前构建
 
@@ -43,7 +43,7 @@ git tag -a v0.9.5 -m "Orbit v0.9.5"
 git push origin v0.9.5
 ```
 
-tag 必须在版本修改和发布工作流合并到 `main` 后再推送。私有仓库的 Release 与附件仍受仓库读取权限保护；只有获授权并登录 GitHub 的用户可以访问。发布给用户的二进制仍应视为可被复制或分析的分发物。
+tag 必须在版本修改和发布工作流合并到 `main` 后再推送。公开仓库的 Release 与附件可被任何用户下载；发布给用户的二进制仍应视为可被复制或分析的分发物。
 
 首次使用或修改构建流程后，可以先在 GitHub Actions 页面手动运行 **Release** 工作流。手动运行只验证和生成临时 Actions artifacts，不会创建 Release；确认四个平台均构建成功后再推送正式 tag。
 

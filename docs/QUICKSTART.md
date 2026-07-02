@@ -78,19 +78,26 @@ After installing a runtime, run the version check again, for example `codebuddy 
 
 ## Step 1: Install Orbit
 
-Get the package matching your operating system from your administrator, then
-open PowerShell or your terminal in the directory containing the file. Windows
-x64 users run:
+Use a release package that matches your operating system. Open PowerShell or
+your terminal in the directory containing the file. Windows x64 users run:
 
 ```powershell
 npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
-On Linux or macOS, use the corresponding `.tgz` package provided by your administrator.
+On Linux or macOS, use the corresponding `.tgz` package from the release.
+
+You can also run Orbit from a source checkout:
+
+```powershell
+npm ci
+npm run build
+npm run dev
+```
 
 Do not install `orbit` directly from the public npm registry. The public
-`orbit` package is unrelated to this product. If you already ran
-`npm install -g orbit` and `orbit --machine-id` fails with
+`orbit` package is unrelated to this project unless this project explicitly
+announces npm ownership. If you already ran `npm install -g orbit` and it fails with
 `ERR_PACKAGE_PATH_NOT_EXPORTED` for `uuid/v1`, uninstall that package and then
 install the Orbit release tarball:
 
@@ -99,31 +106,9 @@ npm uninstall -g orbit
 npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
-After installation, get your machine ID:
-
-```powershell
-orbit --machine-id
-```
-
-Orbit prints a machine ID and creates the license directory. The output explains where to place `license.json`.
-
-Send the machine ID to your administrator. After they give you `license.json`, place it here:
-
-```text
-C:\Users\YourName\.orbit\license.json
-```
-
-On macOS or Linux, the path is usually:
-
-```text
-~/.orbit/license.json
-```
-
-The filename must be exactly `license.json`.
-
 ## Step 2: Start Orbit
 
-After placing the license file, run:
+Run:
 
 ```powershell
 orbit
@@ -189,33 +174,8 @@ Open **协作洞察** at the bottom of the sidebar to review completed and in-pr
 
 ### There Is No `.orbit` Directory
 
-Run:
-
-```powershell
-orbit --machine-id
-```
-
-Orbit will create the directory and print the exact location for `license.json`.
-
-### `orbit` Says `license.json` Was Not Found
-
-Run:
-
-```powershell
-orbit --machine-id
-```
-
-Send the machine ID to your administrator, get `license.json`, and place it at:
-
-```text
-C:\Users\YourName\.orbit\license.json
-```
-
-Then run:
-
-```powershell
-orbit
-```
+Orbit creates `~/.orbit` automatically when it needs to store local data. If the
+directory does not exist yet, start Orbit once and create a workspace.
 
 ### A Runtime Is Missing
 
@@ -231,7 +191,9 @@ You only need to check the runtime you use. If the command is missing, use the i
 
 ### Where Does Orbit Store Data?
 
-Orbit stores local data under `~/.orbit`, including workspaces, conversations, messages, run records, and the license file. On Windows this is usually:
+Orbit stores local data under `~/.orbit`, including workspaces, conversations,
+messages, run records, agent settings, attachments, and transcripts. On Windows
+this is usually:
 
 ```text
 C:\Users\YourName\.orbit

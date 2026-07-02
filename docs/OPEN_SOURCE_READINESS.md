@@ -16,6 +16,8 @@ administrator steps.
 - Verification: `npm run test` and `npm run build` pass locally.
 - Security baseline: `npm audit --audit-level=moderate` passes after refreshing
   the lockfile.
+- Startup baseline: the default standalone build starts without `license.json`;
+  private licensed builds must opt in with `ORBIT_REQUIRE_LICENSE=true`.
 - Core product state: local-first workspace app with React UI, local HTTP/SSE
   server, workspace and conversation persistence, configurable digital
   employees, CLI runtime adapters for Claude Code, Codex, and CodeBuddy, run
@@ -39,10 +41,10 @@ All gates below must be closed before tagging `v1.0.0`.
 
 ### 2. No Private Startup Blockers
 
-- Remove or disable the mandatory `license.json` startup gate for the open
-  source build.
-- Replace `orbit --machine-id` first-run instructions with normal open source
-  install and run instructions.
+- Keep the default open source build free of a mandatory `license.json` startup
+  gate.
+- Keep `orbit --machine-id` out of first-run instructions; it is only for
+  private licensed builds.
 - Keep any commercial/private licensing path behind an explicit build or
   packaging switch, not in the default open source startup path.
 - Ensure a fresh clone can run `npm ci`, `npm run dev`, `npm run test`, and
@@ -87,7 +89,7 @@ All gates below must be closed before tagging `v1.0.0`.
 - Align architecture docs with current runtime support: Claude Code, Codex, and
   CodeBuddy.
 - Remove stale statements that imply only Claude Code agents are supported.
-- Remove administrator/license setup from public quickstarts.
+- Keep administrator/license setup out of public quickstarts.
 - Document local data layout and how users can delete or back up `~/.orbit`.
 - Document the product terms used in the UI, especially "digital employee" and
   routing markers such as `@developer:`.
@@ -110,8 +112,8 @@ security, or private-infrastructure surprises.
 Target outcome: a new contributor can clone and run Orbit without asking the
 maintainer for a license file.
 
-- Remove or gate the startup license check from the default build.
-- Rewrite quickstarts and README files for public setup.
+- Preserve the default no-license startup path.
+- Keep quickstarts and README files aligned with public setup.
 - Add a local startup smoke check.
 - Verify dev and standalone startup on Windows first, then macOS and Linux.
 
@@ -148,7 +150,7 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 ## Immediate Next Changes
 
 1. Add top-level open source governance files and package metadata.
-2. Remove the default startup dependency on `license.json`.
-3. Rewrite public README and quickstarts without private administrator steps.
-4. Add a smoke test or documented smoke command for built app startup.
-5. Update release workflow naming and package metadata for public distribution.
+2. Add a local startup smoke check that reaches `/api/state`.
+3. Update package metadata for public distribution.
+4. Choose the open source license and publish security policy.
+5. Verify dev and standalone startup on Windows, macOS, and Linux.

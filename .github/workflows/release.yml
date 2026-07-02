@@ -108,7 +108,7 @@ jobs:
 
       - name: Smoke test standalone binary
         shell: bash
-        run: '"./dist/bin/${{ matrix.binary }}" --machine-id'
+        run: '"./dist/bin/${{ matrix.binary }}" --help'
 
       - name: Create npm installation package
         shell: bash
@@ -141,7 +141,7 @@ jobs:
           retention-days: 7
 
   release:
-    name: Publish private GitHub Release
+    name: Publish GitHub Release
     needs: build
     if: github.event_name == 'push'
     runs-on: ubuntu-latest

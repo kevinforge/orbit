@@ -68,16 +68,25 @@ npm config set registry https://registry.npmmirror.com
 
 ## 第 1 步：安装 Orbit
 
-从管理员处获取与操作系统匹配的 Orbit 发布包，然后在发布包所在目录打开 PowerShell。Windows x64 用户执行：
+下载与你操作系统匹配的 Orbit 发布包，然后在发布包所在目录打开 PowerShell。Windows x64 用户执行：
 
 ```powershell
 npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
-Linux 和 macOS 用户请使用管理员提供的对应平台 `.tgz` 安装包。
+Linux 和 macOS 用户请使用对应平台的 `.tgz` 安装包。
+
+也可以从源码运行：
+
+```powershell
+npm ci
+npm run build
+npm run dev
+```
 
 不要直接从公开 npm 安装 `orbit`。公开 npm 上的 `orbit` 是另一个同名项目。
-如果你已经执行过 `npm install -g orbit`，并且运行 `orbit --machine-id` 时看到
+除非本项目明确宣布已经拥有 npm 包名，否则不要用公开 npm 的 `orbit` 包。
+如果你已经执行过 `npm install -g orbit`，并且启动时看到
 `ERR_PACKAGE_PATH_NOT_EXPORTED` 和 `uuid/v1`，请先卸载错误的包，再安装 Orbit
 发布包：
 
@@ -86,50 +95,17 @@ npm uninstall -g orbit
 npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
-安装完成后，先获取机器码：
-
-```powershell
-orbit --machine-id
-```
-
-Orbit 会输出一串机器码，并自动创建授权目录。你会看到类似这样的提示：
-
-```text
-Orbit 机器码
-===========
-
-  示例机器码-请使用你电脑实际输出的那一串
-
-下一步：
-1. 将上面的机器码发送给管理员。上面这串只是文档示例，实际请发送你电脑上显示的机器码。
-2. 管理员会发给你一个 license.json 文件。
-3. 请把 license.json 放到这个目录：C:\Users\你的用户名\.orbit
-   最终文件路径应该是：C:\Users\你的用户名\.orbit\license.json
-4. 放好后重新执行：orbit
-```
-
-把机器码发给管理员，拿到 `license.json` 后，请把它放到：
-
-```text
-C:\Users\你的用户名\.orbit\license.json
-```
-
-注意：文件名必须是 `license.json`，不要改成 `license (1).json`、`license.txt` 或其他名字。
-
-如果你还没有放好授权文件，直接执行 `orbit` 会看到中文提示，按提示完成授权即可。
-
 ## 第 2 步：启动 Orbit
 
-授权文件放好后，执行：
+执行：
 
 ```powershell
 orbit
 ```
 
-如果授权通过，你会看到类似提示：
+启动成功后，你会看到类似提示：
 
 ```text
-[orbit] 授权校验通过，正在启动 Orbit...
 [orbit] Orbit 已启动。请在浏览器中打开：http://localhost:4317
 ```
 
@@ -192,33 +168,7 @@ http://localhost:4317
 
 ### 没有 `.orbit` 目录怎么办？
 
-执行一次：
-
-```powershell
-orbit --machine-id
-```
-
-Orbit 会自动创建 `C:\Users\你的用户名\.orbit` 目录，并告诉你 `license.json` 应该放到哪里。
-
-### 执行 `orbit` 提示未找到 `license.json`
-
-说明还没有完成授权。请执行：
-
-```powershell
-orbit --machine-id
-```
-
-把机器码发给管理员，拿到 `license.json` 后放到：
-
-```text
-C:\Users\你的用户名\.orbit\license.json
-```
-
-然后重新执行：
-
-```powershell
-orbit
-```
+Orbit 会在需要保存本地数据时自动创建 `~/.orbit` 目录。如果还没有这个目录，先启动一次 Orbit 并创建一个工作区即可。
 
 ### 页面提示运行时未安装
 
@@ -238,7 +188,7 @@ codebuddy --version
 
 ### Orbit 会把数据放在哪里？
 
-Orbit 是本地优先的产品，会把工作区、会话、消息、运行记录、授权文件等数据保存在你电脑的 `~/.orbit` 目录下。Windows 上通常是：
+Orbit 是本地优先的产品，会把工作区、会话、消息、运行记录、数字员工设置、附件和终端日志等数据保存在你电脑的 `~/.orbit` 目录下。Windows 上通常是：
 
 ```text
 C:\Users\你的用户名\.orbit

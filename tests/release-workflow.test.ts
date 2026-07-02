@@ -29,7 +29,7 @@ test("release workflow verifies, creates an npm package for every supported targ
   assert.match(workflow, /runner: macos-15/);
   assert.match(workflow, /runs-on: \$\{\{ matrix\.runner \}\}/);
   assert.match(workflow, /Smoke test standalone binary/);
-  assert.match(workflow, /\.\/dist\/bin\/\$\{\{ matrix\.binary \}\}.*--machine-id/);
+  assert.match(workflow, /\.\/dist\/bin\/\$\{\{ matrix\.binary \}\}.*--help/);
   assert.match(workflow, /rm -rf dist/);
   assert.match(workflow, /Unexpected file in release package/);
   assert.match(workflow, /package\/dist\/bin\/"\$\{BINARY\}"/);
