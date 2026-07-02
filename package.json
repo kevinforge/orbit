@@ -38,6 +38,7 @@
     "dev": "tsx src/server/index.ts",
     "build": "tsc --noEmit && vite build && node scripts/build-standalone.mjs",
     "build:all": "tsc --noEmit && vite build && node scripts/build-standalone.mjs --all",
+    "smoke:start": "node scripts/smoke-start.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:glob": "npm run test",
     "prepublishOnly": "npm run test && npm run build"

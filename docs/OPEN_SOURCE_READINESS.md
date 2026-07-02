@@ -18,6 +18,8 @@ administrator steps.
   the lockfile.
 - Startup baseline: the default standalone build starts without `license.json`;
   private licensed builds must opt in with `ORBIT_REQUIRE_LICENSE=true`.
+- Smoke-test baseline: CI and release builds run `scripts/smoke-start.mjs`,
+  which starts the built app and waits for `GET /api/state`.
 - Core product state: local-first workspace app with React UI, local HTTP/SSE
   server, workspace and conversation persistence, configurable digital
   employees, CLI runtime adapters for Claude Code, Codex, and CodeBuddy, run
@@ -59,8 +61,7 @@ All gates below must be closed before tagging `v1.0.0`.
 
 - Keep `npm run test`, `npm run build`, and `npm audit --audit-level=moderate`
   green before release.
-- Add or document a smoke test for starting the built app and reaching
-  `/api/state`.
+- Keep the built-app `/api/state` smoke test running in CI and release builds.
 - Validate port recovery on Windows, macOS, and Linux.
 - Validate restart recovery: running and queued tasks must not remain stuck
   after a crash or process kill.
@@ -121,7 +122,7 @@ maintainer for a license file.
 
 - Preserve the default no-license startup path.
 - Keep quickstarts and README files aligned with public setup.
-- Add a local startup smoke check.
+- Keep local, CI, and release startup smoke checks green.
 - Verify dev and standalone startup on Windows first, then macOS and Linux.
 
 ### Milestone C: Stability Hardening
@@ -157,8 +158,8 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 
 ## Immediate Next Changes
 
-1. Add a local startup smoke check that reaches `/api/state`.
-2. Verify dev and standalone startup on Windows, macOS, and Linux.
-3. Decide public distribution channel: GitHub Releases only, npm, or both.
-4. Update architecture docs where they still imply Claude Code only.
-5. Decide whether private licensed build support should remain in this repo.
+1. Verify dev and standalone startup on Windows, macOS, and Linux.
+2. Decide public distribution channel: GitHub Releases only, npm, or both.
+3. Update architecture docs where they still imply Claude Code only.
+4. Decide whether private licensed build support should remain in this repo.
+5. Prepare `v1.0.0-rc.1` release notes with known limitations.

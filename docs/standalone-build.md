@@ -12,6 +12,12 @@ npm run build
 - `dist/bin/orbit.exe`（Windows）或 `dist/bin/orbit`（Linux/macOS）— 字节码编译的可执行文件
 - `dist/ui/` — UI 静态资源
 
+构建后可以运行启动冒烟测试，确认独立可执行文件可以启动本地服务并返回 `/api/state`：
+
+```powershell
+npm run smoke:start
+```
+
 ## 本地 npm 打包验证
 
 ```powershell
@@ -30,7 +36,7 @@ npm install -g .\orbit-<version>.tgz
 
 1. 校验 tag 与 `package.json` 版本一致，且 tag 指向 `main` 已包含的提交。
 2. 运行完整测试。
-3. 在对应操作系统的原生 GitHub runner 上构建 Windows x64、Linux x64、macOS x64 和 macOS ARM64 可执行文件，并实际启动进行冒烟测试。
+3. 在对应操作系统的原生 GitHub runner 上构建 Windows x64、Linux x64、macOS x64 和 macOS ARM64 可执行文件，并实际启动进行 `/api/state` 冒烟测试。
 4. 为每个平台生成可通过 npm 安装的 `.tgz` 附件，校验包内不包含源码、测试、source map 或其他构建残留，并生成 SHA-256 校验文件。
 5. 创建 GitHub Release 并上传所有附件；失败的测试或构建不会创建 Release。
 

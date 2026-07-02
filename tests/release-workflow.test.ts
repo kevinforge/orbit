@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const root = path.resolve(import.meta.dirname, "..");
 const workflow = fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
+const ciWorkflow = fs.readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
 const standaloneBuilder = fs.readFileSync(path.join(root, "scripts/build-standalone.mjs"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
 
@@ -29,7 +30,7 @@ test("release workflow verifies, creates an npm package for every supported targ
   assert.match(workflow, /runner: macos-15/);
   assert.match(workflow, /runs-on: \$\{\{ matrix\.runner \}\}/);
   assert.match(workflow, /Smoke test standalone binary/);
-  assert.match(workflow, /\.\/dist\/bin\/\$\{\{ matrix\.binary \}\}.*--help/);
+  assert.match(workflow, /node scripts\/smoke-start\.mjs --binary "\.\/dist\/bin\/\$\{\{ matrix\.binary \}\}"/);
   assert.match(workflow, /rm -rf dist/);
   assert.match(workflow, /Unexpected file in release package/);
   assert.match(workflow, /package\/LICENSE/);
@@ -45,6 +46,12 @@ test("release workflow verifies, creates an npm package for every supported targ
   assert.match(workflow, /release\/orbit-\$\{version\}-\$\{ASSET\}\.tgz/);
   assert.doesNotMatch(workflow, /\.zip"/);
   assert.doesNotMatch(workflow, /\.tar\.gz"/);
+});
+
+test("ci smoke-tests the built app startup", () => {
+  assert.match(ciWorkflow, /npm run build/);
+  assert.match(ciWorkflow, /Smoke test built app startup/);
+  assert.match(ciWorkflow, /npm run smoke:start/);
 });
 
 test("release tag verifier accepts the package version and rejects mismatches", () => {

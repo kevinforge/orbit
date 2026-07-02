@@ -108,7 +108,7 @@ jobs:
 
       - name: Smoke test standalone binary
         shell: bash
-        run: '"./dist/bin/${{ matrix.binary }}" --help'
+        run: node scripts/smoke-start.mjs --binary "./dist/bin/${{ matrix.binary }}"
 
       - name: Create npm installation package
         shell: bash
