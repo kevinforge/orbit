@@ -66,6 +66,11 @@ Orbit stores local product data under `~/.orbit`. See
 [docs/DATA_DIRECTORY.md](docs/DATA_DIRECTORY.md) for the data layout, backup,
 restore, and reset guidance.
 
+## Terminology And Routing
+
+See [docs/TERMINOLOGY_AND_ROUTING.md](docs/TERMINOLOGY_AND_ROUTING.md) for the
+public product terms and `@developer:` style assignment marker rules.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and

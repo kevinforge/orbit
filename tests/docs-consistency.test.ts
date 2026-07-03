@@ -88,3 +88,27 @@ test("repository documents local data backup and reset guidance", () => {
   assert.doesNotMatch(readiness, /Document local data layout and how users can delete or back up/);
   assert.match(contributing, /docs\/DATA_DIRECTORY\.md/);
 });
+
+test("repository documents public terminology and routing marker behavior", () => {
+  const terminology = readRepoFile("docs/TERMINOLOGY_AND_ROUTING.md");
+  const readme = readRepoFile("README.md");
+  const quickstart = readRepoFile("docs/QUICKSTART.md");
+  const readiness = readRepoFile("docs/OPEN_SOURCE_READINESS.md");
+  const contributing = readRepoFile("CONTRIBUTING.md");
+
+  assert.match(terminology, /Digital employee/);
+  assert.match(terminology, /Prefer \*\*digital employee\*\*/);
+  assert.match(terminology, /@developer:/);
+  assert.match(terminology, /@all:/);
+  assert.match(terminology, /Plain `@id` without a colon is a reference only/);
+  assert.match(terminology, /Unknown `@id:` markers are ignored/);
+  assert.match(terminology, /empty assignment/);
+  assert.match(terminology, /routing depth 10/);
+  assert.match(terminology, /Handoffs/);
+
+  assert.match(readme, /docs\/TERMINOLOGY_AND_ROUTING\.md/);
+  assert.match(quickstart, /TERMINOLOGY_AND_ROUTING\.md/);
+  assert.match(readiness, /Terminology baseline/);
+  assert.doesNotMatch(readiness, /Document the product terms used in the UI/);
+  assert.match(contributing, /docs\/TERMINOLOGY_AND_ROUTING\.md/);
+});

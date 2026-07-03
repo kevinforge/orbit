@@ -21,6 +21,9 @@ Message routing still uses the fixed `@id:` marker:
 - `@supervisor:` asks the supervisor to coordinate the conversation toward completion.
 - `@all:` sends a task to all currently enabled agents.
 
+For the complete public terminology and routing rules, see
+[Terminology And Routing](TERMINOLOGY_AND_ROUTING.md).
+
 For first-time use, choose the multi-agent collaboration workspace template. Orbit will enable a useful default set of agents for collaborative development.
 
 ## Step 0: Check Prerequisites

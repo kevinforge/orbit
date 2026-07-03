@@ -87,6 +87,8 @@ Keep repository documentation small:
 - `docs/DEPENDENCY_LICENSES.md` for dependency license review.
 - `docs/RELEASE_CHECKLIST.md` for 1.0 release candidate and final release
   verification.
+- `docs/TERMINOLOGY_AND_ROUTING.md` for public product terms and assignment
+  marker behavior.
 - `docs/QUICKSTART.md` and `docs/QUICKSTART.zh-CN.md` for first-run guidance.
 - `docs/OPEN_SOURCE_READINESS.md` for 1.0 open source release gates.
 - `CONTRIBUTING.md` for workflow and standards.

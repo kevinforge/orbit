@@ -36,6 +36,8 @@ administrator steps.
   verification expectations.
 - Local-data baseline: `docs/DATA_DIRECTORY.md` documents `~/.orbit` layout,
   backup, restore, reset, and workspace/conversation deletion scope.
+- Terminology baseline: `docs/TERMINOLOGY_AND_ROUTING.md` documents public
+  product terms, digital employee language, and `@developer:` routing markers.
 
 ## Release Gates
 
@@ -103,8 +105,8 @@ All gates below must be closed before tagging `v1.0.0`.
 - Keep administrator/license setup out of public quickstarts.
 - Keep local data layout, backup, restore, and reset guidance current in
   `docs/DATA_DIRECTORY.md`.
-- Document the product terms used in the UI, especially "digital employee" and
-  routing markers such as `@developer:`.
+- Keep public product terms and routing marker rules current in
+  `docs/TERMINOLOGY_AND_ROUTING.md`.
 
 ## Recommended Milestones
 
