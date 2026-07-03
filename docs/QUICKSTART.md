@@ -198,3 +198,6 @@ this is usually:
 ```text
 C:\Users\YourName\.orbit
 ```
+
+For the full data layout, backup, restore, and reset guidance, see
+[Local Data Directory](DATA_DIRECTORY.md).

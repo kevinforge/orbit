@@ -34,6 +34,8 @@ administrator steps.
 - Contributor baseline: `CONTRIBUTING.md`, the pull request template, and
   `docs/RELEASE_CHECKLIST.md` document public contribution and release
   verification expectations.
+- Local-data baseline: `docs/DATA_DIRECTORY.md` documents `~/.orbit` layout,
+  backup, restore, reset, and workspace/conversation deletion scope.
 
 ## Release Gates
 
@@ -99,7 +101,8 @@ All gates below must be closed before tagging `v1.0.0`.
   CodeBuddy.
 - Remove stale statements that imply only Claude Code agents are supported.
 - Keep administrator/license setup out of public quickstarts.
-- Document local data layout and how users can delete or back up `~/.orbit`.
+- Keep local data layout, backup, restore, and reset guidance current in
+  `docs/DATA_DIRECTORY.md`.
 - Document the product terms used in the UI, especially "digital employee" and
   routing markers such as `@developer:`.
 

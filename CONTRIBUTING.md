@@ -82,6 +82,8 @@ Keep repository documentation small:
 - `README.md` for product overview, setup, and daily commands.
 - `README.zh-CN.md` for the Simplified Chinese README.
 - `docs/ARCHITECTURE.md` for current architecture.
+- `docs/DATA_DIRECTORY.md` for local data layout, backup, restore, and reset
+  guidance.
 - `docs/DEPENDENCY_LICENSES.md` for dependency license review.
 - `docs/RELEASE_CHECKLIST.md` for 1.0 release candidate and final release
   verification.

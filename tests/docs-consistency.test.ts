@@ -63,3 +63,28 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(readiness, /Contributor baseline/);
   assert.doesNotMatch(readiness, /Add a manual release checklist/);
 });
+
+test("repository documents local data backup and reset guidance", () => {
+  const dataDirectory = readRepoFile("docs/DATA_DIRECTORY.md");
+  const readme = readRepoFile("README.md");
+  const quickstart = readRepoFile("docs/QUICKSTART.md");
+  const readiness = readRepoFile("docs/OPEN_SOURCE_READINESS.md");
+  const contributing = readRepoFile("CONTRIBUTING.md");
+
+  assert.match(dataDirectory, /~\/\.orbit/);
+  assert.match(dataDirectory, /workspaces\/<workspace-id>\/workspace\.json/);
+  assert.match(dataDirectory, /conversations\/<workspace-id>\/<conversation-id>\/messages/);
+  assert.match(dataDirectory, /sessions\/<workspace-id>\/<runtime>/);
+  assert.match(dataDirectory, /transcripts\/<workspace-id>/);
+  assert.match(dataDirectory, /Back Up Data/);
+  assert.match(dataDirectory, /Restore Data/);
+  assert.match(dataDirectory, /Delete Or Reset Local Data/);
+  assert.match(dataDirectory, /does not delete your\s+source repositories/);
+  assert.match(dataDirectory, /does not delete\s+the project directory itself/);
+
+  assert.match(readme, /docs\/DATA_DIRECTORY\.md/);
+  assert.match(quickstart, /DATA_DIRECTORY\.md/);
+  assert.match(readiness, /Local-data baseline/);
+  assert.doesNotMatch(readiness, /Document local data layout and how users can delete or back up/);
+  assert.match(contributing, /docs\/DATA_DIRECTORY\.md/);
+});
