@@ -160,6 +160,5 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 
 1. Verify dev and standalone startup on Windows, macOS, and Linux.
 2. Decide public distribution channel: GitHub Releases only, npm, or both.
-3. Update architecture docs where they still imply Claude Code only.
-4. Decide whether private licensed build support should remain in this repo.
-5. Prepare `v1.0.0-rc.1` release notes with known limitations.
+3. Decide whether private licensed build support should remain in this repo.
+4. Prepare `v1.0.0-rc.1` release notes with known limitations.

@@ -51,6 +51,7 @@ npm run build                # Type-check + Vite UI build + Bun compile standalo
 npm run build:all            # Build standalone binaries for all platforms (Windows, Linux, macOS x64/ARM64)
 npm run test                 # Run all tests
 npm run test:glob            # Alternative: run tests via glob pattern
+npm run smoke:start          # Start built binary and verify GET /api/state
 ```
 
 Run a single test file:
@@ -70,7 +71,7 @@ See `docs/standalone-build.md` for distribution and installation instructions.
 
 ## Architecture Overview
 
-Orbit is a local-first chat control surface that coordinates multiple Claude Code CLI agents in one shared conversation. Users type messages with `@agent:` assignment syntax; the system routes tasks to agents, manages run queues, and streams results to a React UI via SSE.
+Orbit is a local-first chat control surface that coordinates multiple CLI-backed digital employees in one shared conversation. Users type messages with `@agent:` assignment syntax; the system routes tasks to agents, manages run queues, and streams results to a React UI via SSE.
 
 ### Tech Stack
 
@@ -86,13 +87,13 @@ Orbit is a local-first chat control surface that coordinates multiple Claude Cod
 User message (POST /api/messages)
   → MessageRouter → mention-router (parses @agent: markers)
     → RunManager (per-agent serial queue)
-      → AgentSession → buildAgentContext() → claude CLI (stream-json)
+      → AgentSession → buildAgentContext() → selected runtime adapter (Codex, Claude Code, or CodeBuddy CLI)
         → EventBus → SseHub → browser (EventSource)
         → RunManager classifies activities (tool.started, etc.)
           → on completion: next queued run starts, agent replies can trigger further routing
 ```
 
-Agent replies can contain `@other_agent:` assignments, enabling delegation chains capped at depth 5.
+Agent replies can contain `@other_agent:` assignments, enabling delegation chains capped at depth 10.
 
 ### Key Modules
 
@@ -109,7 +110,8 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/agent-context-builder.ts`** — Builds private system prompt injected into each agent run
 - **`src/core/agent-history-builder.ts`** — Builds scoped conversation history (messages since agent's last completed run)
 - **`src/core/session-store.ts`** — Per-agent session persistence for `--resume`
-- **`src/core/agent-profiles.ts`** — Five built-in agent profiles (pm, architect, developer, tester, supervisor)
+- **`src/core/agent-config-store.ts`** — Five built-in agent configuration templates (pm, architect, developer, tester, supervisor)
+- **`src/core/agent-profiles.ts`** — Legacy runtime profile helpers and config-to-profile conversion
 - **`src/core/agent-session.ts`** — Manages one agent's lifecycle (idle/running/error/stopped)
 - **`src/core/agent-registry.ts`** — Owns AgentSession instances, exposes agent state
 - **`src/core/message-store.ts`** — Persisted message shards, manifest recovery, and cursor pagination
@@ -141,7 +143,7 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 | tester | No | Yes | No |
 | supervisor | No | No | No |
 
-The developer agent creates feature branches, commits, pushes, and opens draft PRs. Other agents cannot git commit. Profiles are hardcoded in `agent-profiles.ts`.
+The developer agent creates feature branches, commits, pushes, and opens draft PRs. Other agents cannot git commit. Default editable templates are seeded by `agent-config-store.ts`.
 
 ### API Surface
 

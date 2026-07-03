@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createDefaultAgentProfiles } from "../src/core/agent-profiles.ts";
 
-test("loads four default Orbit roles", () => {
+test("loads four legacy runtime worker profiles", () => {
   const profiles = createDefaultAgentProfiles("D:/project");
 
   assert.deepEqual(
