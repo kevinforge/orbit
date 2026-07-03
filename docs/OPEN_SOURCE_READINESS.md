@@ -31,6 +31,9 @@ administrator steps.
 - Dependency-license baseline: `docs/DEPENDENCY_LICENSES.md` records the
   current reviewed license identifiers and tests guard against unexpected
   additions.
+- Contributor baseline: `CONTRIBUTING.md`, the pull request template, and
+  `docs/RELEASE_CHECKLIST.md` document public contribution and release
+  verification expectations.
 
 ## Release Gates
 
@@ -131,8 +134,8 @@ Target outcome: ordinary failures leave clear, recoverable state.
 
 - Add focused tests around startup recovery, interrupted queues, and persistent
   data safety where gaps remain.
-- Add a manual release checklist for crash/restart, cancel, background
-  conversation work, attachment handling, and collaboration insights.
+- Keep the manual release checklist current for crash/restart, cancel,
+  background conversation work, attachment handling, and collaboration insights.
 - Review terminal transcript retention and message shard recovery for
   user-data loss risks.
 

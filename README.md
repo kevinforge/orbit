@@ -59,3 +59,9 @@ Orbit coordinates CLI-backed agents. The agents require:
 
 Orbit is released under the [MIT License](LICENSE). Please report security
 issues through the policy in [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
+[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for release candidate
+verification.

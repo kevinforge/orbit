@@ -61,6 +61,8 @@ test("repository includes open source governance files", () => {
   assert.ok(fs.existsSync("SECURITY.md"));
   assert.ok(fs.existsSync("CODE_OF_CONDUCT.md"));
   assert.ok(fs.existsSync("docs/DEPENDENCY_LICENSES.md"));
+  assert.ok(fs.existsSync("CONTRIBUTING.md"));
+  assert.ok(fs.existsSync("docs/RELEASE_CHECKLIST.md"));
 });
 
 test("dependency license identifiers stay within the reviewed open source set", () => {

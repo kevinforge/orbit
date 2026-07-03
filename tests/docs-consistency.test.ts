@@ -31,3 +31,35 @@ test("open source readiness no longer tracks completed Claude-only architecture 
 
   assert.doesNotMatch(doc, /still imply Claude Code only/);
 });
+
+test("repository exposes open source contribution and release guidance", () => {
+  const contributing = readRepoFile("CONTRIBUTING.md");
+  const releaseChecklist = readRepoFile("docs/RELEASE_CHECKLIST.md");
+  const prTemplate = readRepoFile(".github/pull_request_template.md");
+  const readme = readRepoFile("README.md");
+  const readiness = readRepoFile("docs/OPEN_SOURCE_READINESS.md");
+
+  assert.match(contributing, /Node\.js 20 or newer/);
+  assert.match(contributing, /npm audit --audit-level=moderate/);
+  assert.match(contributing, /npm run smoke:start/);
+  assert.match(contributing, /node --test --import tsx/);
+  assert.match(contributing, /~\/\.orbit/);
+
+  assert.match(releaseChecklist, /Cross-Platform Startup/);
+  assert.match(releaseChecklist, /Stability And Recovery/);
+  assert.match(releaseChecklist, /Windows x64, Linux x64, macOS x64, and macOS ARM64/);
+  assert.match(releaseChecklist, /SHA256SUMS\.txt/);
+  assert.match(releaseChecklist, /attachments/);
+  assert.match(releaseChecklist, /background conversations/);
+
+  assert.match(prTemplate, /## Verification/);
+  assert.match(prTemplate, /npm audit --audit-level=moderate/);
+  assert.match(prTemplate, /npm run smoke:start/);
+  assert.match(prTemplate, /## Screenshots/);
+  assert.match(prTemplate, /## Known Risks And Follow-Up/);
+
+  assert.match(readme, /CONTRIBUTING\.md/);
+  assert.match(readme, /docs\/RELEASE_CHECKLIST\.md/);
+  assert.match(readiness, /Contributor baseline/);
+  assert.doesNotMatch(readiness, /Add a manual release checklist/);
+});
