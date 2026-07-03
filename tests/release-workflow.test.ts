@@ -19,6 +19,17 @@ test("release workflow only starts from semantic version tags", () => {
   assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
 });
 
+test("github workflows use current action runtimes", () => {
+  for (const content of [workflow, ciWorkflow]) {
+    assert.match(content, /actions\/checkout@v5/);
+    assert.match(content, /actions\/setup-node@v5/);
+    assert.match(content, /oven-sh\/setup-bun@v2/);
+    assert.doesNotMatch(content, /actions\/checkout@v4/);
+    assert.doesNotMatch(content, /actions\/setup-node@v4/);
+    assert.doesNotMatch(content, /oven-sh\/setup-bun@v1/);
+  }
+});
+
 test("release workflow verifies, creates an npm package for every supported target, then publishes", () => {
   assert.match(workflow, /platform: windows/);
   assert.match(workflow, /platform: linux/);
