@@ -60,6 +60,12 @@ Orbit coordinates CLI-backed agents. The agents require:
 Orbit is released under the [MIT License](LICENSE). Please report security
 issues through the policy in [SECURITY.md](SECURITY.md).
 
+## Support
+
+See [SUPPORT.md](https://github.com/QianzhenSun/orbit/blob/main/SUPPORT.md) for
+bug reports, feature requests, security reporting, and release-candidate support
+expectations.
+
 ## Local Data
 
 Orbit stores local product data under `~/.orbit`. See

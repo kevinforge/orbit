@@ -44,6 +44,7 @@ test("repository exposes open source contribution and release guidance", () => {
   const prTemplate = readRepoFile(".github/pull_request_template.md");
   const readme = readRepoFile("README.md");
   const readiness = readRepoFile("docs/OPEN_SOURCE_READINESS.md");
+  const support = readRepoFile("SUPPORT.md");
 
   assert.match(contributing, /Node\.js 20 or newer/);
   assert.match(contributing, /npm audit --audit-level=moderate/);
@@ -53,6 +54,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(contributing, /docs\/RELEASE_DECISIONS\.md/);
   assert.match(contributing, /bug report template/);
   assert.match(contributing, /SECURITY\.md/);
+  assert.match(contributing, /SUPPORT\.md/);
 
   assert.match(releaseDecisions, /Distribution Channel/);
   assert.match(releaseDecisions, /npm Package Name/);
@@ -118,6 +120,8 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(issueConfig, /blank_issues_enabled: false/);
   assert.match(issueConfig, /Security vulnerability/);
   assert.match(issueConfig, /security\/policy/);
+  assert.match(issueConfig, /Support policy/);
+  assert.match(issueConfig, /SUPPORT\.md/);
 
   assert.match(prTemplate, /## Verification/);
   assert.match(prTemplate, /npm audit --audit-level=moderate/);
@@ -126,10 +130,12 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(prTemplate, /## Known Risks And Follow-Up/);
 
   assert.match(readme, /CONTRIBUTING\.md/);
+  assert.match(readme, /SUPPORT\.md/);
   assert.match(readme, /docs\/RELEASE_CHECKLIST\.md/);
   assert.match(readme, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(readiness, /Contributor baseline/);
   assert.match(readiness, /Issue intake baseline/);
+  assert.match(readiness, /SUPPORT\.md/);
   assert.match(readiness, /Release-notes baseline/);
   assert.match(readiness, /Release-decisions baseline/);
   assert.match(readiness, /Stability-verification baseline/);
@@ -137,6 +143,15 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(readiness, /RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(readiness, /STABILITY_VERIFICATION\.md/);
   assert.doesNotMatch(readiness, /Add a manual release checklist/);
+
+  assert.match(support, /Where To Ask/);
+  assert.match(support, /Reproducible bugs/);
+  assert.match(support, /Security vulnerabilities/);
+  assert.match(support, /1\.0 release-candidate verification/);
+  assert.match(support, /~\/\.orbit/);
+  assert.match(support, /Startup failures/);
+  assert.match(support, /Permanently stuck running or queued/);
+  assert.match(support, /best-effort/);
 });
 
 test("repository documents local data backup and reset guidance", () => {

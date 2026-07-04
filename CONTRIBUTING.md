@@ -5,7 +5,8 @@ should preserve user data, keep long-running digital employee work recoverable,
 and stay easy for external contributors to verify.
 
 Please also read the [Code of Conduct](./CODE_OF_CONDUCT.md) and the security
-reporting policy in [SECURITY.md](./SECURITY.md).
+reporting policy in [SECURITY.md](./SECURITY.md). For public support channels,
+see [SUPPORT.md](./SUPPORT.md).
 
 ## Requirements
 
@@ -106,6 +107,7 @@ Keep repository documentation small:
 - `docs/QUICKSTART.md` and `docs/QUICKSTART.zh-CN.md` for first-run guidance.
 - `docs/OPEN_SOURCE_READINESS.md` for 1.0 open source release gates.
 - `CONTRIBUTING.md` for workflow and standards.
+- `SUPPORT.md` for issue, security, and release-candidate support channels.
 - `AGENTS.md` for the required agent workflow.
 
 Temporary planning or research documents should stay outside the committed repository, or in a local ignored folder.

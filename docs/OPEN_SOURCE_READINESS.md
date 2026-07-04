@@ -27,7 +27,7 @@ administrator steps.
 - Release state: CI runs tests and build on pull requests; release workflow
   builds platform-specific npm installation packages and GitHub Release assets.
 - Governance baseline: MIT `LICENSE`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and
-  public package metadata are present.
+  `SUPPORT.md`, and public package metadata are present.
 - Dependency-license baseline: `docs/DEPENDENCY_LICENSES.md` records the
   current reviewed license identifiers and tests guard against unexpected
   additions.
@@ -36,7 +36,8 @@ administrator steps.
   verification expectations.
 - Issue intake baseline: GitHub issue templates collect bug reports, feature
   requests, runtime/platform details, and local data impact while sending
-  security reports to `SECURITY.md`.
+  security reports to `SECURITY.md`; `SUPPORT.md` documents the public support
+  channels and release-candidate support scope.
 - Release-notes baseline: `docs/RELEASE_NOTES_v1.0.0-rc.1.md` provides the
   auditable draft for the first 1.0 release candidate.
 - Release-decisions baseline: `docs/RELEASE_DECISIONS.md` captures draft
@@ -60,6 +61,8 @@ All gates below must be closed before tagging `v1.0.0`.
 - Keep `SECURITY.md` current with supported versions and vulnerability
   reporting policy.
 - Keep `CODE_OF_CONDUCT.md` available for public collaboration.
+- Keep `SUPPORT.md` current with issue, security, and release-candidate support
+  expectations.
 - Keep `docs/DEPENDENCY_LICENSES.md` aligned with `package-lock.json`; review
   any newly introduced dependency license identifiers before release.
 - Remove private-release wording from public-facing docs and workflows.

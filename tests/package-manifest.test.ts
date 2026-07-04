@@ -59,6 +59,7 @@ test("package exposes open source metadata", () => {
 test("repository includes open source governance files", () => {
   assert.ok(fs.existsSync("LICENSE"));
   assert.ok(fs.existsSync("SECURITY.md"));
+  assert.ok(fs.existsSync("SUPPORT.md"));
   assert.ok(fs.existsSync("CODE_OF_CONDUCT.md"));
   assert.ok(fs.existsSync(".github/ISSUE_TEMPLATE/bug_report.yml"));
   assert.ok(fs.existsSync(".github/ISSUE_TEMPLATE/config.yml"));
