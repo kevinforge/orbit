@@ -148,6 +148,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v5
+
       - name: Download packaged assets
         uses: actions/download-artifact@v4
         with:
@@ -165,12 +168,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          notes_file="docs/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+          notes_args=(--generate-notes)
+          if [[ -f "$notes_file" ]]; then
+            notes_args=(--notes-file "$notes_file")
+          fi
+
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+            if [[ -f "$notes_file" ]]; then
+              gh release edit "$GITHUB_REF_NAME" --notes-file "$notes_file" --repo "$GITHUB_REPOSITORY"
+            fi
           else
             gh release create "$GITHUB_REF_NAME" release-assets/* \
               --verify-tag \
               --title "Orbit $GITHUB_REF_NAME" \
-              --generate-notes \
+              "${notes_args[@]}" \
               --repo "$GITHUB_REPOSITORY"
           fi

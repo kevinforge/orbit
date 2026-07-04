@@ -4,7 +4,9 @@ Status: draft. Do not publish these notes until every `TBD before release`
 item is resolved and the release evidence is attached.
 
 Use this file as the auditable release-notes source for the first 1.0 release
-candidate. Keep the final GitHub Release body aligned with this document.
+candidate. The release workflow uses `docs/RELEASE_NOTES_<tag>.md` when a
+matching file exists, so tag `v1.0.0-rc.1` will publish this file as the GitHub
+Release body after all draft placeholders are resolved.
 
 ## Release Summary
 

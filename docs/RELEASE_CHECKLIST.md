@@ -80,7 +80,9 @@ Use `docs/STABILITY_VERIFICATION.md` to run these checks and capture evidence.
 ## Release Notes
 
 Use `docs/RELEASE_NOTES_v1.0.0-rc.1.md` as the release-notes draft for the
-first 1.0 release candidate.
+first 1.0 release candidate. The release workflow uses
+`docs/RELEASE_NOTES_<tag>.md` when a matching file exists, and falls back to
+generated GitHub release notes otherwise.
 
 - [ ] Include installation from GitHub Release artifacts.
 - [ ] State whether public npm installation is supported.

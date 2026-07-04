@@ -51,7 +51,13 @@ test("release workflow verifies, creates an npm package for every supported targ
   assert.match(workflow, /needs: build/);
   assert.match(workflow, /if: github\.event_name == 'push'/);
   assert.match(workflow, /contents: write/);
+  assert.match(workflow, /Checkout release notes/);
   assert.match(workflow, /gh release create/);
+  assert.match(workflow, /notes_file="docs\/RELEASE_NOTES_\$\{GITHUB_REF_NAME\}\.md"/);
+  assert.match(workflow, /notes_args=\(--generate-notes\)/);
+  assert.match(workflow, /notes_args=\(--notes-file "\$notes_file"\)/);
+  assert.match(workflow, /gh release edit "\$GITHUB_REF_NAME" --notes-file "\$notes_file"/);
+  assert.match(workflow, /"\$\{notes_args\[@\]\}"/);
   assert.match(workflow, /SHA256SUMS\.txt/);
   assert.match(workflow, /npm pack --pack-destination release --silent/);
   assert.match(workflow, /release\/orbit-\$\{version\}-\$\{ASSET\}\.tgz/);
