@@ -65,14 +65,23 @@ test("ci smoke-tests the built app startup", () => {
   assert.match(ciWorkflow, /npm run smoke:start/);
 });
 
-test("release tag verifier accepts the package version and rejects mismatches", () => {
+test("release tag verifier accepts the package version, supports prerelease syntax, and rejects mismatches", () => {
   const verifier = path.join(root, "scripts/verify-release-tag.mjs");
   const valid = spawnSync(process.execPath, [verifier, `v${packageJson.version}`], { encoding: "utf8" });
   assert.equal(valid.status, 0, valid.stderr);
 
+  const prereleaseMismatch = spawnSync(process.execPath, [verifier, `v${packageJson.version}-rc.1`], { encoding: "utf8" });
+  assert.notEqual(prereleaseMismatch.status, 0);
+  assert.match(prereleaseMismatch.stderr, /does not match package\.json version/);
+  assert.doesNotMatch(prereleaseMismatch.stderr, /Invalid release tag/);
+
   const invalid = spawnSync(process.execPath, [verifier, "v999.0.0"], { encoding: "utf8" });
   assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /does not match package\.json version/);
+
+  const invalidFormat = spawnSync(process.execPath, [verifier, "v1.0"], { encoding: "utf8" });
+  assert.notEqual(invalidFormat.status, 0);
+  assert.match(invalidFormat.stderr, /Invalid release tag/);
 });
 
 test("standalone builds remove generated source maps before packaging", () => {

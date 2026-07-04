@@ -9,8 +9,10 @@ const tag = process.argv[2] ?? process.env.GITHUB_REF_NAME ?? "";
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const expectedTag = `v${packageJson.version}`;
 
-if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
-  console.error(`Invalid release tag "${tag}". Expected v<major>.<minor>.<patch>.`);
+const releaseTagPattern = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+if (!releaseTagPattern.test(tag)) {
+  console.error(`Invalid release tag "${tag}". Expected v<major>.<minor>.<patch> or v<major>.<minor>.<patch>-<prerelease>.`);
   process.exit(1);
 }
 
