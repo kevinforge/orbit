@@ -112,6 +112,10 @@ jobs:
         shell: bash
         run: node scripts/smoke-start.mjs --binary "./dist/bin/${{ matrix.binary }}"
 
+      - name: Smoke test occupied port startup failure
+        shell: bash
+        run: node scripts/smoke-port-conflict.mjs --binary "./dist/bin/${{ matrix.binary }}"
+
       - name: Create npm installation package
         shell: bash
         env:

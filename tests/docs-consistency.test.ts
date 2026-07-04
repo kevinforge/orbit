@@ -99,6 +99,8 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(stabilityVerification, /Background Conversations And Insights/);
   assert.match(stabilityVerification, /markAbandonedActiveRuns/);
   assert.match(stabilityVerification, /GET \/api\/state/);
+  assert.match(stabilityVerification, /scripts\/smoke-port-conflict\.mjs/);
+  assert.match(stabilityVerification, /ORBIT_PORT/);
   assert.match(stabilityVerification, /~\/\.orbit/);
   assert.match(stabilityVerification, /Release Evidence Template/);
 

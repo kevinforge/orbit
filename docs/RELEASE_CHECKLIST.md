@@ -33,6 +33,7 @@ release candidate.
 - [ ] Run `npm run build`.
 - [ ] Run `npm audit --audit-level=moderate`.
 - [ ] Run `npm run smoke:start`.
+- [ ] Run `npm run smoke:port-conflict`.
 - [ ] Run `npm pack --dry-run --json` and confirm the package contains only the
   launcher, built binary, built UI, install script, README files, license, and
   package metadata.

@@ -41,7 +41,9 @@ test("default test script uses complete cross-platform discovery", () => {
   assert.equal(manifest.scripts?.test, "node scripts/run-tests.mjs");
   assert.equal(manifest.scripts?.["test:glob"], "npm run test");
   assert.equal(manifest.scripts?.["smoke:start"], "node scripts/smoke-start.mjs");
+  assert.equal(manifest.scripts?.["smoke:port-conflict"], "node scripts/smoke-port-conflict.mjs");
   assert.ok(fs.existsSync("scripts/smoke-start.mjs"));
+  assert.ok(fs.existsSync("scripts/smoke-port-conflict.mjs"));
 });
 
 test("package exposes open source metadata", () => {

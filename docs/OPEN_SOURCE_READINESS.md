@@ -19,7 +19,9 @@ administrator steps.
 - Startup baseline: the default standalone build starts without `license.json`;
   private licensed builds must opt in with `ORBIT_REQUIRE_LICENSE=true`.
 - Smoke-test baseline: CI and release builds run `scripts/smoke-start.mjs`,
-  which starts the built app and waits for `GET /api/state`.
+  which starts the built app and waits for `GET /api/state`, plus
+  `scripts/smoke-port-conflict.mjs`, which verifies an occupied explicit port
+  fails with a recoverable startup message.
 - Core product state: local-first workspace app with React UI, local HTTP/SSE
   server, workspace and conversation persistence, configurable digital
   employees, CLI runtime adapters for Claude Code, Codex, and CodeBuddy, run
@@ -82,7 +84,8 @@ All gates below must be closed before tagging `v1.0.0`.
 
 - Keep `npm run test`, `npm run build`, and `npm audit --audit-level=moderate`
   green before release.
-- Keep the built-app `/api/state` smoke test running in CI and release builds.
+- Keep the built-app `/api/state` and occupied-port smoke tests running in CI
+  and release builds.
 - Validate port recovery on Windows, macOS, and Linux.
 - Validate restart recovery: running and queued tasks must not remain stuck
   after a crash or process kill.

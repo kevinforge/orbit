@@ -41,6 +41,7 @@
     "release:check": "node scripts/verify-release-readiness.mjs v1.0.0-rc.1",
     "release:check:strict": "node scripts/verify-release-readiness.mjs v1.0.0-rc.1 --strict",
     "smoke:start": "node scripts/smoke-start.mjs",
+    "smoke:port-conflict": "node scripts/smoke-port-conflict.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:glob": "npm run test",
     "prepublishOnly": "npm run test && npm run build"

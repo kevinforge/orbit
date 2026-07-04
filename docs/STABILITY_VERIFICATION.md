@@ -47,6 +47,9 @@ Current automated coverage includes:
   recovered task outcomes in Collaboration Insights.
 - `scripts/smoke-start.mjs` starts the built app and waits for
   `GET /api/state` to return 200.
+- `scripts/smoke-port-conflict.mjs` occupies a local port, starts Orbit with
+  `ORBIT_PORT` set to that port, and verifies the startup failure names the
+  occupied port plus the port override recovery path.
 
 These tests do not replace cross-platform manual verification. They provide the
 baseline that makes a manual failure easier to diagnose.

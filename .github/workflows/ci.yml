@@ -36,3 +36,6 @@ jobs:
 
       - name: Smoke test built app startup
         run: npm run smoke:start
+
+      - name: Smoke test occupied port startup failure
+        run: npm run smoke:port-conflict
