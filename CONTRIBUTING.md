@@ -89,6 +89,8 @@ Keep repository documentation small:
   verification.
 - `docs/RELEASE_NOTES_v1.0.0-rc.1.md` for the first 1.0 release-candidate
   notes draft.
+- `docs/STABILITY_VERIFICATION.md` for cross-platform stability and recovery
+  release evidence.
 - `docs/TERMINOLOGY_AND_ROUTING.md` for public product terms and assignment
   marker behavior.
 - `docs/QUICKSTART.md` and `docs/QUICKSTART.zh-CN.md` for first-run guidance.

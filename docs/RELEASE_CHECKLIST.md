@@ -46,6 +46,8 @@ Verify on Windows, Linux, and macOS before the final 1.0 tag:
 
 ## Stability And Recovery
 
+Use `docs/STABILITY_VERIFICATION.md` to run these checks and capture evidence.
+
 - [ ] Crash or kill the server during running and queued digital employee work,
   restart Orbit, and verify no task remains permanently stuck as running or
   queued.

@@ -36,6 +36,7 @@ test("repository exposes open source contribution and release guidance", () => {
   const contributing = readRepoFile("CONTRIBUTING.md");
   const releaseChecklist = readRepoFile("docs/RELEASE_CHECKLIST.md");
   const releaseNotes = readRepoFile("docs/RELEASE_NOTES_v1.0.0-rc.1.md");
+  const stabilityVerification = readRepoFile("docs/STABILITY_VERIFICATION.md");
   const prTemplate = readRepoFile(".github/pull_request_template.md");
   const readme = readRepoFile("README.md");
   const readiness = readRepoFile("docs/OPEN_SOURCE_READINESS.md");
@@ -53,6 +54,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseChecklist, /attachments/);
   assert.match(releaseChecklist, /background conversations/);
   assert.match(releaseChecklist, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
+  assert.match(releaseChecklist, /docs\/STABILITY_VERIFICATION\.md/);
 
   assert.match(releaseNotes, /Status: draft/);
   assert.match(releaseNotes, /GitHub Release Artifacts/);
@@ -64,7 +66,17 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseNotes, /SECURITY\.md/);
   assert.match(releaseNotes, /CODE_OF_CONDUCT\.md/);
   assert.match(releaseNotes, /CONTRIBUTING\.md/);
+  assert.match(releaseNotes, /docs\/STABILITY_VERIFICATION\.md/);
   assert.match(releaseNotes, /TBD before release/);
+
+  assert.match(stabilityVerification, /Restart Recovery/);
+  assert.match(stabilityVerification, /Queue Cancellation/);
+  assert.match(stabilityVerification, /Local Data Persistence/);
+  assert.match(stabilityVerification, /Background Conversations And Insights/);
+  assert.match(stabilityVerification, /markAbandonedActiveRuns/);
+  assert.match(stabilityVerification, /GET \/api\/state/);
+  assert.match(stabilityVerification, /~\/\.orbit/);
+  assert.match(stabilityVerification, /Release Evidence Template/);
 
   assert.match(prTemplate, /## Verification/);
   assert.match(prTemplate, /npm audit --audit-level=moderate/);
@@ -77,7 +89,9 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(readme, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(readiness, /Contributor baseline/);
   assert.match(readiness, /Release-notes baseline/);
+  assert.match(readiness, /Stability-verification baseline/);
   assert.match(readiness, /RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
+  assert.match(readiness, /STABILITY_VERIFICATION\.md/);
   assert.doesNotMatch(readiness, /Add a manual release checklist/);
 });
 

@@ -36,6 +36,9 @@ administrator steps.
   verification expectations.
 - Release-notes baseline: `docs/RELEASE_NOTES_v1.0.0-rc.1.md` provides the
   auditable draft for the first 1.0 release candidate.
+- Stability-verification baseline: `docs/STABILITY_VERIFICATION.md` turns
+  restart recovery, queue cancellation, local data safety, background work, and
+  Collaboration Insights checks into repeatable release evidence.
 - Local-data baseline: `docs/DATA_DIRECTORY.md` documents `~/.orbit` layout,
   backup, restore, reset, and workspace/conversation deletion scope.
 - Terminology baseline: `docs/TERMINOLOGY_AND_ROUTING.md` documents public
@@ -77,6 +80,7 @@ All gates below must be closed before tagging `v1.0.0`.
 - Validate data safety for `~/.orbit`: messages, sessions, workspace config,
   agent config, attachments, and transcripts must survive ordinary restarts.
 - Confirm queue cancellation always starts the next eligible queued task.
+- Record release evidence using `docs/STABILITY_VERIFICATION.md`.
 
 ### 4. Contributor Experience
 
@@ -143,6 +147,8 @@ Target outcome: ordinary failures leave clear, recoverable state.
   data safety where gaps remain.
 - Keep the manual release checklist current for crash/restart, cancel,
   background conversation work, attachment handling, and collaboration insights.
+- Keep `docs/STABILITY_VERIFICATION.md` aligned with the current recovery and
+  data persistence behavior.
 - Review terminal transcript retention and message shard recovery for
   user-data loss risks.
 

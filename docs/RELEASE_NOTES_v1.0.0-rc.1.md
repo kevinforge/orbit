@@ -152,12 +152,14 @@ the candidate:
 - [ ] macOS startup verification
 - [ ] Restart and queue recovery verification
 - [ ] Local data backup/restore verification
+- [ ] Platform evidence copied from `docs/STABILITY_VERIFICATION.md`
 
 ## Documentation
 
 - `README.md`
 - `docs/QUICKSTART.md`
 - `docs/DATA_DIRECTORY.md`
+- `docs/STABILITY_VERIFICATION.md`
 - `docs/TERMINOLOGY_AND_ROUTING.md`
 - `docs/RELEASE_CHECKLIST.md`
 - `docs/OPEN_SOURCE_READINESS.md`
