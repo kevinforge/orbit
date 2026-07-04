@@ -34,6 +34,8 @@ administrator steps.
 - Contributor baseline: `CONTRIBUTING.md`, the pull request template, and
   `docs/RELEASE_CHECKLIST.md` document public contribution and release
   verification expectations.
+- Release-notes baseline: `docs/RELEASE_NOTES_v1.0.0-rc.1.md` provides the
+  auditable draft for the first 1.0 release candidate.
 - Local-data baseline: `docs/DATA_DIRECTORY.md` documents `~/.orbit` layout,
   backup, restore, reset, and workspace/conversation deletion scope.
 - Terminology baseline: `docs/TERMINOLOGY_AND_ROUTING.md` documents public
@@ -150,7 +152,8 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 
 - Freeze public API and data layout expectations for 1.0.
 - Build release artifacts for all supported platforms.
-- Publish release notes with known limitations.
+- Resolve the `docs/RELEASE_NOTES_v1.0.0-rc.1.md` draft placeholders and
+  publish release notes with known limitations.
 - Gather external installation and first-run feedback.
 
 ## Known Decisions Needed
@@ -169,4 +172,5 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 1. Verify dev and standalone startup on Windows, macOS, and Linux.
 2. Decide public distribution channel: GitHub Releases only, npm, or both.
 3. Decide whether private licensed build support should remain in this repo.
-4. Prepare `v1.0.0-rc.1` release notes with known limitations.
+4. Resolve `docs/RELEASE_NOTES_v1.0.0-rc.1.md` placeholders and attach final
+   release evidence.

@@ -74,6 +74,9 @@ Verify on Windows, Linux, and macOS before the final 1.0 tag:
 
 ## Release Notes
 
+Use `docs/RELEASE_NOTES_v1.0.0-rc.1.md` as the release-notes draft for the
+first 1.0 release candidate.
+
 - [ ] Include installation from GitHub Release artifacts.
 - [ ] State whether public npm installation is supported.
 - [ ] List supported operating systems and required runtime CLIs.

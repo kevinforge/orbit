@@ -35,6 +35,7 @@ test("open source readiness no longer tracks completed Claude-only architecture 
 test("repository exposes open source contribution and release guidance", () => {
   const contributing = readRepoFile("CONTRIBUTING.md");
   const releaseChecklist = readRepoFile("docs/RELEASE_CHECKLIST.md");
+  const releaseNotes = readRepoFile("docs/RELEASE_NOTES_v1.0.0-rc.1.md");
   const prTemplate = readRepoFile(".github/pull_request_template.md");
   const readme = readRepoFile("README.md");
   const readiness = readRepoFile("docs/OPEN_SOURCE_READINESS.md");
@@ -51,6 +52,19 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseChecklist, /SHA256SUMS\.txt/);
   assert.match(releaseChecklist, /attachments/);
   assert.match(releaseChecklist, /background conversations/);
+  assert.match(releaseChecklist, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
+
+  assert.match(releaseNotes, /Status: draft/);
+  assert.match(releaseNotes, /GitHub Release Artifacts/);
+  assert.match(releaseNotes, /Public npm/);
+  assert.match(releaseNotes, /Supported Platforms/);
+  assert.match(releaseNotes, /Runtime Prerequisites/);
+  assert.match(releaseNotes, /Known Limitations/);
+  assert.match(releaseNotes, /Verification Evidence/);
+  assert.match(releaseNotes, /SECURITY\.md/);
+  assert.match(releaseNotes, /CODE_OF_CONDUCT\.md/);
+  assert.match(releaseNotes, /CONTRIBUTING\.md/);
+  assert.match(releaseNotes, /TBD before release/);
 
   assert.match(prTemplate, /## Verification/);
   assert.match(prTemplate, /npm audit --audit-level=moderate/);
@@ -60,7 +74,10 @@ test("repository exposes open source contribution and release guidance", () => {
 
   assert.match(readme, /CONTRIBUTING\.md/);
   assert.match(readme, /docs\/RELEASE_CHECKLIST\.md/);
+  assert.match(readme, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(readiness, /Contributor baseline/);
+  assert.match(readiness, /Release-notes baseline/);
+  assert.match(readiness, /RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.doesNotMatch(readiness, /Add a manual release checklist/);
 });
 

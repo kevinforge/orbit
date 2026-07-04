@@ -75,4 +75,5 @@ public product terms and `@developer:` style assignment marker rules.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
 [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for release candidate
-verification.
+verification. The first 1.0 release-candidate notes are drafted in
+[docs/RELEASE_NOTES_v1.0.0-rc.1.md](docs/RELEASE_NOTES_v1.0.0-rc.1.md).
