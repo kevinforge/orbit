@@ -24,6 +24,9 @@ release candidate.
 
 - [ ] Start from the intended release branch or tag commit on `main`.
 - [ ] Confirm `package.json` version matches the planned release tag.
+- [ ] Run `npm run release:check` while preparing the candidate, then run
+  `npm run release:check:strict` after version, release notes, and evidence are
+  final.
 - [ ] Confirm `LICENSE`, `SECURITY.md`, `CODE_OF_CONDUCT.md`,
   `CONTRIBUTING.md`, and `docs/DEPENDENCY_LICENSES.md` are present.
 - [ ] Run `npm run test`.

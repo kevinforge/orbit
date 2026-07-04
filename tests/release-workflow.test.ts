@@ -8,15 +8,38 @@ const root = path.resolve(import.meta.dirname, "..");
 const workflow = fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
 const ciWorkflow = fs.readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
 const standaloneBuilder = fs.readFileSync(path.join(root, "scripts/build-standalone.mjs"), "utf8");
+const packageManifest = fs.readFileSync(path.join(root, "package.json"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
 
 test("release workflow only starts from semantic version tags", () => {
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /tags:\s*\n\s*- "v\*\.\*\.\*"/);
   assert.match(workflow, /node scripts\/verify-release-tag\.mjs/);
+  assert.match(workflow, /node scripts\/verify-release-readiness\.mjs "\$GITHUB_REF_NAME" --strict/);
+  assert.match(workflow, /node scripts\/verify-release-readiness\.mjs "v\$\{package_version\}" --strict/);
   assert.match(workflow, /git fetch origin main:refs\/remotes\/origin\/main/);
   assert.match(workflow, /git rev-list -n 1 "\$GITHUB_REF_NAME"/);
   assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
+});
+
+test("release readiness checker reports draft blockers without failing normal preparation", () => {
+  const checker = path.join(root, "scripts/verify-release-readiness.mjs");
+  const draft = spawnSync(process.execPath, [checker, "v1.0.0-rc.1"], { encoding: "utf8" });
+  assert.equal(draft.status, 0, draft.stderr);
+  assert.match(draft.stdout, /Release readiness check for v1\.0\.0-rc\.1 in draft mode/);
+  assert.match(draft.stdout, /BLOCKER Release tag v1\.0\.0-rc\.1 does not match package\.json version/);
+  assert.match(draft.stdout, /BLOCKER docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md has no "TBD before release" placeholders/);
+  assert.match(draft.stdout, /Draft mode allows blockers/);
+
+  const strict = spawnSync(process.execPath, [checker, "v1.0.0-rc.1", "--strict"], { encoding: "utf8" });
+  assert.notEqual(strict.status, 0);
+  assert.match(strict.stdout, /Release readiness check for v1\.0\.0-rc\.1 in strict mode/);
+  assert.match(strict.stdout, /release blockers? found/);
+});
+
+test("package exposes release readiness commands", () => {
+  assert.match(packageManifest, /"release:check": "node scripts\/verify-release-readiness\.mjs v1\.0\.0-rc\.1"/);
+  assert.match(packageManifest, /"release:check:strict": "node scripts\/verify-release-readiness\.mjs v1\.0\.0-rc\.1 --strict"/);
 });
 
 test("github workflows use current action runtimes", () => {
