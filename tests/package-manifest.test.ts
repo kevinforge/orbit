@@ -63,6 +63,7 @@ test("repository includes open source governance files", () => {
   assert.ok(fs.existsSync("docs/DEPENDENCY_LICENSES.md"));
   assert.ok(fs.existsSync("docs/DATA_DIRECTORY.md"));
   assert.ok(fs.existsSync("CONTRIBUTING.md"));
+  assert.ok(fs.existsSync("docs/RELEASE_DECISIONS.md"));
   assert.ok(fs.existsSync("docs/RELEASE_CHECKLIST.md"));
   assert.ok(fs.existsSync("docs/RELEASE_NOTES_v1.0.0-rc.1.md"));
   assert.ok(fs.existsSync("docs/STABILITY_VERIFICATION.md"));

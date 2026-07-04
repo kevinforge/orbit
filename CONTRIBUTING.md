@@ -85,6 +85,8 @@ Keep repository documentation small:
 - `docs/DATA_DIRECTORY.md` for local data layout, backup, restore, and reset
   guidance.
 - `docs/DEPENDENCY_LICENSES.md` for dependency license review.
+- `docs/RELEASE_DECISIONS.md` for open release decisions and current
+  recommendations.
 - `docs/RELEASE_CHECKLIST.md` for 1.0 release candidate and final release
   verification.
 - `docs/RELEASE_NOTES_v1.0.0-rc.1.md` for the first 1.0 release-candidate

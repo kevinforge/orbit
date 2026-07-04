@@ -6,6 +6,9 @@ audited later.
 
 ## Release Decisions
 
+Use `docs/RELEASE_DECISIONS.md` as the decision brief before publishing a
+release candidate.
+
 - [ ] Confirm the project license is still MIT.
 - [ ] Confirm the public distribution channel: GitHub Releases only, public npm,
   or both.

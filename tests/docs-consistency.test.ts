@@ -34,6 +34,7 @@ test("open source readiness no longer tracks completed Claude-only architecture 
 
 test("repository exposes open source contribution and release guidance", () => {
   const contributing = readRepoFile("CONTRIBUTING.md");
+  const releaseDecisions = readRepoFile("docs/RELEASE_DECISIONS.md");
   const releaseChecklist = readRepoFile("docs/RELEASE_CHECKLIST.md");
   const releaseNotes = readRepoFile("docs/RELEASE_NOTES_v1.0.0-rc.1.md");
   const stabilityVerification = readRepoFile("docs/STABILITY_VERIFICATION.md");
@@ -46,6 +47,17 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(contributing, /npm run smoke:start/);
   assert.match(contributing, /node --test --import tsx/);
   assert.match(contributing, /~\/\.orbit/);
+  assert.match(contributing, /docs\/RELEASE_DECISIONS\.md/);
+
+  assert.match(releaseDecisions, /Distribution Channel/);
+  assert.match(releaseDecisions, /npm Package Name/);
+  assert.match(releaseDecisions, /GitHub Releases only/);
+  assert.match(releaseDecisions, /npm view orbit/);
+  assert.match(releaseDecisions, /@qianzhensun\/orbit/);
+  assert.match(releaseDecisions, /Private Licensed Build Support/);
+  assert.match(releaseDecisions, /Supported Operating Systems/);
+  assert.match(releaseDecisions, /Runtime CLI Policy/);
+  assert.match(releaseDecisions, /at least one supported runtime CLI/);
 
   assert.match(releaseChecklist, /Cross-Platform Startup/);
   assert.match(releaseChecklist, /Stability And Recovery/);
@@ -53,19 +65,24 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseChecklist, /SHA256SUMS\.txt/);
   assert.match(releaseChecklist, /attachments/);
   assert.match(releaseChecklist, /background conversations/);
+  assert.match(releaseChecklist, /docs\/RELEASE_DECISIONS\.md/);
   assert.match(releaseChecklist, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(releaseChecklist, /docs\/STABILITY_VERIFICATION\.md/);
 
   assert.match(releaseNotes, /Status: draft/);
   assert.match(releaseNotes, /GitHub Release Artifacts/);
   assert.match(releaseNotes, /Public npm/);
+  assert.match(releaseNotes, /GitHub Releases only/);
+  assert.match(releaseNotes, /package name is already occupied/);
   assert.match(releaseNotes, /Supported Platforms/);
   assert.match(releaseNotes, /Runtime Prerequisites/);
+  assert.match(releaseNotes, /at least one supported runtime CLI/);
   assert.match(releaseNotes, /Known Limitations/);
   assert.match(releaseNotes, /Verification Evidence/);
   assert.match(releaseNotes, /SECURITY\.md/);
   assert.match(releaseNotes, /CODE_OF_CONDUCT\.md/);
   assert.match(releaseNotes, /CONTRIBUTING\.md/);
+  assert.match(releaseNotes, /docs\/RELEASE_DECISIONS\.md/);
   assert.match(releaseNotes, /docs\/STABILITY_VERIFICATION\.md/);
   assert.match(releaseNotes, /TBD before release/);
 
@@ -89,7 +106,9 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(readme, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(readiness, /Contributor baseline/);
   assert.match(readiness, /Release-notes baseline/);
+  assert.match(readiness, /Release-decisions baseline/);
   assert.match(readiness, /Stability-verification baseline/);
+  assert.match(readiness, /RELEASE_DECISIONS\.md/);
   assert.match(readiness, /RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(readiness, /STABILITY_VERIFICATION\.md/);
   assert.doesNotMatch(readiness, /Add a manual release checklist/);

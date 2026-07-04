@@ -60,9 +60,10 @@ npm run dev
 
 ### Public npm
 
-TBD before release: confirm whether `v1.0.0-rc.1` is published to the public npm
-registry. Until the project explicitly announces npm ownership and publication,
-do not run `npm install -g orbit` against the public registry.
+Draft recommendation: publish `v1.0.0-rc.1` through GitHub Releases only. The
+public `orbit` package name is already occupied by an unrelated package, so do
+not run `npm install -g orbit` against the public registry unless this project
+announces an owned npm package name.
 
 ## Supported Platforms
 
@@ -91,8 +92,9 @@ runtime CLI before assigning work to employees:
 | Codex | `npm install -g @openai/codex` |
 | CodeBuddy | `npm install -g @tencent-ai/codebuddy-code` |
 
-TBD before release: confirm which runtimes are required for the default
-templates and which are optional.
+Draft recommendation: require at least one supported runtime CLI to be installed
+and authenticated. Claude Code, Codex, and CodeBuddy are optional choices; a
+digital employee cannot run until its selected runtime CLI is available.
 
 ## What Changed Since 0.9.x
 
@@ -127,6 +129,7 @@ external testers.
 Track at least these unresolved release decisions:
 
 - Public distribution channel: GitHub Releases only, public npm, or both.
+- Public npm package name if npm publishing is required.
 - Whether optional private licensed build support remains in this repository or
   moves to a private packaging layer.
 - Official supported operating systems for 1.0.
@@ -158,6 +161,7 @@ the candidate:
 
 - `README.md`
 - `docs/QUICKSTART.md`
+- `docs/RELEASE_DECISIONS.md`
 - `docs/DATA_DIRECTORY.md`
 - `docs/STABILITY_VERIFICATION.md`
 - `docs/TERMINOLOGY_AND_ROUTING.md`

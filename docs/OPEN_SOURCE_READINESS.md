@@ -36,6 +36,9 @@ administrator steps.
   verification expectations.
 - Release-notes baseline: `docs/RELEASE_NOTES_v1.0.0-rc.1.md` provides the
   auditable draft for the first 1.0 release candidate.
+- Release-decisions baseline: `docs/RELEASE_DECISIONS.md` captures draft
+  recommendations for license, distribution, npm naming, private licensed
+  builds, supported operating systems, and runtime CLI requirements.
 - Stability-verification baseline: `docs/STABILITY_VERIFICATION.md` turns
   restart recovery, queue cancellation, local data safety, background work, and
   Collaboration Insights checks into repeatable release evidence.
@@ -164,6 +167,8 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 
 ## Known Decisions Needed
 
+Use `docs/RELEASE_DECISIONS.md` as the current recommendation brief.
+
 - MIT is the current project license. Confirm before `v1.0.0` if the project
   should switch to another license.
 - Should public 1.0 publish to npm, GitHub Releases, or both?
@@ -176,7 +181,8 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 ## Immediate Next Changes
 
 1. Verify dev and standalone startup on Windows, macOS, and Linux.
-2. Decide public distribution channel: GitHub Releases only, npm, or both.
-3. Decide whether private licensed build support should remain in this repo.
+2. Confirm or revise the recommendations in `docs/RELEASE_DECISIONS.md`.
+3. Decide public distribution channel: GitHub Releases only, npm under an owned
+   package name, or both.
 4. Resolve `docs/RELEASE_NOTES_v1.0.0-rc.1.md` placeholders and attach final
    release evidence.
