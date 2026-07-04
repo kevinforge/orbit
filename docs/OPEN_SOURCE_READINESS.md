@@ -34,6 +34,9 @@ administrator steps.
 - Contributor baseline: `CONTRIBUTING.md`, the pull request template, and
   `docs/RELEASE_CHECKLIST.md` document public contribution and release
   verification expectations.
+- Issue intake baseline: GitHub issue templates collect bug reports, feature
+  requests, runtime/platform details, and local data impact while sending
+  security reports to `SECURITY.md`.
 - Release-notes baseline: `docs/RELEASE_NOTES_v1.0.0-rc.1.md` provides the
   auditable draft for the first 1.0 release candidate.
 - Release-decisions baseline: `docs/RELEASE_DECISIONS.md` captures draft
@@ -92,6 +95,8 @@ All gates below must be closed before tagging `v1.0.0`.
 - Keep `CONTRIBUTING.md` aligned with the public workflow.
 - Expand PR template enough for external contributors: change summary,
   verification, screenshots when UI changes, and known risks.
+- Keep public issue templates available for reproducible bugs and feature
+  requests, with security reports routed out of public issues.
 - Document how to run a single test file.
 - Document supported Node, npm, Bun, and OS versions.
 

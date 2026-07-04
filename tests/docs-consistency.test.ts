@@ -38,6 +38,9 @@ test("repository exposes open source contribution and release guidance", () => {
   const releaseChecklist = readRepoFile("docs/RELEASE_CHECKLIST.md");
   const releaseNotes = readRepoFile("docs/RELEASE_NOTES_v1.0.0-rc.1.md");
   const stabilityVerification = readRepoFile("docs/STABILITY_VERIFICATION.md");
+  const bugTemplate = readRepoFile(".github/ISSUE_TEMPLATE/bug_report.yml");
+  const featureTemplate = readRepoFile(".github/ISSUE_TEMPLATE/feature_request.yml");
+  const issueConfig = readRepoFile(".github/ISSUE_TEMPLATE/config.yml");
   const prTemplate = readRepoFile(".github/pull_request_template.md");
   const readme = readRepoFile("README.md");
   const readiness = readRepoFile("docs/OPEN_SOURCE_READINESS.md");
@@ -48,6 +51,8 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(contributing, /node --test --import tsx/);
   assert.match(contributing, /~\/\.orbit/);
   assert.match(contributing, /docs\/RELEASE_DECISIONS\.md/);
+  assert.match(contributing, /bug report template/);
+  assert.match(contributing, /SECURITY\.md/);
 
   assert.match(releaseDecisions, /Distribution Channel/);
   assert.match(releaseDecisions, /npm Package Name/);
@@ -95,6 +100,25 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(stabilityVerification, /~\/\.orbit/);
   assert.match(stabilityVerification, /Release Evidence Template/);
 
+  assert.match(bugTemplate, /name: Bug report/);
+  assert.match(bugTemplate, /SECURITY\.md/);
+  assert.match(bugTemplate, /Install method/);
+  assert.match(bugTemplate, /Operating system/);
+  assert.match(bugTemplate, /Runtime CLI status/);
+  assert.match(bugTemplate, /Local data impact/);
+  assert.match(bugTemplate, /~\/\.orbit/);
+
+  assert.match(featureTemplate, /name: Feature request/);
+  assert.match(featureTemplate, /Problem or opportunity/);
+  assert.match(featureTemplate, /Proposed solution/);
+  assert.match(featureTemplate, /Impact areas/);
+  assert.match(featureTemplate, /Local data under ~\/\.orbit/);
+  assert.match(featureTemplate, /Suggested verification/);
+
+  assert.match(issueConfig, /blank_issues_enabled: false/);
+  assert.match(issueConfig, /Security vulnerability/);
+  assert.match(issueConfig, /security\/policy/);
+
   assert.match(prTemplate, /## Verification/);
   assert.match(prTemplate, /npm audit --audit-level=moderate/);
   assert.match(prTemplate, /npm run smoke:start/);
@@ -105,6 +129,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(readme, /docs\/RELEASE_CHECKLIST\.md/);
   assert.match(readme, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(readiness, /Contributor baseline/);
+  assert.match(readiness, /Issue intake baseline/);
   assert.match(readiness, /Release-notes baseline/);
   assert.match(readiness, /Release-decisions baseline/);
   assert.match(readiness, /Stability-verification baseline/);

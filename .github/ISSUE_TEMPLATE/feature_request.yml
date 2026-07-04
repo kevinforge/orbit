@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest a product or contributor-experience improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Orbit is local-first and coordinates long-running digital employee work. Please call out any impact on user data, startup, queues, or recovery.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or opportunity
+      description: What user problem does this solve?
+      placeholder: As a user, I need...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like Orbit to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or other designs have you considered?
+    validations:
+      required: false
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact areas
+      options:
+        - label: Startup or packaging
+        - label: Runtime CLI behavior
+        - label: Digital employee routing or queues
+        - label: Local data under ~/.orbit
+        - label: UI or workflow
+        - label: Documentation or contributor experience
+  - type: textarea
+    id: verification
+    attributes:
+      label: Suggested verification
+      description: How could this be tested or manually verified?
+      placeholder: npm run test, npm run build, smoke test, manual flow...
+    validations:
+      required: false

@@ -75,6 +75,14 @@ node --test --import tsx tests/mention-router.test.ts
 - Temporary research notes, screenshots, and competitor analysis are not committed.
 - The GitHub Actions CI check passes.
 
+## Issues
+
+- Use the GitHub bug report template for reproducible failures.
+- Use the feature request template for product or contributor-experience ideas.
+- Report security vulnerabilities through `SECURITY.md`, not public issues.
+- Include local data impact whenever an issue touches `~/.orbit`, startup,
+  queues, cancellation, attachments, sessions, or transcripts.
+
 ## Documentation Policy
 
 Keep repository documentation small:
