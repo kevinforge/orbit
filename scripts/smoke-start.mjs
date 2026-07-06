@@ -8,8 +8,10 @@
  */
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -52,6 +54,24 @@ function parseArgs(argv) {
 function defaultBinaryPath() {
   const ext = process.platform === "win32" ? ".exe" : "";
   return path.join(root, "dist", "bin", `orbit${ext}`);
+}
+
+function createSmokeHome() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-smoke-home-"));
+}
+
+function smokeEnv(port, homeDir) {
+  return {
+    ...process.env,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    ORBIT_PORT: String(port),
+    ORBIT_RUNTIME_PROBE_INTERVAL_MS: "600000",
+  };
+}
+
+function cleanupSmokeHome(homeDir) {
+  fs.rmSync(homeDir, { recursive: true, force: true });
 }
 
 async function findFreePort() {
@@ -144,15 +164,12 @@ function sleep(ms) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const port = await findFreePort();
+  const smokeHome = createSmokeHome();
   const output = [];
 
   const child = spawn(options.binary, [], {
     cwd: root,
-    env: {
-      ...process.env,
-      ORBIT_PORT: String(port),
-      ORBIT_RUNTIME_PROBE_INTERVAL_MS: "600000",
-    },
+    env: smokeEnv(port, smokeHome),
     windowsHide: true,
   });
 
@@ -176,6 +193,7 @@ async function main() {
     throw error;
   } finally {
     await stopProcess(child);
+    cleanupSmokeHome(smokeHome);
   }
 }
 

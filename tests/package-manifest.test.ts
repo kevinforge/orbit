@@ -37,6 +37,8 @@ test("package build delegates to the protected standalone builder", () => {
 
 test("default test script uses complete cross-platform discovery", () => {
   const manifest = readPackageJson();
+  const smokeStart = fs.readFileSync("scripts/smoke-start.mjs", "utf8");
+  const smokePortConflict = fs.readFileSync("scripts/smoke-port-conflict.mjs", "utf8");
 
   assert.equal(manifest.scripts?.test, "node scripts/run-tests.mjs");
   assert.equal(manifest.scripts?.["test:glob"], "npm run test");
@@ -44,6 +46,13 @@ test("default test script uses complete cross-platform discovery", () => {
   assert.equal(manifest.scripts?.["smoke:port-conflict"], "node scripts/smoke-port-conflict.mjs");
   assert.ok(fs.existsSync("scripts/smoke-start.mjs"));
   assert.ok(fs.existsSync("scripts/smoke-port-conflict.mjs"));
+
+  for (const smokeScript of [smokeStart, smokePortConflict]) {
+    assert.match(smokeScript, /mkdtempSync/);
+    assert.match(smokeScript, /HOME: homeDir/);
+    assert.match(smokeScript, /USERPROFILE: homeDir/);
+    assert.match(smokeScript, /cleanupSmokeHome/);
+  }
 });
 
 test("package exposes open source metadata", () => {

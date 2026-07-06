@@ -46,6 +46,7 @@ workflows, or public setup docs, also run:
 ```powershell
 npm audit --audit-level=moderate
 npm run smoke:start
+npm run smoke:port-conflict
 npm pack --dry-run --json
 ```
 
@@ -69,6 +70,8 @@ node --test --import tsx tests/mention-router.test.ts
   readiness are touched.
 - `npm run smoke:start` passes when startup, packaging, or release behavior is
   touched.
+- `npm run smoke:port-conflict` passes when startup, packaging, or release
+  behavior is touched.
 - README or architecture docs are updated when behavior or setup changes.
 - UI changes include screenshots or a short note explaining why screenshots are
   not needed.

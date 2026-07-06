@@ -16,7 +16,11 @@ npm run build
 
 ```powershell
 npm run smoke:start
+npm run smoke:port-conflict
 ```
+
+`smoke:port-conflict` verifies that an occupied explicit `ORBIT_PORT` exits
+with a clear recovery hint.
 
 ## 本地 npm 打包验证
 

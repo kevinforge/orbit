@@ -34,6 +34,7 @@ test("open source readiness no longer tracks completed Claude-only architecture 
 
 test("repository exposes open source contribution and release guidance", () => {
   const contributing = readRepoFile("CONTRIBUTING.md");
+  const standaloneBuild = readRepoFile("docs/standalone-build.md");
   const releaseDecisions = readRepoFile("docs/RELEASE_DECISIONS.md");
   const releaseChecklist = readRepoFile("docs/RELEASE_CHECKLIST.md");
   const releaseNotes = readRepoFile("docs/RELEASE_NOTES_v1.0.0-rc.1.md");
@@ -49,6 +50,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(contributing, /Node\.js 20 or newer/);
   assert.match(contributing, /npm audit --audit-level=moderate/);
   assert.match(contributing, /npm run smoke:start/);
+  assert.match(contributing, /npm run smoke:port-conflict/);
   assert.match(contributing, /node --test --import tsx/);
   assert.match(contributing, /~\/\.orbit/);
   assert.match(contributing, /docs\/RELEASE_DECISIONS\.md/);
@@ -102,8 +104,13 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(stabilityVerification, /GET \/api\/state/);
   assert.match(stabilityVerification, /scripts\/smoke-port-conflict\.mjs/);
   assert.match(stabilityVerification, /ORBIT_PORT/);
+  assert.match(stabilityVerification, /isolated temporary home directory/);
   assert.match(stabilityVerification, /~\/\.orbit/);
   assert.match(stabilityVerification, /Release Evidence Template/);
+
+  assert.match(standaloneBuild, /npm run smoke:start/);
+  assert.match(standaloneBuild, /npm run smoke:port-conflict/);
+  assert.match(standaloneBuild, /ORBIT_PORT/);
 
   assert.match(bugTemplate, /name: Bug report/);
   assert.match(bugTemplate, /SECURITY\.md/);

@@ -50,6 +50,9 @@ Current automated coverage includes:
 - `scripts/smoke-port-conflict.mjs` occupies a local port, starts Orbit with
   `ORBIT_PORT` set to that port, and verifies the startup failure names the
   occupied port plus the port override recovery path.
+- Both smoke scripts run Orbit with an isolated temporary home directory so
+  automated checks do not read, write, or race against the user's real
+  `~/.orbit` data.
 
 These tests do not replace cross-platform manual verification. They provide the
 baseline that makes a manual failure easier to diagnose.

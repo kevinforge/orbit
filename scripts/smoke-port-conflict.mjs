@@ -9,7 +9,9 @@
  */
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -54,6 +56,24 @@ function defaultBinaryPath() {
   return path.join(root, "dist", "bin", `orbit${ext}`);
 }
 
+function createSmokeHome() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-smoke-home-"));
+}
+
+function smokeEnv(port, homeDir) {
+  return {
+    ...process.env,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    ORBIT_PORT: String(port),
+    ORBIT_RUNTIME_PROBE_INTERVAL_MS: "600000",
+  };
+}
+
+function cleanupSmokeHome(homeDir) {
+  fs.rmSync(homeDir, { recursive: true, force: true });
+}
+
 async function occupyPort() {
   const server = net.createServer();
   await new Promise((resolve, reject) => {
@@ -70,13 +90,10 @@ async function occupyPort() {
 
 async function runOrbitExpectingPortConflict(options, port) {
   const output = [];
+  const smokeHome = createSmokeHome();
   const child = spawn(options.binary, [], {
     cwd: root,
-    env: {
-      ...process.env,
-      ORBIT_PORT: String(port),
-      ORBIT_RUNTIME_PROBE_INTERVAL_MS: "600000",
-    },
+    env: smokeEnv(port, smokeHome),
     windowsHide: true,
   });
 
@@ -85,17 +102,22 @@ async function runOrbitExpectingPortConflict(options, port) {
   child.stdout.on("data", (chunk) => output.push(chunk));
   child.stderr.on("data", (chunk) => output.push(chunk));
 
-  const result = await Promise.race([
-    onceExit(child).then(({ code, signal }) => ({ code, signal, timedOut: false })),
-    sleep(options.timeoutMs).then(() => ({ code: null, signal: null, timedOut: true })),
-  ]);
+  try {
+    const result = await Promise.race([
+      onceExit(child).then(({ code, signal }) => ({ code, signal, timedOut: false })),
+      sleep(options.timeoutMs).then(() => ({ code: null, signal: null, timedOut: true })),
+    ]);
 
-  if (result.timedOut) {
+    if (result.timedOut) {
+      await stopProcess(child);
+    }
+
+    const combinedOutput = output.join("");
+    return { ...result, output: combinedOutput };
+  } finally {
     await stopProcess(child);
+    cleanupSmokeHome(smokeHome);
   }
-
-  const combinedOutput = output.join("");
-  return { ...result, output: combinedOutput };
 }
 
 async function stopProcess(child) {
