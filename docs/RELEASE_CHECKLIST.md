@@ -11,14 +11,13 @@ release candidate.
 
 - [x] Confirm the project license is still MIT.
 - [x] Confirm the public distribution channel: GitHub Releases plus public npm.
-- [ ] Confirm the owned npm package name before announcing public install
-  commands; do not announce `npm install -g orbit` because the public `orbit`
-  package is unrelated.
+- [x] Confirm the owned npm package name: `@kevinforge/orbit`.
+- [ ] Do not announce `npm install -g orbit` because the public `orbit` package
+  is unrelated.
 - [ ] Configure repository secret `NPM_TOKEN` with publish access to the chosen
   package.
-- [ ] Choose and implement the public npm packaging strategy: all platform
-  binaries in one package, platform-specific optional packages, or install-time
-  download from GitHub Releases.
+- [x] Choose the public npm packaging strategy: one package containing all
+  supported platform binaries under `dist/bin/`.
 - [ ] Decide whether optional private licensed build support remains in this
   repository or moves to a private packaging layer.
 - [ ] Confirm supported operating systems for 1.0.
@@ -42,7 +41,8 @@ release candidate.
 - [ ] Run `npm pack --dry-run --json` and confirm the package contains only the
   launcher, built binary, built UI, install script, README files, license, and
   package metadata.
-- [ ] Run `npm publish --dry-run` for the final registry package.
+- [ ] Run `npm publish --dry-run --access public` for the final registry
+  package.
 
 ## Cross-Platform Startup
 
@@ -79,6 +79,8 @@ Use `docs/STABILITY_VERIFICATION.md` to run these checks and capture evidence.
   tag.
 - [ ] Confirm the workflow publishes to npm only after release readiness,
   package validation, and platform package smoke checks pass.
+- [ ] Confirm the npm package includes Windows x64, Linux x64, macOS x64, and
+  macOS ARM64 binaries.
 - [ ] Confirm Windows x64, Linux x64, macOS x64, and macOS ARM64 package jobs
   pass.
 - [ ] Confirm every platform package runs `scripts/smoke-start.mjs` against its

@@ -1,4 +1,4 @@
-# Orbit
+﻿# Orbit
 
 Orbit is a local-first collaboration workspace for coordinating multiple CLI-backed digital employees across isolated workspaces and conversations.
 
@@ -10,6 +10,12 @@ Install a release package that matches your operating system:
 npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
+After public npm publishing is ready, install the scoped package instead:
+
+```powershell
+npm install -g @kevinforge/orbit
+```
+
 You can also run Orbit from a source checkout:
 
 ```powershell
@@ -18,9 +24,8 @@ npm run build
 npm run dev
 ```
 
-Do not run `npm install -g orbit` against the public npm registry unless this
-project has explicitly announced npm ownership. That package name is owned by
-an unrelated project and can fail at startup with
+Do not run `npm install -g orbit` against the public npm registry. That package
+name is owned by an unrelated project and can fail at startup with
 `ERR_PACKAGE_PATH_NOT_EXPORTED` for `uuid/v1`.
 
 ## Run
@@ -31,11 +36,11 @@ orbit
 
 Open `http://localhost:4317`.
 
-New to Orbit? Start with the [quickstart](docs/QUICKSTART.md). 中文用户请看 [中文快速上手](docs/QUICKSTART.zh-CN.md).
+New to Orbit? Start with the [quickstart](docs/QUICKSTART.md). Chinese readers can use the [Chinese quickstart](docs/QUICKSTART.zh-CN.md).
 
 ## Requirements
 
-Orbit coordinates CLI-backed agents. The agents require:
+Orbit coordinates CLI-backed digital employees. The digital employees require at least one supported runtime CLI:
 
 | Runtime | Install |
 |---------|---------|
@@ -45,14 +50,14 @@ Orbit coordinates CLI-backed agents. The agents require:
 
 ## Features
 
-- Five built-in agent templates: 产品经理（pm）, 架构师（architect）, 开发（developer）, 测试（tester）, 监督者（supervisor）
-- Custom agent creation and configuration via UI
-- Per-agent permissions (read/write/run/install/git commit)
+- Five built-in digital employee templates: product manager (`pm`), architect, developer, tester, and supervisor
+- Custom digital employee creation and configuration via UI
+- Per-employee permissions for file access, commands, dependency installs, and git operations
 - Workspace templates for blank or multi-employee collaboration setups
 - Multiple conversations with background execution and visible running employees
-- Explicit assignments, handoffs, and per-agent run queues
+- Explicit assignments, handoffs, and per-employee run queues
 - Collaboration Insights for task outcomes, employee collaboration, execution timelines, and duration trends
-- Markdown rendering for agent replies
+- Markdown rendering for employee replies
 - Session persistence across runs
 
 ## License And Security
@@ -62,7 +67,7 @@ issues through the policy in [SECURITY.md](SECURITY.md).
 
 ## Support
 
-See [SUPPORT.md](https://github.com/QianzhenSun/orbit/blob/main/SUPPORT.md) for
+See [SUPPORT.md](https://github.com/kevinforge/orbit/blob/main/SUPPORT.md) for
 bug reports, feature requests, security reporting, and release-candidate support
 expectations.
 

@@ -15,13 +15,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const ext = process.platform === "win32" ? ".exe" : "";
 const binaryName = `orbit${ext}`;
+const assetByPlatform = {
+  "win32-x64": "windows-x64",
+  "linux-x64": "linux-x64",
+  "darwin-x64": "macos-x64",
+  "darwin-arm64": "macos-arm64",
+};
+const asset = assetByPlatform[`${process.platform}-${process.arch}`];
 
 // Priority 1: bin/orbit (placed by postinstall during npm install -g)
 const binBinary = path.join(__dirname, binaryName);
-// Priority 2: dist/bin/orbit (build output)
+// Priority 2: dist/bin/<platform>/orbit (universal npm package layout)
+const platformBinary = asset ? path.join(root, "dist", "bin", asset, binaryName) : null;
+// Priority 3: dist/bin/orbit (single-platform build output)
 const distBinary = path.join(root, "dist", "bin", binaryName);
 
 const binary = fs.existsSync(binBinary) ? binBinary
+  : platformBinary && fs.existsSync(platformBinary) ? platformBinary
   : fs.existsSync(distBinary) ? distBinary
   : null;
 

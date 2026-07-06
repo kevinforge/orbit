@@ -43,9 +43,9 @@ administrator steps.
 - Release-notes baseline: `docs/RELEASE_NOTES_v1.0.0-rc.1.md` provides the
   auditable draft for the first 1.0 release candidate.
 - Release-decisions baseline: `docs/RELEASE_DECISIONS.md` captures the confirmed
-  MIT and public npm direction, plus remaining decisions for npm naming,
-  cross-platform registry packaging, private licensed builds, supported
-  operating systems, and runtime CLI requirements.
+  MIT, `kevinforge`, public npm, and all-platform registry package direction,
+  plus remaining decisions for private licensed builds, supported operating
+  systems, and runtime CLI requirements.
 - Stability-verification baseline: `docs/STABILITY_VERIFICATION.md` turns
   restart recovery, queue cancellation, local data safety, background work, and
   Collaboration Insights checks into repeatable release evidence.
@@ -111,10 +111,10 @@ All gates below must be closed before tagging `v1.0.0`.
 
 - Rename release workflow language from private release to public release.
 - Publish 1.0 through GitHub Releases and public npm.
-- Before publishing to npm, confirm package name ownership and metadata:
-  repository, homepage, bugs, keywords, license, and files.
-- Choose a cross-platform registry package strategy before adding `npm publish`
-  to the release workflow.
+- Before publishing to npm, keep `@kevinforge/orbit` ownership and metadata
+  aligned: repository, homepage, bugs, keywords, license, and files.
+- Keep the registry package layout compatible with all supported platform
+  binaries under `dist/bin/`.
 - Keep package contents restricted to launcher, built UI, built binary, install
   script, README files, and package metadata.
 - Generate checksums for all release assets.
@@ -184,8 +184,8 @@ Target outcome: `v1.0.0-rc.1` can be tested by external users.
 Use `docs/RELEASE_DECISIONS.md` as the current recommendation brief.
 
 - MIT is the confirmed project license for `v1.0.0-rc.1`.
-- Which owned npm package name and cross-platform registry packaging strategy
-  should public 1.0 use?
+- Is the all-platform npm package size and install behavior acceptable for
+  public 1.0?
 - Should the commercial/private license gate remain in this repository behind a
   flag, or move to a private packaging layer?
 - Which operating systems are officially supported for 1.0?
@@ -195,8 +195,7 @@ Use `docs/RELEASE_DECISIONS.md` as the current recommendation brief.
 ## Immediate Next Changes
 
 1. Verify dev and standalone startup on Windows, macOS, and Linux.
-2. Confirm the owned npm package name and registry packaging strategy.
-3. Configure npm publishing credentials and add the release workflow publish
-   step after the package strategy is implemented.
+2. Verify the universal `@kevinforge/orbit` npm package payload.
+3. Confirm npm publishing credentials and release workflow publish behavior.
 4. Resolve `docs/RELEASE_NOTES_v1.0.0-rc.1.md` placeholders and attach final
    release evidence.

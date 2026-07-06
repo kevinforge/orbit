@@ -8,6 +8,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const workflow = fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
 const ciWorkflow = fs.readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
 const standaloneBuilder = fs.readFileSync(path.join(root, "scripts/build-standalone.mjs"), "utf8");
+const npmAssembler = fs.readFileSync(path.join(root, "scripts/assemble-npm-package.mjs"), "utf8");
 const packageManifest = fs.readFileSync(path.join(root, "package.json"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
 
@@ -88,6 +89,15 @@ test("release workflow verifies, creates an npm package for every supported targ
   assert.match(workflow, /SHA256SUMS\.txt/);
   assert.match(workflow, /npm pack --pack-destination release --silent/);
   assert.match(workflow, /release\/orbit-\$\{version\}-\$\{ASSET\}\.tgz/);
+  assert.match(workflow, /Publish npm package/);
+  assert.match(workflow, /needs: release/);
+  assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
+  assert.match(workflow, /actions\/download-artifact@v4/);
+  assert.match(workflow, /path: release-assets/);
+  assert.match(workflow, /npm run package:npm/);
+  assert.match(workflow, /npm publish --dry-run --access public --ignore-scripts/);
+  assert.match(workflow, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
+  assert.match(workflow, /npm publish --access public --ignore-scripts/);
   assert.doesNotMatch(workflow, /\.zip"/);
   assert.doesNotMatch(workflow, /\.tar\.gz"/);
 });
@@ -120,6 +130,20 @@ test("release tag verifier accepts the package version, supports prerelease synt
 });
 
 test("standalone builds remove generated source maps before packaging", () => {
+  assert.match(standaloneBuilder, /fs\.rmSync\(path\.join\(root, "dist", "bin"\)/);
   assert.match(standaloneBuilder, /filename\.endsWith\("\.map"\)/);
   assert.match(standaloneBuilder, /fs\.rmSync\(path\.join\(outDir, filename\)\)/);
+  assert.match(standaloneBuilder, /One or more platform builds failed/);
+});
+
+test("npm package assembler collects every supported platform artifact", () => {
+  for (const asset of ["windows-x64", "linux-x64", "macos-x64", "macos-arm64"]) {
+    assert.match(npmAssembler, new RegExp(asset));
+  }
+
+  assert.match(npmAssembler, /const binDir = path\.join\(distDir, "bin"\)/);
+  assert.match(npmAssembler, /path\.join\(binDir, asset\)/);
+  assert.match(npmAssembler, /dist", "ui"/);
+  assert.match(npmAssembler, /tar/);
+  assert.match(npmAssembler, /endsWith\(`-\$\{asset\}\.tgz`\)/);
 });

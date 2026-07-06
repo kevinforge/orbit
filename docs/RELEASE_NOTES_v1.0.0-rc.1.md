@@ -53,7 +53,7 @@ Then open `http://localhost:4317`.
 ### Source Checkout
 
 ```bash
-git clone https://github.com/QianzhenSun/orbit.git
+git clone https://github.com/kevinforge/orbit.git
 cd orbit
 npm ci
 npm run build
@@ -64,12 +64,13 @@ npm run dev
 
 Draft decision: publish `v1.0.0-rc.1` through GitHub Releases and public npm.
 The public `orbit` package name is already occupied by an unrelated package, so
-the registry package must use an owned scoped name such as `@qianzhensun/orbit`
-or an organization-owned scope. Do not run `npm install -g orbit` against the
-public registry.
+the registry package uses the owned scoped name `@kevinforge/orbit`. The npm
+package includes binaries for Windows x64, Linux x64, macOS x64, and macOS
+ARM64, and the `orbit` command selects the matching binary at install time. Do
+not run `npm install -g orbit` against the public registry.
 
-TBD before release: replace this section with the final npm package name,
-install command, and `npm publish --dry-run` evidence.
+TBD before release: replace this section with the final install command and
+`npm publish --dry-run` evidence.
 
 ## Supported Platforms
 
@@ -134,8 +135,7 @@ external testers.
 
 Track at least these unresolved release decisions:
 
-- Public npm package name and install command.
-- Public npm packaging strategy for Windows, Linux, macOS x64, and macOS ARM64.
+- Public npm install command.
 - Whether optional private licensed build support remains in this repository or
   moves to a private packaging layer.
 - Official supported operating systems for 1.0.
@@ -155,6 +155,8 @@ the candidate:
 - [ ] `npm run smoke:port-conflict`
 - [ ] `npm pack --dry-run --json`
 - [ ] `npm publish --dry-run`
+- [ ] npm package contains Windows x64, Linux x64, macOS x64, and macOS ARM64
+      binaries
 - [ ] GitHub Actions CI result
 - [ ] Release workflow result for each platform package
 - [ ] npm publish workflow result

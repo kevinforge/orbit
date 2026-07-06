@@ -60,6 +60,11 @@ for (const relativePath of requiredFiles) {
 }
 
 record(packageJson.private === false, "package.json is publishable with private=false.");
+record(
+  packageJson.name === "@kevinforge/orbit",
+  "package.json uses owned npm package name @kevinforge/orbit.",
+  "package.json must use owned npm package name @kevinforge/orbit before public npm publish.",
+);
 record(packageJson.license === "MIT", "package.json declares the MIT license.");
 record(Boolean(packageJson.repository?.url), "package.json includes a repository URL.");
 record(Boolean(packageJson.bugs?.url), "package.json includes a bug-report URL.");

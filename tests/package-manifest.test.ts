@@ -8,6 +8,8 @@ type PackageJson = {
   homepage?: string;
   keywords?: string[];
   license?: string;
+  name?: string;
+  publishConfig?: { access?: string };
   repository?: { type?: string; url?: string };
   scripts?: Record<string, string>;
   engines?: Record<string, string>;
@@ -20,7 +22,7 @@ function readPackageJson(): PackageJson {
 test("npm package publishes only the CLI launcher and built artifacts", () => {
   const manifest = readPackageJson();
 
-  assert.deepEqual(manifest.files, ["bin/orbit.js", "dist/bin/orbit", "dist/bin/orbit.exe", "dist/ui/", "install.cjs"]);
+  assert.deepEqual(manifest.files, ["bin/orbit.js", "dist/bin/", "dist/ui/", "install.cjs"]);
 });
 
 test("package build delegates to the protected standalone builder", () => {
@@ -29,6 +31,9 @@ test("package build delegates to the protected standalone builder", () => {
 
   assert.equal(manifest.engines?.node, ">=20");
   assert.match(manifest.scripts?.build ?? "", /node scripts\/build-standalone\.mjs/);
+  assert.match(manifest.scripts?.["build:all"] ?? "", /--all --package-layout/);
+  assert.equal(manifest.scripts?.["package:npm"], "node scripts/assemble-npm-package.mjs");
+  assert.equal(manifest.scripts?.prepublishOnly, "npm run test && npm run build");
   assert.match(standaloneBuilder, /"--compile"/);
   assert.match(standaloneBuilder, /"--bytecode"/);
   assert.match(standaloneBuilder, /"--minify"/);
@@ -39,6 +44,7 @@ test("default test script uses complete cross-platform discovery", () => {
   const manifest = readPackageJson();
   const smokeStart = fs.readFileSync("scripts/smoke-start.mjs", "utf8");
   const smokePortConflict = fs.readFileSync("scripts/smoke-port-conflict.mjs", "utf8");
+  const installer = fs.readFileSync("install.cjs", "utf8");
 
   assert.equal(manifest.scripts?.test, "node scripts/run-tests.mjs");
   assert.equal(manifest.scripts?.["test:glob"], "npm run test");
@@ -53,16 +59,22 @@ test("default test script uses complete cross-platform discovery", () => {
     assert.match(smokeScript, /USERPROFILE: homeDir/);
     assert.match(smokeScript, /cleanupSmokeHome/);
   }
+
+  assert.match(installer, /windows-x64/);
+  assert.match(installer, /macos-arm64/);
+  assert.match(installer, /path\.join\(__dirname, "dist", "bin", info\.asset, info\.source\)/);
 });
 
 test("package exposes open source metadata", () => {
   const manifest = readPackageJson();
 
+  assert.equal(manifest.name, "@kevinforge/orbit");
   assert.equal(manifest.license, "MIT");
+  assert.equal(manifest.publishConfig?.access, "public");
   assert.equal(manifest.repository?.type, "git");
-  assert.equal(manifest.repository?.url, "git+https://github.com/QianzhenSun/orbit.git");
-  assert.equal(manifest.bugs?.url, "https://github.com/QianzhenSun/orbit/issues");
-  assert.equal(manifest.homepage, "https://github.com/QianzhenSun/orbit#readme");
+  assert.equal(manifest.repository?.url, "git+https://github.com/kevinforge/orbit.git");
+  assert.equal(manifest.bugs?.url, "https://github.com/kevinforge/orbit/issues");
+  assert.equal(manifest.homepage, "https://github.com/kevinforge/orbit#readme");
   assert.ok(manifest.keywords?.includes("local-first"));
   assert.ok(manifest.keywords?.includes("agents"));
 });

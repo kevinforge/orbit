@@ -9,6 +9,7 @@
  *   node scripts/build-standalone.mjs            # Build for current platform
  *   node scripts/build-standalone.mjs --all      # Build for all platforms
  *   node scripts/build-standalone.mjs --platform=windows
+ *   node scripts/build-standalone.mjs --all --package-layout
  */
 
 import { execSync, spawnSync } from "node:child_process";
@@ -32,10 +33,10 @@ function hasBun() {
 
 // Platform mapping
 const PLATFORMS = {
-  windows:  { target: "bun-windows-x64",   ext: ".exe" },
-  linux:    { target: "bun-linux-x64",     ext: "" },
-  macos:    { target: "bun-darwin-x64",    ext: "" },
-  macosArm: { target: "bun-darwin-arm64",  ext: "" },
+  windows:  { target: "bun-windows-x64",   ext: ".exe", asset: "windows-x64" },
+  linux:    { target: "bun-linux-x64",     ext: "",     asset: "linux-x64" },
+  macos:    { target: "bun-darwin-x64",    ext: "",     asset: "macos-x64" },
+  macosArm: { target: "bun-darwin-arm64",  ext: "",     asset: "macos-arm64" },
 };
 
 function getCurrentPlatform() {
@@ -51,20 +52,22 @@ function getCurrentPlatform() {
   throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
 
-function buildStandalone(platformKey) {
+function buildStandalone(platformKey, options = {}) {
   const platform = PLATFORMS[platformKey];
   if (!platform) {
     throw new Error(`Unknown platform: ${platformKey}`);
   }
 
-  const outfile = path.join(root, "dist", "bin", `orbit${platform.ext}`);
+  const outDir = options.packageLayout
+    ? path.join(root, "dist", "bin", platform.asset)
+    : path.join(root, "dist", "bin");
+  const outfile = path.join(outDir, `orbit${platform.ext}`);
 
   console.log(`\n🔨 Building standalone binary for ${platformKey}...`);
   console.log(`   Target: ${platform.target}`);
   console.log(`   Output: ${outfile}`);
 
   // Ensure output directory exists
-  const outDir = path.dirname(outfile);
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }
@@ -109,12 +112,12 @@ function buildStandalone(platformKey) {
   return outfile;
 }
 
-function buildAllPlatforms() {
+function buildAllPlatforms(options = {}) {
   console.log("Building for all platforms...");
   const results = [];
   for (const platformKey of Object.keys(PLATFORMS)) {
     try {
-      const outfile = buildStandalone(platformKey);
+      const outfile = buildStandalone(platformKey, options);
       results.push({ platform: platformKey, outfile, success: true });
     } catch (error) {
       results.push({
@@ -140,18 +143,23 @@ function main() {
   // Parse arguments
   let buildAll = false;
   let targetPlatform = null;
+  let packageLayout = false;
 
   for (const arg of args) {
     if (arg === "--all") {
       buildAll = true;
+    } else if (arg === "--package-layout") {
+      packageLayout = true;
     } else if (arg.startsWith("--platform=")) {
       targetPlatform = arg.split("=")[1];
     }
   }
 
   try {
+    fs.rmSync(path.join(root, "dist", "bin"), { recursive: true, force: true });
+
     if (buildAll) {
-      const results = buildAllPlatforms();
+      const results = buildAllPlatforms({ packageLayout });
       console.log("\n📦 Build Summary:");
       for (const r of results) {
         if (r.success) {
@@ -160,8 +168,11 @@ function main() {
           console.log(`   ❌ ${r.platform}: ${r.error}`);
         }
       }
+      if (results.some((result) => !result.success)) {
+        throw new Error("One or more platform builds failed.");
+      }
     } else if (targetPlatform) {
-      buildStandalone(targetPlatform);
+      buildStandalone(targetPlatform, { packageLayout });
     } else {
       const platformKey = getCurrentPlatform();
       buildStandalone(platformKey);

@@ -1,9 +1,10 @@
 # Orbit 1.0 Release Decisions
 
 Status: draft recommendations with confirmed direction. The project owner
-confirmed MIT and public npm publishing on 2026-07-06; confirm the final npm
-package name and cross-platform registry package strategy before publishing
-`v1.0.0-rc.1`, then record the final decisions in the release notes.
+confirmed MIT, the `kevinforge` GitHub/npm identity, public npm publishing, and
+the all-platform-binaries npm package strategy on 2026-07-06; verify the final
+package payload before publishing `v1.0.0-rc.1`, then record the final decisions
+in the release notes.
 
 This document keeps the remaining release decisions explicit so 1.0 is not
 blocked by unclear publishing, licensing, platform, or runtime expectations.
@@ -14,7 +15,8 @@ blocked by unclear publishing, licensing, platform, or runtime expectations.
 | --- | --- | --- |
 | License | MIT confirmed | Keep MIT or replace it consistently in a dedicated change |
 | Distribution | GitHub Releases plus public npm | Publish both platform release artifacts and a registry package |
-| npm package name | Use an owned scoped package, not `orbit` | Pick and verify an owned package name before public npm |
+| npm package name | Use `@kevinforge/orbit`, not `orbit` | Keep the package under an owned npm scope |
+| npm package layout | One package with all platform binaries | Verify package size and install behavior before every release |
 | Private license gate | Keep only as opt-in for RC | Move private enforcement out or prove public default remains unblocked |
 | Supported OS | Treat workflow targets as RC test targets | Support only platforms with release and manual evidence |
 | Runtime CLIs | Require at least one installed and authenticated CLI | Document required vs optional runtime policy |
@@ -49,15 +51,13 @@ Why:
 - Public npm should provide the normal `npm install -g <package>` path once an
   owned package name and registry package strategy are confirmed.
 
-Before `v1.0.0-rc.1`, resolve the npm publishing blocker:
+Before `v1.0.0-rc.1`, verify the npm publishing path:
 
-- Choose the owned npm package name.
-- Configure repository secret `NPM_TOKEN`.
-- Decide whether the registry package includes all platform binaries, uses
-  platform-specific optional packages, or downloads the matching GitHub Release
-  artifact during install.
-- Add and verify the release workflow step that runs `npm publish` only after
-  release readiness and package validation pass.
+- Keep repository secret `NPM_TOKEN` configured with publish access.
+- Build the registry package with all platform binaries under `dist/bin/`.
+- Verify `npm publish --dry-run`.
+- Publish to npm only after release readiness, GitHub Release asset generation,
+  and package validation pass.
 
 ## npm Package Name
 
@@ -67,19 +67,18 @@ Current evidence:
 
 - On 2026-07-04, `npm view orbit name version description --json` returned an
   existing unrelated `orbit` package at version `2.6.0`.
-- On 2026-07-06, `npm view @qianzhensun/orbit name version description --json`
+- On 2026-07-06, `npm view @kevinforge/orbit name version description --json`
   returned `E404`, so that scoped package name was not published at the time of
   checking.
 - README and quickstart docs already warn users not to run
   `npm install -g orbit` unless this project announces npm ownership.
 
-Use an owned package name before publishing. A scoped package such as
-`@qianzhensun/orbit` or an organization-owned scope keeps the CLI command as
-`orbit` while avoiding the occupied package name.
+Use `@kevinforge/orbit` before publishing. The scoped package keeps the CLI
+command as `orbit` while avoiding the occupied package name.
 
 Required repository changes before public npm:
 
-- Change `package.json.name` to the owned package name.
+- Keep `package.json.name` set to `@kevinforge/orbit`.
 - Keep `bin.orbit` if the command should still be `orbit`.
 - Configure `publishConfig.access` for the scoped public package if needed.
 - Update README, quickstarts, release notes, release checklist, package tests,
