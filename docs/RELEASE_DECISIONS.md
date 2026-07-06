@@ -1,6 +1,8 @@
 # Orbit 1.0 Release Decisions
 
-Status: draft recommendations. Confirm or revise these before publishing
+Status: draft recommendations with confirmed direction. The project owner
+confirmed MIT and public npm publishing on 2026-07-06; confirm the final npm
+package name and cross-platform registry package strategy before publishing
 `v1.0.0-rc.1`, then record the final decisions in the release notes.
 
 This document keeps the remaining release decisions explicit so 1.0 is not
@@ -10,16 +12,16 @@ blocked by unclear publishing, licensing, platform, or runtime expectations.
 
 | Area | Recommendation for `v1.0.0-rc.1` | Final 1.0 requirement |
 | --- | --- | --- |
-| License | Keep MIT | Confirm MIT or replace it consistently |
-| Distribution | GitHub Releases only | Choose GitHub Releases only, a renamed npm package, or both |
-| npm package name | Do not publish `orbit` | Pick an owned package name before public npm |
+| License | MIT confirmed | Keep MIT or replace it consistently in a dedicated change |
+| Distribution | GitHub Releases plus public npm | Publish both platform release artifacts and a registry package |
+| npm package name | Use an owned scoped package, not `orbit` | Pick and verify an owned package name before public npm |
 | Private license gate | Keep only as opt-in for RC | Move private enforcement out or prove public default remains unblocked |
 | Supported OS | Treat workflow targets as RC test targets | Support only platforms with release and manual evidence |
 | Runtime CLIs | Require at least one installed and authenticated CLI | Document required vs optional runtime policy |
 
 ## License
 
-Recommendation: keep MIT for `v1.0.0-rc.1`.
+Decision: keep MIT for `v1.0.0-rc.1`.
 
 Why:
 
@@ -31,50 +33,59 @@ Why:
 
 Before final 1.0:
 
-- Confirm the project should remain MIT.
 - If the license changes, update `LICENSE`, `package.json`, README references,
   release notes, and package manifest tests in the same change.
 
 ## Distribution Channel
 
-Recommendation: publish `v1.0.0-rc.1` through GitHub Releases only.
+Decision: publish `v1.0.0-rc.1` through GitHub Releases and public npm.
 
 Why:
 
 - The release workflow already builds platform-specific package artifacts and
   GitHub Release assets.
-- GitHub Releases can carry platform artifacts, checksums, and manual evidence
-  without claiming npm package ownership.
-- Public npm can be added later after the package-name decision is resolved.
+- GitHub Releases should keep carrying platform artifacts, checksums, and
+  manual evidence.
+- Public npm should provide the normal `npm install -g <package>` path once an
+  owned package name and registry package strategy are confirmed.
 
-Before final 1.0, choose one:
+Before `v1.0.0-rc.1`, resolve the npm publishing blocker:
 
-- GitHub Releases only.
-- GitHub Releases plus public npm under an owned package name.
-- Public npm only, if platform artifact distribution is intentionally dropped.
+- Choose the owned npm package name.
+- Configure repository secret `NPM_TOKEN`.
+- Decide whether the registry package includes all platform binaries, uses
+  platform-specific optional packages, or downloads the matching GitHub Release
+  artifact during install.
+- Add and verify the release workflow step that runs `npm publish` only after
+  release readiness and package validation pass.
 
 ## npm Package Name
 
-Recommendation: do not publish the current package as public `orbit`.
+Decision: do not publish the current package as public `orbit`.
 
 Current evidence:
 
 - On 2026-07-04, `npm view orbit name version description --json` returned an
   existing unrelated `orbit` package at version `2.6.0`.
+- On 2026-07-06, `npm view @qianzhensun/orbit name version description --json`
+  returned `E404`, so that scoped package name was not published at the time of
+  checking.
 - README and quickstart docs already warn users not to run
   `npm install -g orbit` unless this project announces npm ownership.
 
-If public npm is required, choose an owned package name before publishing. A
-scoped package such as `@qianzhensun/orbit` or an organization-owned scope keeps
-the CLI command as `orbit` while avoiding the occupied package name.
+Use an owned package name before publishing. A scoped package such as
+`@qianzhensun/orbit` or an organization-owned scope keeps the CLI command as
+`orbit` while avoiding the occupied package name.
 
 Required repository changes before public npm:
 
 - Change `package.json.name` to the owned package name.
 - Keep `bin.orbit` if the command should still be `orbit`.
+- Configure `publishConfig.access` for the scoped public package if needed.
 - Update README, quickstarts, release notes, release checklist, package tests,
   and release workflow references.
 - Run `npm view <package-name>` and record the result before publishing.
+- Run `npm publish --dry-run` against the final package contents before tagging.
 
 ## Private Licensed Build Support
 

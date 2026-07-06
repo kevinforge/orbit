@@ -62,10 +62,14 @@ npm run dev
 
 ### Public npm
 
-Draft recommendation: publish `v1.0.0-rc.1` through GitHub Releases only. The
-public `orbit` package name is already occupied by an unrelated package, so do
-not run `npm install -g orbit` against the public registry unless this project
-announces an owned npm package name.
+Draft decision: publish `v1.0.0-rc.1` through GitHub Releases and public npm.
+The public `orbit` package name is already occupied by an unrelated package, so
+the registry package must use an owned scoped name such as `@qianzhensun/orbit`
+or an organization-owned scope. Do not run `npm install -g orbit` against the
+public registry.
+
+TBD before release: replace this section with the final npm package name,
+install command, and `npm publish --dry-run` evidence.
 
 ## Supported Platforms
 
@@ -117,7 +121,7 @@ digital employee cannot run until its selected runtime CLI is available.
 
 ## Security And Governance
 
-- License: MIT, pending final confirmation before `v1.0.0`.
+- License: MIT.
 - Security reports: see `SECURITY.md`.
 - Community standards: see `CODE_OF_CONDUCT.md`.
 - Contribution workflow: see `CONTRIBUTING.md`.
@@ -130,8 +134,8 @@ external testers.
 
 Track at least these unresolved release decisions:
 
-- Public distribution channel: GitHub Releases only, public npm, or both.
-- Public npm package name if npm publishing is required.
+- Public npm package name and install command.
+- Public npm packaging strategy for Windows, Linux, macOS x64, and macOS ARM64.
 - Whether optional private licensed build support remains in this repository or
   moves to a private packaging layer.
 - Official supported operating systems for 1.0.
@@ -150,8 +154,10 @@ the candidate:
 - [ ] `npm run smoke:start`
 - [ ] `npm run smoke:port-conflict`
 - [ ] `npm pack --dry-run --json`
+- [ ] `npm publish --dry-run`
 - [ ] GitHub Actions CI result
 - [ ] Release workflow result for each platform package
+- [ ] npm publish workflow result
 - [ ] SHA256 checksums for release assets
 - [ ] Windows startup verification
 - [ ] Linux startup verification

@@ -61,9 +61,13 @@ test("repository exposes open source contribution and release guidance", () => {
 
   assert.match(releaseDecisions, /Distribution Channel/);
   assert.match(releaseDecisions, /npm Package Name/);
-  assert.match(releaseDecisions, /GitHub Releases only/);
+  assert.match(releaseDecisions, /GitHub Releases plus public npm/);
   assert.match(releaseDecisions, /npm view orbit/);
+  assert.match(releaseDecisions, /npm view @qianzhensun\/orbit/);
   assert.match(releaseDecisions, /@qianzhensun\/orbit/);
+  assert.match(releaseDecisions, /NPM_TOKEN/);
+  assert.match(releaseDecisions, /npm publish --dry-run/);
+  assert.match(releaseDecisions, /platform-specific optional packages/);
   assert.match(releaseDecisions, /Private Licensed Build Support/);
   assert.match(releaseDecisions, /Supported Operating Systems/);
   assert.match(releaseDecisions, /Runtime CLI Policy/);
@@ -73,6 +77,9 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseChecklist, /Stability And Recovery/);
   assert.match(releaseChecklist, /Windows x64, Linux x64, macOS x64, and macOS ARM64/);
   assert.match(releaseChecklist, /SHA256SUMS\.txt/);
+  assert.match(releaseChecklist, /NPM_TOKEN/);
+  assert.match(releaseChecklist, /npm publish --dry-run/);
+  assert.match(releaseChecklist, /public npm packaging strategy/);
   assert.match(releaseChecklist, /attachments/);
   assert.match(releaseChecklist, /background conversations/);
   assert.match(releaseChecklist, /docs\/RELEASE_DECISIONS\.md/);
@@ -82,7 +89,9 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseNotes, /Status: draft/);
   assert.match(releaseNotes, /GitHub Release Artifacts/);
   assert.match(releaseNotes, /Public npm/);
-  assert.match(releaseNotes, /GitHub Releases only/);
+  assert.match(releaseNotes, /GitHub Releases and public npm/);
+  assert.match(releaseNotes, /@qianzhensun\/orbit/);
+  assert.match(releaseNotes, /npm publish --dry-run/);
   assert.match(releaseNotes, /package name is already occupied/);
   assert.match(releaseNotes, /Supported Platforms/);
   assert.match(releaseNotes, /Runtime Prerequisites/);
@@ -152,6 +161,8 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(readiness, /Release-notes baseline/);
   assert.match(readiness, /Release-decisions baseline/);
   assert.match(readiness, /Stability-verification baseline/);
+  assert.match(readiness, /confirmed\s+MIT and public npm direction/);
+  assert.match(readiness, /Publish 1\.0 through GitHub Releases and public npm/);
   assert.match(readiness, /RELEASE_DECISIONS\.md/);
   assert.match(readiness, /RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(readiness, /STABILITY_VERIFICATION\.md/);
