@@ -12,16 +12,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
@@ -33,3 +33,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Smoke test built app startup
+        run: npm run smoke:start
+
+      - name: Smoke test occupied port startup failure
+        run: npm run smoke:port-conflict

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/kevinforge/orbit/security/policy
+    about: Please report security vulnerabilities through SECURITY.md instead of public issues.
+  - name: Support policy
+    url: https://github.com/kevinforge/orbit/blob/main/SUPPORT.md
+    about: Review where to file bugs, feature requests, security reports, and release-candidate support issues.
+  - name: Release readiness checklist
+    url: https://github.com/kevinforge/orbit/blob/main/docs/RELEASE_CHECKLIST.md
+    about: Review the 1.0 release gates before filing release-readiness issues.

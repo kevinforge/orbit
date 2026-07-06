@@ -1,25 +1,50 @@
 {
-  "name": "orbit",
+  "name": "@kevinforge/orbit",
   "version": "0.9.5",
   "private": false,
   "description": "Local-first workspace for coordinating CLI-backed digital employees.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kevinforge/orbit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kevinforge/orbit/issues"
+  },
+  "homepage": "https://github.com/kevinforge/orbit#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "agents",
+    "cli",
+    "collaboration",
+    "local-first",
+    "workspace"
+  ],
   "type": "module",
   "bin": {
-    "orbit": "./bin/orbit.js"
+    "orbit": "bin/orbit.js"
   },
   "engines": {
     "node": ">=20"
   },
   "files": [
-    "bin/",
-    "dist/",
+    "bin/orbit.js",
+    "dist/bin/",
+    "dist/ui/",
     "install.cjs"
   ],
   "scripts": {
     "postinstall": "node install.cjs",
     "dev": "tsx src/server/index.ts",
     "build": "tsc --noEmit && vite build && node scripts/build-standalone.mjs",
-    "build:all": "tsc --noEmit && vite build && node scripts/build-standalone.mjs --all",
+    "build:all": "tsc --noEmit && vite build && node scripts/build-standalone.mjs --all --package-layout",
+    "package:npm": "node scripts/assemble-npm-package.mjs",
+    "release:check": "node scripts/verify-release-readiness.mjs v1.0.0-rc.1",
+    "release:check:strict": "node scripts/verify-release-readiness.mjs v1.0.0-rc.1 --strict",
+    "smoke:start": "node scripts/smoke-start.mjs",
+    "smoke:port-conflict": "node scripts/smoke-port-conflict.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:glob": "npm run test",
     "prepublishOnly": "npm run test && npm run build"

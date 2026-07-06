@@ -1,0 +1,99 @@
+name: Bug report
+description: Report a reproducible Orbit problem.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping make Orbit reliable. Do not report security vulnerabilities here; follow SECURITY.md instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: Orbit did...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest steps that reproduce the issue.
+      placeholder: |
+        1. Start Orbit with...
+        2. Send...
+        3. See...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include exact error text when possible.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - Source checkout
+        - GitHub Release artifact
+        - Local npm package
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Orbit version or commit
+      placeholder: v1.0.0-rc.1 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows x64
+        - Linux x64
+        - macOS x64
+        - macOS ARM64
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: runtime
+    attributes:
+      label: Runtime CLI status
+      description: List installed runtimes and whether each CLI works directly in your terminal.
+      placeholder: |
+        Claude Code:
+        Codex:
+        CodeBuddy:
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Local data impact
+      description: Did this affect messages, sessions, agent config, attachments, transcripts, or files under ~/.orbit?
+      placeholder: No data loss observed.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste relevant terminal output, screenshots, or UI text. Remove secrets and private data.
+      render: shell
+    validations:
+      required: false

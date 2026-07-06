@@ -1,20 +1,32 @@
-# Orbit
+﻿# Orbit
 
 Orbit is a local-first collaboration workspace for coordinating multiple CLI-backed digital employees across isolated workspaces and conversations.
 
 ## Install
 
-Install the release package provided by your administrator:
+Install a release package that matches your operating system:
 
 ```powershell
 npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
-Download the package matching your operating system from the private GitHub
-Release, or use a private registry package provided by your administrator. Do
-not run `npm install -g orbit` against the public npm
-registry: that package name is owned by an unrelated project and can fail at
-startup with `ERR_PACKAGE_PATH_NOT_EXPORTED` for `uuid/v1`.
+After public npm publishing is ready, install the scoped package instead:
+
+```powershell
+npm install -g @kevinforge/orbit
+```
+
+You can also run Orbit from a source checkout:
+
+```powershell
+npm ci
+npm run build
+npm run dev
+```
+
+Do not run `npm install -g orbit` against the public npm registry. That package
+name is owned by an unrelated project and can fail at startup with
+`ERR_PACKAGE_PATH_NOT_EXPORTED` for `uuid/v1`.
 
 ## Run
 
@@ -24,11 +36,11 @@ orbit
 
 Open `http://localhost:4317`.
 
-New to Orbit? Start with the [quickstart](docs/QUICKSTART.md). 中文用户请看 [中文快速上手](docs/QUICKSTART.zh-CN.md).
+New to Orbit? Start with the [quickstart](docs/QUICKSTART.md). Chinese readers can use the [Chinese quickstart](docs/QUICKSTART.zh-CN.md).
 
 ## Requirements
 
-Orbit coordinates CLI-backed agents. The agents require:
+Orbit coordinates CLI-backed digital employees. The digital employees require at least one supported runtime CLI:
 
 | Runtime | Install |
 |---------|---------|
@@ -38,12 +50,41 @@ Orbit coordinates CLI-backed agents. The agents require:
 
 ## Features
 
-- Five built-in agent templates: 产品经理（pm）, 架构师（architect）, 开发（developer）, 测试（tester）, 监督者（supervisor）
-- Custom agent creation and configuration via UI
-- Per-agent permissions (read/write/run/install/git commit)
+- Five built-in digital employee templates: product manager (`pm`), architect, developer, tester, and supervisor
+- Custom digital employee creation and configuration via UI
+- Per-employee permissions for file access, commands, dependency installs, and git operations
 - Workspace templates for blank or multi-employee collaboration setups
 - Multiple conversations with background execution and visible running employees
-- Explicit assignments, handoffs, and per-agent run queues
+- Explicit assignments, handoffs, and per-employee run queues
 - Collaboration Insights for task outcomes, employee collaboration, execution timelines, and duration trends
-- Markdown rendering for agent replies
+- Markdown rendering for employee replies
 - Session persistence across runs
+
+## License And Security
+
+Orbit is released under the [MIT License](LICENSE). Please report security
+issues through the policy in [SECURITY.md](SECURITY.md).
+
+## Support
+
+See [SUPPORT.md](https://github.com/kevinforge/orbit/blob/main/SUPPORT.md) for
+bug reports, feature requests, security reporting, and release-candidate support
+expectations.
+
+## Local Data
+
+Orbit stores local product data under `~/.orbit`. See
+[docs/DATA_DIRECTORY.md](docs/DATA_DIRECTORY.md) for the data layout, backup,
+restore, and reset guidance.
+
+## Terminology And Routing
+
+See [docs/TERMINOLOGY_AND_ROUTING.md](docs/TERMINOLOGY_AND_ROUTING.md) for the
+public product terms and `@developer:` style assignment marker rules.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
+[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for release candidate
+verification. The first 1.0 release-candidate notes are drafted in
+[docs/RELEASE_NOTES_v1.0.0-rc.1.md](docs/RELEASE_NOTES_v1.0.0-rc.1.md).
