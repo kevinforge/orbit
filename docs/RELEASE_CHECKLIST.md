@@ -12,16 +12,16 @@ release candidate.
 - [x] Confirm the project license is still MIT.
 - [x] Confirm the public distribution channel: GitHub Releases plus public npm.
 - [x] Confirm the owned npm package name: `@kevinforge/orbit`.
-- [ ] Do not announce `npm install -g orbit` because the public `orbit` package
+- [x] Do not announce `npm install -g orbit` because the public `orbit` package
   is unrelated.
-- [ ] Configure repository secret `NPM_TOKEN` with publish access to the chosen
+- [x] Configure repository secret `NPM_TOKEN` with publish access to the chosen
   package.
 - [x] Choose the public npm packaging strategy: one package containing all
   supported platform binaries under `dist/bin/`.
-- [ ] Decide whether optional private licensed build support remains in this
+- [x] Decide whether optional private licensed build support remains in this
   repository or moves to a private packaging layer.
-- [ ] Confirm supported operating systems for 1.0.
-- [ ] Confirm which CLI runtimes are required for default templates and which
+- [x] Confirm supported operating systems for 1.0.
+- [x] Confirm which CLI runtimes are required for default templates and which
   are optional.
 
 ## Local Preflight

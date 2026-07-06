@@ -12,7 +12,7 @@ administrator steps.
 
 ## Current Baseline
 
-- Version: `0.9.5`.
+- Version: `1.0.0-rc.1`.
 - Verification: `npm run test` and `npm run build` pass locally.
 - Security baseline: `npm audit --audit-level=moderate` passes after refreshing
   the lockfile.

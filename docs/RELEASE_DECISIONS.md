@@ -1,10 +1,10 @@
 # Orbit 1.0 Release Decisions
 
-Status: draft recommendations with confirmed direction. The project owner
-confirmed MIT, the `kevinforge` GitHub/npm identity, public npm publishing, and
-the all-platform-binaries npm package strategy on 2026-07-06; verify the final
-package payload before publishing `v1.0.0-rc.1`, then record the final decisions
-in the release notes.
+Status: confirmed release-candidate decisions. The project owner confirmed MIT,
+the `kevinforge` GitHub/npm identity, public npm publishing, repository
+`NPM_TOKEN` configuration, and the all-platform-binaries npm package strategy on
+2026-07-06. Verify the final package payload and workflow evidence before
+publishing `v1.0.0-rc.1`.
 
 This document keeps the remaining release decisions explicit so 1.0 is not
 blocked by unclear publishing, licensing, platform, or runtime expectations.
