@@ -148,6 +148,7 @@ the candidate:
 - [ ] `npm run build`
 - [ ] `npm audit --audit-level=moderate`
 - [ ] `npm run smoke:start`
+- [ ] `npm run smoke:port-conflict`
 - [ ] `npm pack --dry-run --json`
 - [ ] GitHub Actions CI result
 - [ ] Release workflow result for each platform package

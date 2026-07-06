@@ -86,6 +86,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseNotes, /at least one supported runtime CLI/);
   assert.match(releaseNotes, /Known Limitations/);
   assert.match(releaseNotes, /Verification Evidence/);
+  assert.match(releaseNotes, /npm run smoke:port-conflict/);
   assert.match(releaseNotes, /SECURITY\.md/);
   assert.match(releaseNotes, /CODE_OF_CONDUCT\.md/);
   assert.match(releaseNotes, /CONTRIBUTING\.md/);
@@ -128,6 +129,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(prTemplate, /## Verification/);
   assert.match(prTemplate, /npm audit --audit-level=moderate/);
   assert.match(prTemplate, /npm run smoke:start/);
+  assert.match(prTemplate, /npm run smoke:port-conflict/);
   assert.match(prTemplate, /## Screenshots/);
   assert.match(prTemplate, /## Known Risks And Follow-Up/);
 
