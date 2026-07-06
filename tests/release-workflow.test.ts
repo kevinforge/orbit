@@ -28,7 +28,9 @@ test("release readiness checker reports draft blockers without failing normal pr
   assert.equal(draft.status, 0, draft.stderr);
   assert.match(draft.stdout, /Release readiness check for v1\.0\.0-rc\.1 in draft mode/);
   assert.match(draft.stdout, /BLOCKER Release tag v1\.0\.0-rc\.1 does not match package\.json version/);
-  assert.match(draft.stdout, /BLOCKER docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md has no "TBD before release" placeholders/);
+  assert.match(draft.stdout, /BLOCKER docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md still contains "TBD before release" placeholders/);
+  assert.match(draft.stdout, /BLOCKER docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md is still marked as draft/);
+  assert.match(draft.stdout, /BLOCKER docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md still has unchecked release evidence boxes/);
   assert.match(draft.stdout, /Draft mode allows blockers/);
 
   const strict = spawnSync(process.execPath, [checker, "v1.0.0-rc.1", "--strict"], { encoding: "utf8" });

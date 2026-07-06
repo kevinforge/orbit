@@ -14,8 +14,8 @@ const releaseTagPattern = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)
 
 const results = [];
 
-function record(ok, message) {
-  results.push({ ok, message });
+function record(ok, okMessage, blockerMessage = okMessage) {
+  results.push({ ok, message: ok ? okMessage : blockerMessage });
 }
 
 function readRepoFile(relativePath) {
@@ -71,9 +71,21 @@ if (tag) {
   if (fileExists(releaseNotesPath)) {
     const releaseNotes = readRepoFile(releaseNotesPath);
     record(true, `${releaseNotesPath} is present.`);
-    record(!/TBD before release/i.test(releaseNotes), `${releaseNotesPath} has no "TBD before release" placeholders.`);
-    record(!/^Status:\s*draft\b/im.test(releaseNotes), `${releaseNotesPath} is not marked as draft.`);
-    record(!/- \[ \]/.test(releaseNotes), `${releaseNotesPath} has no unchecked release evidence boxes.`);
+    record(
+      !/TBD before release/i.test(releaseNotes),
+      `${releaseNotesPath} has no "TBD before release" placeholders.`,
+      `${releaseNotesPath} still contains "TBD before release" placeholders.`,
+    );
+    record(
+      !/^Status:\s*draft\b/im.test(releaseNotes),
+      `${releaseNotesPath} is not marked as draft.`,
+      `${releaseNotesPath} is still marked as draft.`,
+    );
+    record(
+      !/- \[ \]/.test(releaseNotes),
+      `${releaseNotesPath} has no unchecked release evidence boxes.`,
+      `${releaseNotesPath} still has unchecked release evidence boxes.`,
+    );
 
     for (const requiredReference of ["SECURITY.md", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md"]) {
       record(releaseNotes.includes(requiredReference), `${releaseNotesPath} links ${requiredReference}.`);
