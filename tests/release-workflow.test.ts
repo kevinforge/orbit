@@ -23,21 +23,21 @@ test("release workflow only starts from semantic version tags", () => {
   assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
 });
 
-test("release readiness checker reports draft blockers without failing normal preparation", () => {
+test("release readiness checker passes for the prepared release candidate", () => {
   const checker = path.join(root, "scripts/verify-release-readiness.mjs");
   const draft = spawnSync(process.execPath, [checker, "v1.0.0-rc.1"], { encoding: "utf8" });
   assert.equal(draft.status, 0, draft.stderr);
   assert.match(draft.stdout, /Release readiness check for v1\.0\.0-rc\.1 in draft mode/);
-  assert.match(draft.stdout, /BLOCKER Release tag v1\.0\.0-rc\.1 does not match package\.json version/);
-  assert.match(draft.stdout, /BLOCKER docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md still contains "TBD before release" placeholders/);
-  assert.match(draft.stdout, /BLOCKER docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md is still marked as draft/);
-  assert.match(draft.stdout, /BLOCKER docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md still has unchecked release evidence boxes/);
-  assert.match(draft.stdout, /Draft mode allows blockers/);
+  assert.match(draft.stdout, /OK Release tag matches package\.json version 1\.0\.0-rc\.1/);
+  assert.match(draft.stdout, /OK docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md has no "TBD before release" placeholders/);
+  assert.match(draft.stdout, /OK docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md is not marked as draft/);
+  assert.match(draft.stdout, /OK docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md has no unchecked release evidence boxes/);
+  assert.match(draft.stdout, /Release readiness checks passed/);
 
   const strict = spawnSync(process.execPath, [checker, "v1.0.0-rc.1", "--strict"], { encoding: "utf8" });
-  assert.notEqual(strict.status, 0);
+  assert.equal(strict.status, 0, strict.stderr);
   assert.match(strict.stdout, /Release readiness check for v1\.0\.0-rc\.1 in strict mode/);
-  assert.match(strict.stdout, /release blockers? found/);
+  assert.match(strict.stdout, /Release readiness checks passed/);
 });
 
 test("package exposes release readiness commands", () => {

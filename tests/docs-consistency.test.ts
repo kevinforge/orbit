@@ -87,12 +87,13 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseChecklist, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
   assert.match(releaseChecklist, /docs\/STABILITY_VERIFICATION\.md/);
 
-  assert.match(releaseNotes, /Status: draft/);
+  assert.match(releaseNotes, /Status: release candidate/);
   assert.match(releaseNotes, /GitHub Release Artifacts/);
   assert.match(releaseNotes, /Public npm/);
   assert.match(releaseNotes, /GitHub Releases and public npm/);
   assert.match(releaseNotes, /@kevinforge\/orbit/);
   assert.match(releaseNotes, /npm publish --dry-run/);
+  assert.match(releaseNotes, /npm install -g @kevinforge\/orbit@1\.0\.0-rc\.1/);
   assert.match(releaseNotes, /Windows x64, Linux x64, macOS x64, and macOS\s+ARM64/);
   assert.match(releaseNotes, /package name is already occupied/);
   assert.match(releaseNotes, /Supported Platforms/);
@@ -106,7 +107,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(releaseNotes, /CONTRIBUTING\.md/);
   assert.match(releaseNotes, /docs\/RELEASE_DECISIONS\.md/);
   assert.match(releaseNotes, /docs\/STABILITY_VERIFICATION\.md/);
-  assert.match(releaseNotes, /TBD before release/);
+  assert.doesNotMatch(releaseNotes, /TBD before release/);
 
   assert.match(stabilityVerification, /Restart Recovery/);
   assert.match(stabilityVerification, /Queue Cancellation/);
