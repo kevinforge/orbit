@@ -22,6 +22,7 @@ test("CLAUDE.md keeps routing and startup verification guidance current", () => 
   const doc = readRepoFile("CLAUDE.md");
 
   assert.match(doc, /npm run smoke:start/);
+  assert.match(doc, /npm run smoke:port-conflict/);
   assert.match(doc, /delegation chains capped at depth 10/);
   assert.doesNotMatch(doc, /delegation chains capped at depth 5/);
 });
@@ -103,6 +104,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(stabilityVerification, /markAbandonedActiveRuns/);
   assert.match(stabilityVerification, /GET \/api\/state/);
   assert.match(stabilityVerification, /scripts\/smoke-port-conflict\.mjs/);
+  assert.match(stabilityVerification, /npm run smoke:port-conflict/);
   assert.match(stabilityVerification, /ORBIT_PORT/);
   assert.match(stabilityVerification, /isolated temporary home directory/);
   assert.match(stabilityVerification, /~\/\.orbit/);

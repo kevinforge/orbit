@@ -31,6 +31,7 @@ npm run test
 npm run build
 npm audit --audit-level=moderate
 npm run smoke:start
+npm run smoke:port-conflict
 npm pack --dry-run --json
 ```
 

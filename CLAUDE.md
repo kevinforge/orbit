@@ -52,6 +52,7 @@ npm run build:all            # Build standalone binaries for all platforms (Wind
 npm run test                 # Run all tests
 npm run test:glob            # Alternative: run tests via glob pattern
 npm run smoke:start          # Start built binary and verify GET /api/state
+npm run smoke:port-conflict  # Verify occupied ORBIT_PORT exits with a recovery hint
 ```
 
 Run a single test file:
