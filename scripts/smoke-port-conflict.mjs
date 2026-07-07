@@ -75,17 +75,49 @@ function cleanupSmokeHome(homeDir) {
 }
 
 async function occupyPort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
+  const primary = net.createServer();
+  await listen(primary, { port: 0, host: "0.0.0.0" });
+  const address = primary.address();
   if (!address || typeof address === "string") {
-    server.close();
+    primary.close();
     throw new Error("Unable to allocate a local port");
   }
-  return { server, port: address.port };
+  const port = address.port;
+  const servers = [primary];
+
+  try {
+    const ipv6 = net.createServer();
+    await listen(ipv6, { port, host: "::", ipv6Only: false });
+    servers.push(ipv6);
+  } catch (error) {
+    if (!isAddressInUseError(error)) {
+      await closeServers(servers);
+      throw error;
+    }
+  }
+
+  return { servers, port };
+}
+
+function listen(server, options) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(options, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+}
+
+async function closeServers(servers) {
+  await Promise.all(
+    servers.map(
+      (server) =>
+        new Promise((resolve) => {
+          server.close(resolve);
+        }),
+    ),
+  );
 }
 
 async function runOrbitExpectingPortConflict(options, port) {
@@ -143,9 +175,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isAddressInUseError(error) {
+  return error && typeof error === "object" && error.code === "EADDRINUSE";
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const { server, port } = await occupyPort();
+  const { servers, port } = await occupyPort();
 
   try {
     const result = await runOrbitExpectingPortConflict(options, port);
@@ -157,16 +193,19 @@ async function main() {
     if (result.code === 0) {
       throw new Error(`Orbit exited successfully even though port ${port} was occupied.`);
     }
+    if (result.code === null && result.signal) {
+      throw new Error(`Orbit exited from signal ${result.signal} before reporting port ${port}. Output: ${output}`);
+    }
     if (!output.includes(String(port))) {
-      throw new Error(`Port conflict output did not mention occupied port ${port}. Output: ${output}`);
+      throw new Error(`Port conflict output did not mention occupied port ${port}. Exit code: ${result.code}. Output: ${output}`);
     }
     if (!output.includes("ORBIT_PORT")) {
-      throw new Error(`Port conflict output did not mention ORBIT_PORT recovery. Output: ${output}`);
+      throw new Error(`Port conflict output did not mention ORBIT_PORT recovery. Exit code: ${result.code}. Output: ${output}`);
     }
 
     console.log(`[orbit smoke] occupied port ${port} produced a clear startup failure`);
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await closeServers(servers);
   }
 }
 
