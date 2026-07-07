@@ -19,7 +19,11 @@ export async function findPortOwners(port: number, exec: ExecFileLike = execFile
 
 export function isOrbitPortOwner(owner: PortOwner): boolean {
   const command = (owner.command ?? "").toLowerCase();
-  return /\borbit(\.exe)?\b/.test(command) || command.includes("\\orbit\\") || command.includes("/orbit/");
+  const executable = firstCommandToken(command);
+  if (!executable) return false;
+  const normalized = executable.replaceAll("\\", "/");
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return basename === "orbit" || basename === "orbit.exe";
 }
 
 export async function stopPortOwner(owner: PortOwner): Promise<void> {
@@ -90,4 +94,14 @@ function dedupeOwners(owners: PortOwner[]): PortOwner[] {
     seen.add(owner.pid);
     return true;
   });
+}
+
+function firstCommandToken(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('"')) {
+    const endQuote = trimmed.indexOf('"', 1);
+    return endQuote === -1 ? trimmed.slice(1) : trimmed.slice(1, endQuote);
+  }
+  return trimmed.split(/\s+/, 1)[0] ?? null;
 }
