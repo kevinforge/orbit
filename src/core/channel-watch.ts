@@ -188,9 +188,11 @@ export class ChannelWatchService {
     const supervisorSession = this.agentRegistry.get(ctx.agentId);
 
     if (options?.relaxIdleCheck) {
-      // User-originated: allow queuing even when busy, only skip unrecoverable states
+      // User-originated: allow queuing even when busy or recovering from a
+      // previous runtime error. AgentSession.send() can move an error-state
+      // session back to running as long as no process is active.
       const status = supervisorSession.getStatus();
-      if (status === "error" || status === "stopped") return;
+      if (status === "stopped") return;
     } else {
       // Agent-completion triggered: supervisor must be idle
       if (supervisorSession.getStatus() !== "idle") return;

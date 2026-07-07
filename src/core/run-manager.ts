@@ -554,7 +554,12 @@ export function classifyTerminalActivities(text: string): AgentActivityEvent[] {
   }
 
   if (/api error|hook error|failed with/i.test(normalized)) {
-    return [{ type: "error", message: "Runtime reported an error. Waiting for final result.", timestamp: new Date().toISOString() }];
+    const upstreamBusy = summarizeUpstreamBusyError(normalized);
+    return [{
+      type: "error",
+      message: upstreamBusy ?? "Runtime reported an error. Waiting for final result.",
+      timestamp: new Date().toISOString(),
+    }];
   }
 
   const toolMatch = /\b(Bash|Edit|Write|Read|Grep|Glob|LS|TodoWrite|MultiEdit|NotebookEdit)\b/i.exec(normalized);
@@ -749,7 +754,24 @@ function summarizeRunError(error: string): string {
     return "Runtime failed without an error message. Check the transcript for details.";
   }
 
+  const upstreamBusy = summarizeUpstreamBusyError(normalized);
+  if (upstreamBusy) {
+    return upstreamBusy;
+  }
+
   return truncateText(stripRawJsonNoise(normalized), MAX_RUN_ERROR_CHARS);
+}
+
+function summarizeUpstreamBusyError(value: string): string | null {
+  if (!/\b(529|overloaded|server_error)\b/i.test(value)) {
+    return null;
+  }
+
+  if (!/api error|server_error|overloaded/i.test(value)) {
+    return null;
+  }
+
+  return "上游模型服务繁忙（529 overloaded）。请稍后重试，或切换到其他可用运行时。";
 }
 
 function stripRawJsonNoise(value: string): string {

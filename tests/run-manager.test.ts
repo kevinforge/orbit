@@ -881,6 +881,52 @@ test("run failures store a concise error instead of raw stream output", async ()
   assert.ok(lastActivity?.type === "status" && lastActivity.text.length < 2_100);
 });
 
+test("overloaded runtime failures are summarized without repeated provider noise", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const failure = deferred();
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() {
+            return failure.promise;
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) {
+      return prompt;
+    },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("supervisor", "first", createSourceMessage());
+  const rawError = "overloaded overloaded overloaded server_error API Error: 529 [1305] overloaded";
+  eventBus.publish({
+    type: "terminal.chunk",
+    conversationId: "test-conv",
+    agentId: "supervisor",
+    runId: run.id,
+    text: rawError,
+  });
+  failure.reject(new Error(rawError));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const failed = messages.get(run.resultMessageId);
+  assert.equal(failed?.status, "error");
+  assert.ok(failed?.content.includes("529 overloaded"), `expected concise overloaded summary, got: ${failed?.content}`);
+  assert.equal((failed?.content.match(/overloaded/g) ?? []).length, 1);
+
+  const errorActivity = failed?.activity?.find((activity) => activity.type === "error");
+  assert.ok(errorActivity?.type === "error" && errorActivity.message.includes("529 overloaded"));
+});
+
 test("CLI crash that streamed assistant text surfaces that text, not the generic fallback", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
