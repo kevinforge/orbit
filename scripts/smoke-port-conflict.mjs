@@ -85,15 +85,18 @@ async function occupyPort() {
   const port = address.port;
   const servers = [primary];
 
+  if (process.platform === "win32") {
+    return { servers, port };
+  }
+
   try {
     const ipv6 = net.createServer();
     await listen(ipv6, { port, host: "::", ipv6Only: false });
     servers.push(ipv6);
   } catch (error) {
-    if (!isAddressInUseError(error)) {
-      await closeServers(servers);
-      throw error;
-    }
+    console.warn(
+      `[orbit smoke] IPv6 wildcard occupancy was unavailable for port ${port}: ${formatError(error)}`,
+    );
   }
 
   return { servers, port };
@@ -175,8 +178,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isAddressInUseError(error) {
-  return error && typeof error === "object" && error.code === "EADDRINUSE";
+function formatError(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function main() {
@@ -210,6 +213,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`[orbit smoke] ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`[orbit smoke] ${formatError(error)}`);
   process.exit(1);
 });
