@@ -11,6 +11,8 @@ const standaloneBuilder = fs.readFileSync(path.join(root, "scripts/build-standal
 const npmAssembler = fs.readFileSync(path.join(root, "scripts/assemble-npm-package.mjs"), "utf8");
 const packageManifest = fs.readFileSync(path.join(root, "package.json"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
+const releaseTag = `v${packageJson.version}`;
+const releaseTagPattern = releaseTag.replaceAll(".", "\\.");
 
 test("release workflow only starts from semantic version tags", () => {
   assert.match(workflow, /workflow_dispatch:/);
@@ -25,24 +27,24 @@ test("release workflow only starts from semantic version tags", () => {
 
 test("release readiness checker passes for the prepared release candidate", () => {
   const checker = path.join(root, "scripts/verify-release-readiness.mjs");
-  const draft = spawnSync(process.execPath, [checker, "v1.0.0-rc.1"], { encoding: "utf8" });
+  const draft = spawnSync(process.execPath, [checker, releaseTag], { encoding: "utf8" });
   assert.equal(draft.status, 0, draft.stderr);
-  assert.match(draft.stdout, /Release readiness check for v1\.0\.0-rc\.1 in draft mode/);
-  assert.match(draft.stdout, /OK Release tag matches package\.json version 1\.0\.0-rc\.1/);
-  assert.match(draft.stdout, /OK docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md has no "TBD before release" placeholders/);
-  assert.match(draft.stdout, /OK docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md is not marked as draft/);
-  assert.match(draft.stdout, /OK docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md has no unchecked release evidence boxes/);
+  assert.match(draft.stdout, new RegExp(`Release readiness check for ${releaseTagPattern} in draft mode`));
+  assert.match(draft.stdout, new RegExp(`OK Release tag matches package\\.json version ${packageJson.version.replaceAll(".", "\\.")}`));
+  assert.match(draft.stdout, new RegExp(`OK docs/RELEASE_NOTES_${releaseTagPattern}\\.md has no "TBD before release" placeholders`));
+  assert.match(draft.stdout, new RegExp(`OK docs/RELEASE_NOTES_${releaseTagPattern}\\.md is not marked as draft`));
+  assert.match(draft.stdout, new RegExp(`OK docs/RELEASE_NOTES_${releaseTagPattern}\\.md has no unchecked release evidence boxes`));
   assert.match(draft.stdout, /Release readiness checks passed/);
 
-  const strict = spawnSync(process.execPath, [checker, "v1.0.0-rc.1", "--strict"], { encoding: "utf8" });
+  const strict = spawnSync(process.execPath, [checker, releaseTag, "--strict"], { encoding: "utf8" });
   assert.equal(strict.status, 0, strict.stderr);
-  assert.match(strict.stdout, /Release readiness check for v1\.0\.0-rc\.1 in strict mode/);
+  assert.match(strict.stdout, new RegExp(`Release readiness check for ${releaseTagPattern} in strict mode`));
   assert.match(strict.stdout, /Release readiness checks passed/);
 });
 
 test("package exposes release readiness commands", () => {
-  assert.match(packageManifest, /"release:check": "node scripts\/verify-release-readiness\.mjs v1\.0\.0-rc\.1"/);
-  assert.match(packageManifest, /"release:check:strict": "node scripts\/verify-release-readiness\.mjs v1\.0\.0-rc\.1 --strict"/);
+  assert.match(packageManifest, new RegExp(`"release:check": "node scripts/verify-release-readiness\\.mjs ${releaseTagPattern}"`));
+  assert.match(packageManifest, new RegExp(`"release:check:strict": "node scripts/verify-release-readiness\\.mjs ${releaseTagPattern} --strict"`));
 });
 
 test("github workflows use current action runtimes", () => {
