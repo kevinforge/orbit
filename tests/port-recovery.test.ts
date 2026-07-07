@@ -5,9 +5,11 @@ import { findPortOwners, isOrbitPortOwner, localAddressMatchesPort } from "../sr
 
 test("isOrbitPortOwner identifies Orbit commands", () => {
   assert.equal(isOrbitPortOwner({ pid: 1, command: "C:\\Users\\me\\AppData\\Roaming\\npm\\orbit.exe" }), true);
-  assert.equal(isOrbitPortOwner({ pid: 2, command: "bun C:\\repo\\orbit\\src\\server\\index.ts" }), true);
+  assert.equal(isOrbitPortOwner({ pid: 2, command: "\"C:\\Users\\me\\AppData\\Roaming\\npm\\orbit.exe\" --flag" }), true);
   assert.equal(isOrbitPortOwner({ pid: 3, command: "C:\\Program Files\\Other\\server.exe" }), false);
-  assert.equal(isOrbitPortOwner({ pid: 4 }), false);
+  assert.equal(isOrbitPortOwner({ pid: 4, command: "node scripts\\smoke-port-conflict.mjs --binary .\\dist\\bin\\orbit.exe" }), false);
+  assert.equal(isOrbitPortOwner({ pid: 5, command: "bun C:\\repo\\orbit\\src\\server\\index.ts" }), false);
+  assert.equal(isOrbitPortOwner({ pid: 6 }), false);
 });
 
 test("localAddressMatchesPort matches exact port suffix", () => {
