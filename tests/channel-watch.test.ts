@@ -1098,33 +1098,59 @@ test("unassigned user message enqueues supervisor even when supervisor is runnin
   service.dispose();
 });
 
-test("unassigned user message does NOT enqueue supervisor in error or stopped state", async () => {
-  for (const badStatus of ["error", "stopped"] as AgentStatus[]) {
-    const eventBus = new EventBus();
-    const messages = new MessageStore();
-    const { agentRegistry, runManager, enqueueCalls } = createMocks({
-      agentStatuses: { supervisor: badStatus, dev: "idle" },
-    });
+test("unassigned user message can recover a supervisor after runtime error", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "error", dev: "idle" },
+  });
 
-    const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
-    const service = new ChannelWatchService(
-      "conv-1",
-      agentRegistry as any,
-      runManager as any,
-      messages,
-      eventBus,
-      profiles,
-    );
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
 
-    eventBus.publish({
-      type: "message.created",
-      conversationId: "conv-1",
-      message: createUserMessage("Hello?"),
-    });
+  eventBus.publish({
+    type: "message.created",
+    conversationId: "conv-1",
+    message: createUserMessage("Hello?"),
+  });
 
-    assert.equal(enqueueCalls.length, 0, `Expected no enqueue for supervisor status=${badStatus}`);
-    service.dispose();
-  }
+  assert.equal(enqueueCalls.length, 1);
+  assert.equal(enqueueCalls[0].agentId, "supervisor");
+  service.dispose();
+});
+
+test("unassigned user message does NOT enqueue supervisor in stopped state", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "stopped", dev: "idle" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  eventBus.publish({
+    type: "message.created",
+    conversationId: "conv-1",
+    message: createUserMessage("Hello?"),
+  });
+
+  assert.equal(enqueueCalls.length, 0);
+  service.dispose();
 });
 
 test("no supervisor configured — unassigned user message does not trigger any enqueue", async () => {
