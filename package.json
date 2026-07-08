@@ -1,6 +1,6 @@
 {
   "name": "@kevinforge/orbit",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0",
   "private": false,
   "description": "Local-first workspace for coordinating CLI-backed digital employees.",
   "license": "MIT",
@@ -41,8 +41,8 @@
     "build": "tsc --noEmit && vite build && node scripts/build-standalone.mjs",
     "build:all": "tsc --noEmit && vite build && node scripts/build-standalone.mjs --all --package-layout",
     "package:npm": "node scripts/assemble-npm-package.mjs",
-    "release:check": "node scripts/verify-release-readiness.mjs v1.0.0-rc.2",
-    "release:check:strict": "node scripts/verify-release-readiness.mjs v1.0.0-rc.2 --strict",
+    "release:check": "node scripts/verify-release-readiness.mjs v1.0.0",
+    "release:check:strict": "node scripts/verify-release-readiness.mjs v1.0.0 --strict",
     "smoke:start": "node scripts/smoke-start.mjs",
     "smoke:port-conflict": "node scripts/smoke-port-conflict.mjs",
     "test": "node scripts/run-tests.mjs",
