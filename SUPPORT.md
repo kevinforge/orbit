@@ -11,7 +11,7 @@ employee workflows safely.
 - **Security vulnerabilities:** do not open a public issue. Follow
   `SECURITY.md`.
 - **Pull requests:** follow `CONTRIBUTING.md` and the pull request template.
-- **1.0 release-candidate verification:** use `docs/RELEASE_CHECKLIST.md` and
+- **Release verification:** use `docs/RELEASE_CHECKLIST.md` and
   `docs/STABILITY_VERIFICATION.md`.
 
 Blank issues are disabled so reports keep the information needed for triage.
@@ -39,9 +39,9 @@ For feature requests, include:
   cancellation, local data, or recovery.
 - Suggested tests or manual verification.
 
-## Support Scope For 1.0 RCs
+## Support Scope For 1.x
 
-During `v1.0.0-rc.*`, maintainers should prioritize:
+For 1.x releases, maintainers should prioritize:
 
 - Startup failures.
 - Packaging and release artifact installation failures.
@@ -51,7 +51,7 @@ During `v1.0.0-rc.*`, maintainers should prioritize:
 - Security reports.
 
 Questions and feature requests are welcome, but they may be handled after
-release-blocking stability and data-safety issues.
+stability, packaging, security, and data-safety issues.
 
 ## Response Expectations
 

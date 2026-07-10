@@ -4,16 +4,17 @@ Orbit is a local-first collaboration workspace for coordinating multiple CLI-bac
 
 ## Install
 
-Install a release package that matches your operating system:
-
-```powershell
-npm install -g .\orbit-<version>-windows-x64.tgz
-```
-
-After public npm publishing is ready, install the scoped package instead:
+Install the public npm package:
 
 ```powershell
 npm install -g @kevinforge/orbit
+```
+
+You can also install a GitHub Release package that matches your operating
+system:
+
+```powershell
+npm install -g .\orbit-<version>-windows-x64.tgz
 ```
 
 You can also run Orbit from a source checkout:
@@ -68,8 +69,7 @@ issues through the policy in [SECURITY.md](SECURITY.md).
 ## Support
 
 See [SUPPORT.md](https://github.com/kevinforge/orbit/blob/main/SUPPORT.md) for
-bug reports, feature requests, security reporting, and release-candidate support
-expectations.
+bug reports, feature requests, security reporting, and support expectations.
 
 ## Local Data
 
@@ -85,6 +85,6 @@ public product terms and `@developer:` style assignment marker rules.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
-[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for release candidate
-verification. The first 1.0 release-candidate notes are drafted in
-[docs/RELEASE_NOTES_v1.0.0-rc.1.md](docs/RELEASE_NOTES_v1.0.0-rc.1.md).
+[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for release
+verification. The 1.0 release notes are in
+[docs/RELEASE_NOTES_v1.0.0.md](docs/RELEASE_NOTES_v1.0.0.md).

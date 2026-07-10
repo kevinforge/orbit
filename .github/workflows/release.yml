@@ -198,6 +198,9 @@ jobs:
     needs: release
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -205,9 +208,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24
           registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -227,12 +232,10 @@ jobs:
         run: npm run package:npm
 
       - name: Verify npm publish payload
-        run: npm publish --dry-run --access public --ignore-scripts
+        run: npm publish --dry-run --access public --ignore-scripts --provenance
 
       - name: Publish to npm
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           package_name="$(node -p "require('./package.json').name")"
           version="$(node -p "require('./package.json').version")"
@@ -240,4 +243,4 @@ jobs:
             echo "${package_name}@${version} is already published; skipping npm publish."
             exit 0
           fi
-          npm publish --access public --ignore-scripts
+          npm publish --access public --ignore-scripts --provenance

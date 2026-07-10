@@ -1,10 +1,10 @@
 # Orbit 1.0 Release Decisions
 
-Status: confirmed release-candidate decisions. The project owner confirmed MIT,
-the `kevinforge` GitHub/npm identity, public npm publishing, repository
-`NPM_TOKEN` configuration, and the all-platform-binaries npm package strategy on
-2026-07-06. Verify the final package payload and workflow evidence before
-publishing `v1.0.0-rc.1`.
+Status: confirmed release decisions. The project owner confirmed MIT, the
+`kevinforge` GitHub/npm identity, public npm publishing, npm Trusted Publishing,
+and the all-platform-binaries npm package strategy. Initial 1.0 publishing used
+a granular npm token; releases after 2026-07-10 should publish through GitHub
+Actions OIDC trusted publishing instead of a long-lived `NPM_TOKEN` secret.
 
 This document keeps the remaining release decisions explicit so 1.0 is not
 blocked by unclear publishing, licensing, platform, or runtime expectations.
@@ -16,6 +16,7 @@ blocked by unclear publishing, licensing, platform, or runtime expectations.
 | License | MIT confirmed | Keep MIT or replace it consistently in a dedicated change |
 | Distribution | GitHub Releases plus public npm | Publish both platform release artifacts and a registry package |
 | npm package name | Use `@kevinforge/orbit`, not `orbit` | Keep the package under an owned npm scope |
+| npm publishing auth | Use npm Trusted Publishing from GitHub Actions | Keep release publishing tokenless with OIDC provenance |
 | npm package layout | One package with all platform binaries | Verify package size and install behavior before every release |
 | Private license gate | Keep only as opt-in for RC | Move private enforcement out or prove public default remains unblocked |
 | Supported OS | Treat workflow targets as RC test targets | Support only platforms with release and manual evidence |
@@ -51,13 +52,44 @@ Why:
 - Public npm should provide the normal `npm install -g <package>` path once an
   owned package name and registry package strategy are confirmed.
 
-Before `v1.0.0-rc.1`, verify the npm publishing path:
+Before each public npm release, verify the npm publishing path:
 
-- Keep repository secret `NPM_TOKEN` configured with publish access.
+- Keep npm Trusted Publishing configured for package `@kevinforge/orbit`,
+  repository `kevinforge/orbit`, and workflow `.github/workflows/release.yml`.
+- Keep the release workflow publishing job on GitHub-hosted runners with
+  `id-token: write` permission.
 - Build the registry package with all platform binaries under `dist/bin/`.
-- Verify `npm publish --dry-run`.
+- Verify `npm publish --dry-run --access public --ignore-scripts --provenance`.
 - Publish to npm only after release readiness, GitHub Release asset generation,
   and package validation pass.
+
+## npm Publishing Authentication
+
+Decision: publish through npm Trusted Publishing instead of a long-lived
+repository `NPM_TOKEN`.
+
+Why:
+
+- npm is deprecating bypass-2FA token publishing for automation.
+- Trusted Publishing lets GitHub Actions request a short-lived npm publishing
+  credential through OIDC.
+- The release workflow can publish with provenance while keeping the repository
+  free of long-lived npm registry secrets.
+
+Required npm package settings:
+
+- Package: `@kevinforge/orbit`.
+- Publisher provider: GitHub Actions.
+- Repository: `kevinforge/orbit`.
+- Workflow filename: `release.yml`.
+- Environment: leave empty unless the release workflow later adds a GitHub
+  Actions environment for npm publishing.
+
+Required repository settings:
+
+- The `publish-npm` job must include `permissions: id-token: write`.
+- The npm publish step must not set `NODE_AUTH_TOKEN`.
+- The release workflow should keep using GitHub-hosted runners for npm publish.
 
 ## npm Package Name
 
@@ -84,7 +116,8 @@ Required repository changes before public npm:
 - Update README, quickstarts, release notes, release checklist, package tests,
   and release workflow references.
 - Run `npm view <package-name>` and record the result before publishing.
-- Run `npm publish --dry-run` against the final package contents before tagging.
+- Run `npm publish --dry-run --access public --ignore-scripts --provenance`
+  against the final package contents before tagging.
 
 ## Private Licensed Build Support
 

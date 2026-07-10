@@ -14,8 +14,8 @@ release candidate.
 - [x] Confirm the owned npm package name: `@kevinforge/orbit`.
 - [x] Do not announce `npm install -g orbit` because the public `orbit` package
   is unrelated.
-- [x] Configure repository secret `NPM_TOKEN` with publish access to the chosen
-  package.
+- [x] Configure npm Trusted Publishing for `@kevinforge/orbit` from the GitHub
+  Actions `Release` workflow.
 - [x] Choose the public npm packaging strategy: one package containing all
   supported platform binaries under `dist/bin/`.
 - [x] Decide whether optional private licensed build support remains in this
@@ -41,8 +41,8 @@ release candidate.
 - [ ] Run `npm pack --dry-run --json` and confirm the package contains only the
   launcher, built binary, built UI, install script, README files, license, and
   package metadata.
-- [ ] Run `npm publish --dry-run --access public` for the final registry
-  package.
+- [ ] Run `npm publish --dry-run --access public --ignore-scripts --provenance`
+  for the final registry package.
 
 ## Cross-Platform Startup
 
@@ -79,6 +79,11 @@ Use `docs/STABILITY_VERIFICATION.md` to run these checks and capture evidence.
   tag.
 - [ ] Confirm the workflow publishes to npm only after release readiness,
   package validation, and platform package smoke checks pass.
+- [ ] Confirm the npm package has a trusted publisher configured for repository
+  `kevinforge/orbit`, workflow `.github/workflows/release.yml`, and package
+  `@kevinforge/orbit`.
+- [ ] Confirm the `publish-npm` job has `id-token: write` permission and does
+  not require a long-lived `NPM_TOKEN` secret.
 - [ ] Confirm the npm package includes Windows x64, Linux x64, macOS x64, and
   macOS ARM64 binaries.
 - [ ] Confirm Windows x64, Linux x64, macOS x64, and macOS ARM64 package jobs
@@ -93,10 +98,10 @@ Use `docs/STABILITY_VERIFICATION.md` to run these checks and capture evidence.
 
 ## Release Notes
 
-Use `docs/RELEASE_NOTES_v1.0.0-rc.1.md` as the release-notes draft for the
-first 1.0 release candidate. The release workflow uses
-`docs/RELEASE_NOTES_<tag>.md` when a matching file exists, and falls back to
-generated GitHub release notes otherwise.
+Create `docs/RELEASE_NOTES_<tag>.md` for each public release. The release
+workflow uses the matching file when it exists, and falls back to generated
+GitHub release notes otherwise. The first stable release audit trail is
+`docs/RELEASE_NOTES_v1.0.0.md`.
 
 - [ ] Include installation from GitHub Release artifacts.
 - [ ] State whether public npm installation is supported.

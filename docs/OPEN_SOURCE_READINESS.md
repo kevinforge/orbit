@@ -6,13 +6,13 @@ temporary planning note.
 
 ## Goal
 
-Orbit 1.0 should be safe and useful for external users to clone, install, run,
+Orbit should remain safe and useful for external users to clone, install, run,
 test, package, and contribute to without private repository access or manual
 administrator steps.
 
 ## Current Baseline
 
-- Version: `1.0.0-rc.1`.
+- Version: `1.0.0`.
 - Verification: `npm run test` and `npm run build` pass locally.
 - Security baseline: `npm audit --audit-level=moderate` passes after refreshing
   the lockfile.
@@ -27,7 +27,8 @@ administrator steps.
   employees, CLI runtime adapters for Claude Code, Codex, and CodeBuddy, run
   queues, cancellation, handoffs, and collaboration insights.
 - Release state: CI runs tests and build on pull requests; release workflow
-  builds platform-specific npm installation packages and GitHub Release assets.
+  builds platform-specific npm installation packages, GitHub Release assets,
+  and publishes npm through GitHub Actions OIDC Trusted Publishing.
 - Governance baseline: MIT `LICENSE`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and
   `SUPPORT.md`, and public package metadata are present.
 - Dependency-license baseline: `docs/DEPENDENCY_LICENSES.md` records the
@@ -39,9 +40,9 @@ administrator steps.
 - Issue intake baseline: GitHub issue templates collect bug reports, feature
   requests, runtime/platform details, and local data impact while sending
   security reports to `SECURITY.md`; `SUPPORT.md` documents the public support
-  channels and release-candidate support scope.
-- Release-notes baseline: `docs/RELEASE_NOTES_v1.0.0-rc.1.md` provides the
-  auditable draft for the first 1.0 release candidate.
+  channels.
+- Release-notes baseline: `docs/RELEASE_NOTES_v1.0.0.md` provides the
+  auditable notes for the first stable 1.0 release.
 - Release-decisions baseline: `docs/RELEASE_DECISIONS.md` captures the confirmed
   MIT, `kevinforge`, public npm, and all-platform registry package direction,
   plus remaining decisions for private licensed builds, supported operating
@@ -64,8 +65,7 @@ All gates below must be closed before tagging `v1.0.0`.
 - Keep `SECURITY.md` current with supported versions and vulnerability
   reporting policy.
 - Keep `CODE_OF_CONDUCT.md` available for public collaboration.
-- Keep `SUPPORT.md` current with issue, security, and release-candidate support
-  expectations.
+- Keep `SUPPORT.md` current with issue, security, and support expectations.
 - Keep `docs/DEPENDENCY_LICENSES.md` aligned with `package-lock.json`; review
   any newly introduced dependency license identifiers before release.
 - Remove private-release wording from public-facing docs and workflows.
@@ -113,6 +113,8 @@ All gates below must be closed before tagging `v1.0.0`.
 - Publish 1.0 through GitHub Releases and public npm.
 - Before publishing to npm, keep `@kevinforge/orbit` ownership and metadata
   aligned: repository, homepage, bugs, keywords, license, and files.
+- Keep npm Trusted Publishing configured for `@kevinforge/orbit` so release
+  publishing does not depend on a long-lived registry token.
 - Keep the registry package layout compatible with all supported platform
   binaries under `dist/bin/`.
 - Keep package contents restricted to launcher, built UI, built binary, install
@@ -169,21 +171,22 @@ Target outcome: ordinary failures leave clear, recoverable state.
 - Review terminal transcript retention and message shard recovery for
   user-data loss risks.
 
-### Milestone D: 1.0 Release Candidate
+### Milestone D: 1.0 Stable Release
 
-Target outcome: `v1.0.0-rc.1` can be tested by external users.
+Target outcome: `v1.0.0` is publicly installable and has repeatable evidence
+for future patch releases.
 
-- Freeze public API and data layout expectations for 1.0.
+- Keep public API and data layout expectations stable for 1.x patch releases.
 - Build release artifacts for all supported platforms.
-- Resolve the `docs/RELEASE_NOTES_v1.0.0-rc.1.md` draft placeholders and
-  publish release notes with known limitations.
+- Keep `docs/RELEASE_NOTES_v1.0.0.md` as the 1.0 audit trail and create new
+  notes for future tags.
 - Gather external installation and first-run feedback.
 
 ## Known Decisions Needed
 
 Use `docs/RELEASE_DECISIONS.md` as the current recommendation brief.
 
-- MIT is the confirmed project license for `v1.0.0-rc.1`.
+- MIT is the confirmed project license for `v1.0.0`.
 - Is the all-platform npm package size and install behavior acceptable for
   public 1.0?
 - Should the commercial/private license gate remain in this repository behind a
@@ -196,6 +199,6 @@ Use `docs/RELEASE_DECISIONS.md` as the current recommendation brief.
 
 1. Verify dev and standalone startup on Windows, macOS, and Linux.
 2. Verify the universal `@kevinforge/orbit` npm package payload.
-3. Confirm npm publishing credentials and release workflow publish behavior.
-4. Resolve `docs/RELEASE_NOTES_v1.0.0-rc.1.md` placeholders and attach final
-   release evidence.
+3. Confirm npm Trusted Publishing settings and release workflow publish
+   behavior.
+4. Create release notes for each future tag and attach final release evidence.
