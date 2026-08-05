@@ -1,5 +1,6 @@
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
+import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
 import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
@@ -1482,7 +1483,7 @@ function ElicitationPanel(props: {
         <div className="elicitationContent">
           <strong>{props.agentLabel} 需要你的输入</strong>
           <span>{props.elicitation.message}</span>
-          {props.elicitation.url ? (
+          {props.elicitation.url && isSafeExternalUrl(props.elicitation.url) ? (
             <a href={props.elicitation.url} target="_blank" rel="noreferrer" className="elicitationUrl">
               打开外部页面
             </a>
