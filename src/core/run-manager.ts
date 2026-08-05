@@ -1,6 +1,7 @@
 import type {
   AgentActivityEvent,
   AgentId,
+  ApprovalMode,
   ChatMessage,
   MessageAttachment,
   NewChatMessage,
@@ -14,7 +15,7 @@ import { parseJsonObjects } from "./json-stream-parser.ts";
 
 type AgentRunner = {
   get(agentId: AgentId): {
-    send(runId: string, prompt: string, imagePaths?: string[]): Promise<RunResult>;
+    send(runId: string, prompt: string, imagePaths?: string[], approvalMode?: ApprovalMode): Promise<RunResult>;
     /** Hard interrupt: terminate the running process tree for this agent. */
     interrupt(runId: string): boolean;
   };
@@ -107,6 +108,7 @@ export class RunManager {
       parentMessageId: sourceMessage.id,
       routeDepth,
       activity,
+      approvalMode: sourceMessage.approvalMode ?? "ask",
     } satisfies NewChatMessage);
     this.options.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
 
@@ -270,7 +272,12 @@ export class RunManager {
     const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths);
     let result: Promise<RunResult>;
     try {
-      result = this.options.agents.get(run.agentId).send(run.id, runtimePrompt, imagePaths);
+      result = this.options.agents.get(run.agentId).send(
+        run.id,
+        runtimePrompt,
+        imagePaths,
+        run.sourceMessage.approvalMode ?? "ask",
+      );
     } catch (error: unknown) {
       this.fail(run, error instanceof Error ? error.message : String(error));
       return;

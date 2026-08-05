@@ -11,6 +11,25 @@ export type PermissionProfile = {
   allowedDirectories: string[];
 };
 
+export type ApprovalMode = "ask" | "full-access";
+
+export type PermissionDecision = "allow" | "reject";
+
+export type AgentPermissionRequest = {
+  id: string;
+  title: string;
+  kind?: string;
+  input?: string;
+  locations?: string[];
+};
+
+export type PendingPermission = AgentPermissionRequest & {
+  conversationId: string;
+  agentId: AgentId;
+  runId: string;
+  createdAt: string;
+};
+
 export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 
 export type ChannelWatchTriggers = {
@@ -135,6 +154,7 @@ export type ChatMessage = {
   sessionId?: string;
   runIndex?: number;
   attachments?: MessageAttachment[];
+  approvalMode?: ApprovalMode;
 };
 
 export type RunResult = {
@@ -235,6 +255,8 @@ export type RuntimeEvent =
   | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string }
   | { type: "run.cancelled"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
   | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
+  | { type: "permission.requested"; conversationId: string; permission: PendingPermission }
+  | { type: "permission.resolved"; conversationId: string; requestId: string }
   | { type: "running.updated"; summaries: RunningSummary[] }
   | { type: "runtime.availability.updated"; availability: RuntimeAvailability[] }
   | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
@@ -318,4 +340,5 @@ export type AppState = {
   terminal: TerminalState;
   runningSummaries: RunningSummary[];
   runtimeAvailability: RuntimeAvailability[];
+  pendingPermissions: PendingPermission[];
 };

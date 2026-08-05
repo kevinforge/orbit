@@ -44,19 +44,21 @@ Orbit 负责协调 CLI 后端数字员工。数字员工至少需要一个可用
 |--------|----------|
 | Claude Code | `npm install -g @anthropic-ai/claude-code` |
 | Codex | `npm install -g @openai/codex` |
-| CodeBuddy | `npm install -g @tencent-ai/codebuddy-code` |
+| CodeBuddy（需要支持 ACP） | `npm install -g @tencent-ai/codebuddy-code` |
 
 ## 功能
 
 - 五个内置数字员工模板：产品经理（`pm`）、架构师（`architect`）、开发（`developer`）、测试（`tester`）、监督者（`supervisor`）
 - 通过 UI 创建和配置自定义数字员工
 - 为每个数字员工配置文件访问、命令执行、依赖安装和 git 操作权限
+- 每条消息可选择“向我审批”或“完全批准”；完全批准也不会突破数字员工已配置的权限边界
 - 支持空白工作区和多数字员工协作工作区模板
 - 支持多会话、后台执行和正在工作的数字员工状态展示
 - 支持明确指派、员工交接和每个数字员工独立任务队列
 - 协作洞察：任务结果、协作规模、执行时间线和耗时趋势
 - 数字员工回复支持 Markdown
 - 会话可在多次运行之间持久化
+- CodeBuddy 使用原生 ACP v1 传输，支持结构化工具活动、人工审批与任务取消
 
 ## 许可证与安全
 

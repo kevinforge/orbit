@@ -7,6 +7,7 @@ import {
   getWorkspaceCreationAction,
   mergeOlderMessagesPage,
   resolveActiveView,
+  resolveApprovalMode,
 } from "../src/ui/App.tsx";
 import type { AgentState, AppState, ChatMessage, MessagePage, RunningSummary } from "../src/shared/types.ts";
 
@@ -24,8 +25,15 @@ function state(conversationId: string, messages: ChatMessage[]): AppState {
     terminal: {},
     runningSummaries: [],
     runtimeAvailability: [],
+    pendingPermissions: [],
   };
 }
+
+test("approval mode defaults to ask and restores full access", () => {
+  assert.equal(resolveApprovalMode(null), "ask");
+  assert.equal(resolveApprovalMode("unknown"), "ask");
+  assert.equal(resolveApprovalMode("full-access"), "full-access");
+});
 
 test("mergeOlderMessagesPage ignores stale responses after conversation switch", () => {
   const current = state("conv2", [message("msg_000003", "current")]);

@@ -21,7 +21,7 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { ConversationInfo, MessagePage, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import type { ApprovalMode, ConversationInfo, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { ConversationContext } from "./conversation-context.ts";
@@ -453,6 +453,7 @@ const server = http.createServer(async (req, res) => {
         terminal: ctx?.transcripts.all() ?? {},
         runningSummaries: buildRunningSummaries(),
         runtimeAvailability: getRuntimeAvailabilityArray(),
+        pendingPermissions: ctx?.pendingPermissions() ?? [],
       });
       return;
     }
@@ -489,6 +490,25 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/messages") {
       await handlePostMessage(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/permissions/resolve") {
+      const input = (await readJson(req)) as { requestId?: unknown; decision?: unknown };
+      const requestId = typeof input.requestId === "string" ? input.requestId : "";
+      const decision = input.decision === "allow" || input.decision === "reject"
+        ? input.decision as PermissionDecision
+        : null;
+      if (!requestId || !decision) {
+        sendJson(res, 400, { ok: false, message: "A valid requestId and decision are required." });
+        return;
+      }
+      const ctx = getActiveContext();
+      if (!ctx?.resolvePermission(requestId, decision)) {
+        sendJson(res, 404, { ok: false, message: "Permission request is no longer pending." });
+        return;
+      }
+      sendJson(res, 200, { ok: true });
       return;
     }
 
@@ -1151,8 +1171,10 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   const input = (await readJson(req)) as {
     content?: unknown;
     draftAttachments?: unknown;
+    approvalMode?: unknown;
   };
   const content = typeof input.content === "string" ? input.content.trim() : "";
+  const approvalMode: ApprovalMode = input.approvalMode === "full-access" ? "full-access" : "ask";
 
   if (!content) {
     sendJson(res, 400, { ok: false, message: "Message cannot be empty." });
@@ -1207,7 +1229,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     });
   }
 
-  const userMessage = context.messages.add({ kind: "user", content, status: "sent", attachments });
+  const userMessage = context.messages.add({ kind: "user", content, status: "sent", attachments, approvalMode });
   eventBus.publish({ type: "message.created", conversationId: activeConversationId, message: userMessage });
   context.messageRouter.process(userMessage);
 

@@ -1513,6 +1513,206 @@ button:active:not(:disabled) {
     var(--shadow-sm);
 }
 
+.composerModeRow {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 8px 7px;
+}
+
+.approvalModeControl {
+  position: relative;
+}
+
+.approvalModeTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.approvalModeTrigger:hover,
+.approvalModeTrigger[aria-expanded="true"] {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.approvalModeTrigger.fullAccess {
+  color: var(--secondary);
+}
+
+.approvalModeIcon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.approvalModeChevron {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.approvalModeMenu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: min(350px, calc(100vw - 64px));
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.approvalModeMenu button {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 20px;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: transparent;
+  text-align: left;
+}
+
+.approvalModeMenu button:hover {
+  background: var(--bg-hover);
+}
+
+.approvalModeMenu button[aria-checked="true"] {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.approvalModeMenu button[aria-checked="true"]:last-child {
+  color: var(--secondary);
+  background: var(--secondary-bg);
+}
+
+.approvalModeMenu button > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.approvalModeMenu strong {
+  font-size: 14px;
+}
+
+.approvalModeMenu small {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 18px;
+}
+
+.approvalModeCheck {
+  justify-self: end;
+  font-size: 15px;
+}
+
+.permissionApprovalStack {
+  display: grid;
+  gap: 8px;
+  padding: 8px 24px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.permissionApproval {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  box-shadow: var(--shadow-sm);
+}
+
+.permissionApprovalIcon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--secondary);
+  background: var(--secondary-bg);
+}
+
+.permissionApprovalContent {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.permissionApprovalContent strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.permissionApprovalContent code {
+  max-width: min(720px, 55vw);
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permissionApprovalActions {
+  display: flex;
+  gap: 8px;
+}
+
+.permissionApprovalActions button {
+  min-width: 76px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-weight: 700;
+}
+
+.permissionRejectBtn {
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+}
+
+.permissionAllowBtn {
+  border: 1px solid var(--accent);
+  color: var(--text-inverse);
+  background: var(--accent);
+}
+
+.permissionApprovalActions button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .composerActions {
   display: flex;
   gap: 8px;
@@ -4020,6 +4220,24 @@ button:active:not(:disabled) {
 
   .composer {
     grid-template-columns: 1fr;
+    padding-inline: 12px;
+  }
+
+  .permissionApprovalStack {
+    padding-inline: 12px;
+  }
+
+  .permissionApproval {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .permissionApprovalActions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .permissionApprovalContent code {
+    max-width: calc(100vw - 100px);
   }
 }
 

@@ -46,19 +46,21 @@ Orbit coordinates CLI-backed digital employees. The digital employees require at
 |---------|---------|
 | Claude Code | `npm install -g @anthropic-ai/claude-code` |
 | Codex | `npm install -g @openai/codex` |
-| CodeBuddy | `npm install -g @tencent-ai/codebuddy-code` |
+| CodeBuddy (ACP support required) | `npm install -g @tencent-ai/codebuddy-code` |
 
 ## Features
 
 - Five built-in digital employee templates: product manager (`pm`), architect, developer, tester, and supervisor
 - Custom digital employee creation and configuration via UI
 - Per-employee permissions for file access, commands, dependency installs, and git operations
+- Per-message approval modes: ask before sensitive ACP operations or auto-approve within the employee's configured permission boundary
 - Workspace templates for blank or multi-employee collaboration setups
 - Multiple conversations with background execution and visible running employees
 - Explicit assignments, handoffs, and per-employee run queues
 - Collaboration Insights for task outcomes, employee collaboration, execution timelines, and duration trends
 - Markdown rendering for employee replies
 - Session persistence across runs
+- Native ACP v1 transport for CodeBuddy, including structured tool activity, human-in-the-loop approvals, and cancellation
 
 ## License And Security
 

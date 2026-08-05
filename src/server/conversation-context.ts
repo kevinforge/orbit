@@ -11,7 +11,15 @@ import { TerminalTranscriptStore } from "../core/terminal-transcript-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { MessageRouter } from "../core/message-router.ts";
 import { ChannelWatchService } from "../core/channel-watch.ts";
-import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type WorkspaceRuntimeConfig, type GlobalRuntimeConfig } from "../shared/types.ts";
+import {
+  hasActiveChannelWatchTriggers,
+  type AgentId,
+  type AgentProfile,
+  type GlobalRuntimeConfig,
+  type PendingPermission,
+  type PermissionDecision,
+  type WorkspaceRuntimeConfig,
+} from "../shared/types.ts";
 import { DEFAULT_WORKSPACE_CONFIG, DEFAULT_GLOBAL_CONFIG } from "../shared/types.ts";
 
 const MAX_ROUTE_DEPTH = 10;
@@ -92,9 +100,9 @@ export class ConversationContext {
       buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
         const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
         // Only inject <current-attachments> for Claude CLI (which doesn't support --image flag)
-        // Codex CLI uses native --image parameter, so no prompt injection needed
+        // Codex CLI and CodeBuddy ACP use native image content, so no prompt injection is needed.
         const agentProfile = profiles.find((p) => p.id === agentId);
-        const shouldInjectImagePaths = imagePaths?.length && agentProfile?.runtime !== "codex";
+        const shouldInjectImagePaths = imagePaths?.length && agentProfile?.runtime === "claude-code";
         return buildAgentContext({
           agentId,
           profiles,
@@ -156,6 +164,14 @@ export class ConversationContext {
     return this.runManager.interruptCurrentChain();
   }
 
+  pendingPermissions(): PendingPermission[] {
+    return this.agents.pendingPermissions();
+  }
+
+  resolvePermission(requestId: string, decision: PermissionDecision): boolean {
+    return this.agents.resolvePermission(requestId, decision);
+  }
+
   refreshProfiles(profiles: readonly AgentProfile[]): void {
     this.channelWatch.dispose();
     this.agents.stopAll();
@@ -179,9 +195,9 @@ export class ConversationContext {
       buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
         const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
         // Only inject <current-attachments> for Claude CLI (which doesn't support --image flag)
-        // Codex CLI uses native --image parameter, so no prompt injection needed
+        // Codex CLI and CodeBuddy ACP use native image content, so no prompt injection is needed.
         const agentProfile = profiles.find((p) => p.id === agentId);
-        const shouldInjectImagePaths = imagePaths?.length && agentProfile?.runtime !== "codex";
+        const shouldInjectImagePaths = imagePaths?.length && agentProfile?.runtime === "claude-code";
         return buildAgentContext({
           agentId,
           profiles,

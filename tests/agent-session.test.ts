@@ -247,6 +247,36 @@ test("send executes through configured runtime and passes resume session", async
   assert.equal(store.load("codebuddy", "default", "developer")!.sessionId, "next-sess");
 });
 
+test("send persists ACP transport metadata", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const controlled = controllableRuntime("clean final", "acp-session");
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: true,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime: { ...controlled.runtime, transport: "acp", protocolVersion: 1 },
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  session.start();
+  await session.send("run-1", "hello");
+
+  const record = store.load("codebuddy", "default", "developer");
+  assert.equal(record?.transport, "acp");
+  assert.equal(record?.protocolVersion, 1);
+});
+
 test("send accepts agent handoff final answer", async () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
@@ -606,4 +636,61 @@ test("interrupt followed by result reject should NOT change status to error", as
   // CRITICAL: Status should STILL be idle, NOT error
   // This is the bug we're testing for - catch() should not overwrite idle status
   assert.equal(session.getStatus(), "idle", "status should remain idle after interrupt-induced reject, not become error");
+});
+
+test("publishes and resolves runtime permission requests", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  const events: Array<{ type: string }> = [];
+  eventBus.subscribe((event) => events.push(event));
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const result = new Promise<string>((resolve) => { finishRun = resolve; });
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result,
+        sessionId: Promise.resolve("permission-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    permissionProfile: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: true,
+      canInstallDependencies: false,
+      canGitCommit: false,
+      allowedDirectories: ["."],
+    },
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+  session.start();
+  const sendPromise = session.send("run-approval", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(runOptions!.approvalMode, "ask");
+  const decisionPromise = runOptions!.requestPermission!({ id: "tool-1", title: "Run tests", kind: "execute" });
+  const pending = session.pendingPermissions();
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0]!.id, "run-approval:tool-1");
+  assert.ok(events.some((event) => event.type === "permission.requested"));
+
+  assert.equal(session.resolvePermission(pending[0]!.id, "allow"), true);
+  assert.equal(await decisionPromise, "allow");
+  assert.equal(session.pendingPermissions().length, 0);
+  assert.ok(events.some((event) => event.type === "permission.resolved"));
+
+  finishRun("clean final");
+  await sendPromise;
 });

@@ -1,9 +1,9 @@
-import type { AgentId, AgentProfile, AgentState } from "../shared/types.ts";
+import type { AgentId, AgentProfile, AgentState, PendingPermission, PermissionDecision } from "../shared/types.ts";
 import { AgentSession } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { claudeCodeRuntime } from "./claude-cli-runtime.ts";
 import { codexRuntime } from "./codex-cli-runtime.ts";
-import { codeBuddyRuntime } from "./codebuddy-cli-runtime.ts";
+import { codeBuddyRuntime } from "./codebuddy-acp-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import type { SessionStore } from "./session-store.ts";
 
@@ -77,6 +77,19 @@ export class AgentRegistry {
       status: this.get(profile.id).getStatus(),
       selected: index === 0,
     }));
+  }
+
+  pendingPermissions(): PendingPermission[] {
+    return [...this.sessions.values()].flatMap((session) => session.pendingPermissions());
+  }
+
+  resolvePermission(requestId: string, decision: PermissionDecision): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.resolvePermission(requestId, decision)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   stopAll(): void {

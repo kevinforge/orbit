@@ -3,7 +3,7 @@ import { renderMarkdown } from "./markdown-renderer.ts";
 import { permissionProfile } from "../core/agent-profiles.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PendingPermission, type PermissionDecision, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 
 const initialState: AppState = {
@@ -15,10 +15,12 @@ const initialState: AppState = {
   terminal: {},
   runningSummaries: [],
   runtimeAvailability: [],
+  pendingPermissions: [],
 };
 
 type ActiveView = "conversation" | "analysis";
 const ACTIVE_VIEW_STORAGE_KEY = "orbit.activeView";
+const APPROVAL_MODE_STORAGE_KEY = "orbit.approvalMode";
 
 export function resolveActiveView(storedView: string | null): ActiveView {
   return storedView === "analysis" ? "analysis" : "conversation";
@@ -32,10 +34,25 @@ function loadActiveView(): ActiveView {
   }
 }
 
+export function resolveApprovalMode(storedMode: string | null): ApprovalMode {
+  return storedMode === "full-access" ? "full-access" : "ask";
+}
+
+function loadApprovalMode(): ApprovalMode {
+  try {
+    return resolveApprovalMode(window.localStorage.getItem(APPROVAL_MODE_STORAGE_KEY));
+  } catch {
+    return "ask";
+  }
+}
+
 export function App() {
   const [state, setState] = useState<AppState>(initialState);
   const [activeView, setActiveView] = useState<ActiveView>(loadActiveView);
   const [content, setContent] = useState("");
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(loadApprovalMode);
+  const [showApprovalModeMenu, setShowApprovalModeMenu] = useState(false);
+  const [resolvingPermissionIds, setResolvingPermissionIds] = useState<string[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
@@ -89,6 +106,14 @@ export function App() {
       // The view still works when storage is unavailable; only reload persistence is lost.
     }
   }, [activeView]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(APPROVAL_MODE_STORAGE_KEY, approvalMode);
+    } catch {
+      // Approval mode still applies to this tab when storage is unavailable.
+    }
+  }, [approvalMode]);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
   const hasAnyQueuedRun = state.messages.some((m) => m.runStatus === "queued");
@@ -354,8 +379,9 @@ export function App() {
 
     setIsSending(true);
     try {
-      const body: { content: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
+      const body: { content: string; approvalMode: ApprovalMode; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
         content: trimmed,
+        approvalMode,
       };
       if (pendingAttachments.length > 0) {
         body.draftAttachments = pendingAttachments.map((a) => ({
@@ -388,6 +414,34 @@ export function App() {
       }));
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function resolvePermission(requestId: string, decision: PermissionDecision) {
+    if (resolvingPermissionIds.includes(requestId)) return;
+    setResolvingPermissionIds((current) => [...current, requestId]);
+    try {
+      const response = await fetch("/api/permissions/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, decision }),
+      });
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`Permission request failed: ${response.status}`);
+      }
+      if (response.status === 404) {
+        setState((current) => ({
+          ...current,
+          pendingPermissions: current.pendingPermissions.filter((permission) => permission.id !== requestId),
+        }));
+      }
+    } catch {
+      setState((current) => ({
+        ...current,
+        messages: [...current.messages, createLocalSystemMessage("审批失败，请检查本地服务是否正在运行。")],
+      }));
+    } finally {
+      setResolvingPermissionIds((current) => current.filter((id) => id !== requestId));
     }
   }
 
@@ -1117,6 +1171,19 @@ export function App() {
         ) : null}
         {interruptToast ? <div className="interruptToast">{interruptToast}</div> : null}
         {attachmentToast ? <div className="attachmentToast">{attachmentToast}</div> : null}
+        {state.pendingPermissions.length > 0 ? (
+          <div className="permissionApprovalStack" aria-live="polite">
+            {state.pendingPermissions.map((permission) => (
+              <PermissionApprovalPanel
+                key={permission.id}
+                permission={permission}
+                agentLabel={agentsById.get(permission.agentId)?.label ?? permission.agentId}
+                resolving={resolvingPermissionIds.includes(permission.id)}
+                onDecision={(decision) => resolvePermission(permission.id, decision)}
+              />
+            ))}
+          </div>
+        ) : null}
         <form className="composer" onSubmit={sendMessage}>
           <div className={`composerInputWrap${pendingAttachments.length > 0 ? " hasAttachments" : ""}`}>
             {pendingAttachments.length > 0 && (
@@ -1181,6 +1248,46 @@ export function App() {
                 onSelect={chooseMention}
               />
             ) : null}
+            <div className="composerModeRow">
+              <div className="approvalModeControl">
+                <button
+                  type="button"
+                  className={`approvalModeTrigger ${approvalMode === "full-access" ? "fullAccess" : ""}`}
+                  onClick={() => setShowApprovalModeMenu((open) => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={showApprovalModeMenu}
+                  title="设置这条消息及后续协作的审批方式"
+                >
+                  <ApprovalModeIcon mode={approvalMode} />
+                  <span>{approvalMode === "full-access" ? "完全批准" : "向我审批"}</span>
+                  <span className="approvalModeChevron" aria-hidden="true">⌄</span>
+                </button>
+                {showApprovalModeMenu ? (
+                  <div className="approvalModeMenu" role="menu" aria-label="权限审批方式">
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={approvalMode === "ask"}
+                      onClick={() => { setApprovalMode("ask"); setShowApprovalModeMenu(false); }}
+                    >
+                      <ApprovalModeIcon mode="ask" />
+                      <span><strong>向我审批</strong><small>敏感操作执行前暂停并询问</small></span>
+                      {approvalMode === "ask" ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={approvalMode === "full-access"}
+                      onClick={() => { setApprovalMode("full-access"); setShowApprovalModeMenu(false); }}
+                    >
+                      <ApprovalModeIcon mode="full-access" />
+                      <span><strong>完全批准</strong><small>自动批准员工权限范围内的操作</small></span>
+                      {approvalMode === "full-access" ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
           <div className="composerActions">
             {hasRunningOrQueued ? (
@@ -1261,6 +1368,47 @@ export function App() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function ApprovalModeIcon({ mode }: { mode: ApprovalMode }) {
+  if (mode === "full-access") {
+    return (
+      <svg className="approvalModeIcon" viewBox="0 0 18 18" aria-hidden="true">
+        <path d="M9 1.8 15 4v4.2c0 3.7-2.4 6.4-6 8-3.6-1.6-6-4.3-6-8V4l6-2.2Z" />
+        <path d="m6.4 9 1.7 1.7 3.6-3.8" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="approvalModeIcon" viewBox="0 0 18 18" aria-hidden="true">
+      <path d="M5.2 8.1V5.4a1 1 0 0 1 2 0v2.1-3a1 1 0 0 1 2 0v3-2.2a1 1 0 0 1 2 0v2.5-1.4a1 1 0 0 1 2 0v4.1c0 3.3-2 5.2-5 5.2-2.3 0-3.6-1.1-4.8-3.1L2 10.3a1.1 1.1 0 0 1 1.8-1.2l1.4 1.8V8.1Z" />
+    </svg>
+  );
+}
+
+function PermissionApprovalPanel(props: {
+  permission: PendingPermission;
+  agentLabel: string;
+  resolving: boolean;
+  onDecision: (decision: PermissionDecision) => void;
+}) {
+  const detail = props.permission.input || props.permission.locations?.join("、");
+  return (
+    <section className="permissionApproval" aria-label={`${props.agentLabel} 请求权限`}>
+      <span className="permissionApprovalIcon"><ApprovalModeIcon mode="ask" /></span>
+      <div className="permissionApprovalContent">
+        <strong>{props.agentLabel} 请求批准</strong>
+        <span>{props.permission.title}</span>
+        {detail ? <code title={detail}>{detail}</code> : null}
+      </div>
+      <div className="permissionApprovalActions">
+        <button type="button" className="permissionRejectBtn" disabled={props.resolving} onClick={() => props.onDecision("reject")}>拒绝</button>
+        <button type="button" className="permissionAllowBtn" disabled={props.resolving} onClick={() => props.onDecision("allow")}>
+          {props.resolving ? <span className="sendSpinner" aria-hidden="true" /> : "允许一次"}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -2376,6 +2524,20 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
+  if (event.type === "permission.requested") {
+    if (state.pendingPermissions.some((permission) => permission.id === event.permission.id)) {
+      return state;
+    }
+    return { ...state, pendingPermissions: [...state.pendingPermissions, event.permission] };
+  }
+
+  if (event.type === "permission.resolved") {
+    return {
+      ...state,
+      pendingPermissions: state.pendingPermissions.filter((permission) => permission.id !== event.requestId),
+    };
+  }
+
   if (event.type === "terminal.chunk") {
     return state;
   }
@@ -2421,6 +2583,7 @@ function normalizeState(nextState: AppState): AppState {
     },
     runningSummaries: nextState.runningSummaries ?? [],
     runtimeAvailability: nextState.runtimeAvailability ?? [],
+    pendingPermissions: nextState.pendingPermissions ?? [],
   };
 }
 

@@ -13,7 +13,7 @@ test("CLAUDE.md documents the current multi-runtime architecture", () => {
   const doc = readRepoFile("CLAUDE.md");
 
   assert.match(doc, /CLI-backed digital employees/);
-  assert.match(doc, /Codex, Claude Code, and CodeBuddy CLI/);
+  assert.match(doc, /CodeBuddy runs as an ACP v1 child process/);
   assert.doesNotMatch(doc, /multiple Claude Code CLI agents/);
   assert.doesNotMatch(doc, /claude CLI \(stream-json\)/);
 });

@@ -12,14 +12,14 @@ React UI
   -> RunManager
   -> AgentRegistry / AgentSession
   -> Runtime adapter
-  -> Codex, Claude Code, or CodeBuddy CLI
-  -> CLI stream events
+  -> Codex or Claude Code CLI, or CodeBuddy ACP
+  -> Runtime stream events
   -> MessageStore + TerminalTranscriptStore
   -> SSE
   -> React UI
 ```
 
-The runtime no longer uses PTY sessions or CLI hooks. A run is considered complete when the selected CLI child process exits and returns a clean final answer.
+The runtime no longer uses PTY sessions or CLI hooks. A run is considered complete when the selected runtime turn returns a clean final answer.
 
 ## Core Modules
 
@@ -31,11 +31,11 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/agent-profiles.ts` | Built-in role definitions, permission profiles, and config-to-profile conversion |
 | `src/core/agent-config-store.ts` | Persistent agent configuration (load/save/reset/validate) |
 | `src/core/agent-registry.ts` | Owns agent sessions and exposes agent state |
-| `src/core/agent-session.ts` | Starts one runtime adapter run and tracks status |
+| `src/core/agent-session.ts` | Starts one runtime adapter run, tracks status, and owns pending permission decisions |
 | `src/core/agent-runtime.ts` | Shared runtime adapter contract |
 | `src/core/claude-cli-runtime.ts` | Spawns Claude Code CLI and parses stream JSON output |
 | `src/core/codex-cli-runtime.ts` | Spawns Codex CLI and parses JSONL output |
-| `src/core/codebuddy-cli-runtime.ts` | Spawns CodeBuddy CLI and parses stream JSON output |
+| `src/core/codebuddy-acp-runtime.ts` | Runs CodeBuddy through ACP v1 and maps session updates into Orbit events |
 | `src/core/run-manager.ts` | Per-agent run queue and lifecycle events |
 | `src/core/message-router.ts` | Routes user and agent messages containing explicit assignments |
 | `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
@@ -46,7 +46,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/message-store.ts` | Workspace-persisted channel messages, shard manifests, and pagination |
 | `src/core/work-analysis.ts` | Aggregates message trees into task outcomes, collaboration, timelines, and duration metrics |
 | `src/server/workspace-work-analysis.ts` | Loads workspace conversation history for `GET /api/work-analysis` |
-| `src/core/session-store.ts` | Per-agent session persistence for `--resume` |
+| `src/core/session-store.ts` | Per-agent backend session persistence, including transport metadata |
 | `src/core/workspace-store.ts` | Workspace CRUD, isolation, and user directory persistence |
 | `src/core/terminal-transcript-store.ts` | Workspace-persisted runtime activity transcript segments |
 | `src/core/history-retention.ts` | Best-effort cleanup for old message shards and transcript segments |
@@ -154,7 +154,7 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 
 ## Session Persistence
 
-Each agent's CLI session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. On subsequent runs, the runtime adapter passes the corresponding resume option so the agent retains its own prior conversation context. If resumption fails (e.g. session expired), the store is cleared and the run retries without resuming.
+Each agent's backend session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. Records also identify the transport and protocol version when available. On subsequent runs, the runtime adapter restores the corresponding backend context. CodeBuddy prefers ACP `session/resume` when advertised and otherwise uses `session/load`; load-time history notifications are ignored because Orbit's message store remains the canonical conversation history. If restoration fails (e.g. session expired), the store is cleared and the run retries with a new session.
 
 Session files are stored under `~/.orbit/sessions/<workspaceId>/<runtime>/<channelId>/<conversationId>/<agentId>.json`, namespaced by runtime, channel, conversation, and agent.
 
@@ -188,7 +188,7 @@ The server keeps one active UI pointer while retaining multiple live conversatio
 
 Codex uses the user's normal Codex CLI home. Orbit does not create per-agent `CODEX_HOME` directories; agent-level continuity is handled by the session store above, which passes each agent's own saved session ID back to the runtime on the next run.
 
-## CLI Runtimes
+## Runtime Transports
 
 Orbit runs each backend through a runtime adapter. Codex uses:
 
@@ -205,20 +205,22 @@ claude --print --verbose --output-format stream-json --include-partial-messages 
 CodeBuddy uses:
 
 ```text
-codebuddy --print --output-format stream-json --include-partial-messages --permission-mode bypassPermissions
+codebuddy --acp
 ```
 
-The user prompt is written to stdin. Stream JSON events are converted into:
+Codex and Claude prompts are written to stdin. CodeBuddy uses ACP v1 over newline-delimited JSON-RPC on stdio. Runtime events are converted into:
 
 - final assistant text
 - tool/activity events
 - runtime output for diagnostics
 
-Because this mode exits after each run, Orbit does not need a Stop hook or a terminal input endpoint.
+CodeBuddy is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are first evaluated against the employee's `PermissionProfile`; no CodeBuddy bypass-permissions flag is used.
+
+The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, profile-allowed requests are approved automatically. Both modes select ACP one-time decisions only, and the employee permission profile remains the hard security ceiling. Interrupting or stopping a run rejects and clears any pending request.
 
 ## Activity Stream
 
-Activity events are derived from Claude stream JSON output and shown in the chat card:
+Activity events are derived from CLI stream output or ACP session updates and shown in the chat card:
 
 - run accepted / started / completed / failed
 - tool started / completed / failed

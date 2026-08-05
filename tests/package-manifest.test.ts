@@ -13,6 +13,7 @@ type PackageJson = {
   repository?: { type?: string; url?: string };
   scripts?: Record<string, string>;
   engines?: Record<string, string>;
+  dependencies?: Record<string, string>;
 };
 
 function readPackageJson(): PackageJson {
@@ -38,6 +39,12 @@ test("package build delegates to the protected standalone builder", () => {
   assert.match(standaloneBuilder, /"--bytecode"/);
   assert.match(standaloneBuilder, /"--minify"/);
   assert.match(standaloneBuilder, /"--sourcemap=none"/);
+});
+
+test("ACP SDK is pinned to the reviewed stable protocol implementation", () => {
+  const manifest = readPackageJson();
+
+  assert.equal(manifest.dependencies?.["@agentclientprotocol/sdk"], "1.3.0");
 });
 
 test("default test script uses complete cross-platform discovery", () => {

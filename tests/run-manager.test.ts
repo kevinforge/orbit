@@ -89,6 +89,35 @@ test("queues a second run for the same agent until the first completes", async (
   assert.equal(messages.list()[1]?.status, "done");
 });
 
+test("propagates the source approval mode to the agent run and result message", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  let receivedMode: string | undefined;
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(_runId, _prompt, _imagePaths, approvalMode) {
+            receivedMode = approvalMode;
+            return Promise.resolve({ content: "done" });
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+  const source = { ...createSourceMessage(), approvalMode: "full-access" as const };
+  const run = manager.enqueue("developer", "work", source);
+
+  assert.equal(receivedMode, "full-access");
+  assert.equal(messages.get(run.resultMessageId)?.approvalMode, "full-access");
+});
+
 test("terminal chunks append visible activity to the running message", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

@@ -80,7 +80,7 @@ Orbit is a local-first chat control surface that coordinates multiple CLI-backed
 - React 19 + Vite 8 (UI in a single `App.tsx`, no router or state library)
 - Raw `node:http` server (no Express/Koa)
 - Node.js built-in test runner (`node --test`)
-- Codex, Claude Code, and CodeBuddy CLI spawned as child processes in non-interactive mode
+- Codex and Claude Code run as non-interactive CLI child processes; CodeBuddy runs as an ACP v1 child process
 
 ### Core Data Flow
 
@@ -88,11 +88,13 @@ Orbit is a local-first chat control surface that coordinates multiple CLI-backed
 User message (POST /api/messages)
   → MessageRouter → mention-router (parses @agent: markers)
     → RunManager (per-agent serial queue)
-      → AgentSession → buildAgentContext() → selected runtime adapter (Codex, Claude Code, or CodeBuddy CLI)
+      → AgentSession → buildAgentContext() → selected runtime adapter (Codex or Claude Code CLI, or CodeBuddy ACP)
         → EventBus → SseHub → browser (EventSource)
         → RunManager classifies activities (tool.started, etc.)
           → on completion: next queued run starts, agent replies can trigger further routing
 ```
+
+For CodeBuddy ACP, the user message's approval mode follows the entire handoff chain. `AgentSession` exposes pending ACP permission requests through state/SSE, and `POST /api/permissions/resolve` resumes the blocked request. The employee `PermissionProfile` remains a hard ceiling even in full-access mode.
 
 Agent replies can contain `@other_agent:` assignments, enabling delegation chains capped at depth 10.
 
@@ -105,12 +107,12 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/run-manager.ts`** — Per-agent FIFO run queue, lifecycle events, activity classification
 - **`src/core/claude-cli-runtime.ts`** — Spawns `claude --print --output-format stream-json`, parses stdout
 - **`src/core/codex-cli-runtime.ts`** — Spawns Codex CLI in JSONL mode, parses output
-- **`src/core/codebuddy-cli-runtime.ts`** — Spawns CodeBuddy CLI in stream-json mode, parses output
+- **`src/core/codebuddy-acp-runtime.ts`** — Runs CodeBuddy through ACP v1, restores sessions, and maps streamed updates
 - **`src/core/agent-runtime.ts`** — Shared runtime interface for all CLI adapters
 - **`src/core/agent-config-store.ts`** — Persistent agent configuration (load/save/reset via JSON file)
 - **`src/core/agent-context-builder.ts`** — Builds private system prompt injected into each agent run
 - **`src/core/agent-history-builder.ts`** — Builds scoped conversation history (messages since agent's last completed run)
-- **`src/core/session-store.ts`** — Per-agent session persistence for `--resume`
+- **`src/core/session-store.ts`** — Per-agent backend session persistence with transport metadata
 - **`src/core/agent-config-store.ts`** — Five built-in agent configuration templates (pm, architect, developer, tester, supervisor)
 - **`src/core/agent-profiles.ts`** — Legacy runtime profile helpers and config-to-profile conversion
 - **`src/core/agent-session.ts`** — Manages one agent's lifecycle (idle/running/error/stopped)
