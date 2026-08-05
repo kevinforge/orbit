@@ -16,13 +16,13 @@ test("loads four legacy runtime worker profiles", () => {
   );
 });
 
-test("developer can write files while pm cannot", () => {
+test("profiles do not carry per-employee permission settings", () => {
   const profiles = createDefaultAgentProfiles("D:/project");
   const pm = profiles.find((profile) => profile.id === "pm");
   const developer = profiles.find((profile) => profile.id === "developer");
 
-  assert.equal(pm?.permissionProfile.canWriteFiles, false);
-  assert.equal(developer?.permissionProfile.canWriteFiles, true);
+  assert.equal("permissionProfile" in (pm ?? {}), false);
+  assert.equal("permissionProfile" in (developer ?? {}), false);
 });
 
 test("default runtimes use codex for planning, claude for development, and codebuddy for testing", () => {

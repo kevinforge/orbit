@@ -28,7 +28,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/server/index.ts` | Local HTTP routes, SSE wiring, message intake |
 | `src/server/sse-hub.ts` | Server-Sent Events client management |
 | `src/server/static-server.ts` | Static UI serving |
-| `src/core/agent-profiles.ts` | Built-in role definitions, permission profiles, and config-to-profile conversion |
+| `src/core/agent-profiles.ts` | Built-in role definitions and config-to-profile conversion |
 | `src/core/agent-config-store.ts` | Persistent agent configuration (load/save/reset/validate) |
 | `src/core/agent-registry.ts` | Owns agent sessions and exposes agent state |
 | `src/core/agent-session.ts` | Starts one runtime adapter run, tracks status, and owns pending permission decisions |
@@ -66,14 +66,14 @@ Agents are configured via `AgentConfigStore` and persisted per-workspace in `~/.
 | `@tester:` | 测试（tester） | `codebuddy` |
 | `@supervisor:` | 监督者（supervisor） | `claude-code` |
 
-These defaults can be modified, disabled, or removed through the settings UI. Custom agents can be added with any of the supported runtimes and configurable permissions. Only enabled agents participate in routing.
+These defaults can be modified, disabled, or removed through the settings UI. Custom agents can be added with any of the supported runtimes and their own system prompt. Only enabled agents participate in routing.
 
 ### Two-Layer Model
 
-- **`AgentConfig`** (`src/shared/types.ts`): Persistence and UI model — includes id, name, description, role, runtime, systemPrompt, permissionProfile, enabled, and ui metadata.
-- **`AgentProfile`** (`src/shared/types.ts`): Runtime model used by `AgentRegistry` and `AgentSession` — includes cwd and resolved permissionProfile.
+- **`AgentConfig`** (`src/shared/types.ts`): Persistence and UI model — includes id, name, description, role, runtime, systemPrompt, enabled, and ui metadata.
+- **`AgentProfile`** (`src/shared/types.ts`): Runtime model used by `AgentRegistry` and `AgentSession` — includes the resolved workspace cwd.
 
-`configsToProfiles()` in `agent-profiles.ts` converts enabled `AgentConfig` entries to `AgentProfile` instances, using the config's `permissionProfile` if provided or deriving one from the role.
+`configsToProfiles()` in `agent-profiles.ts` converts enabled `AgentConfig` entries to `AgentProfile` instances. Role and system-prompt definitions describe the digital employee's responsibilities; there is no per-employee permission matrix.
 
 ### Config Store
 
@@ -81,7 +81,7 @@ These defaults can be modified, disabled, or removed through the settings UI. Cu
 - **load**: Reads `agents.json`, returns seed defaults if missing or corrupted
 - **save**: Validates then writes with atomic file swap
 - **reset**: Restores the five built-in default configs
-- **validateAgentConfigs**: Checks id format, uniqueness, reserved names, runtime validity, systemPrompt, name, permission boundaries, coordinator uniqueness, and coordinator prerequisites
+- **validateAgentConfigs**: Checks id format, uniqueness, reserved names, runtime validity, systemPrompt, name, coordinator uniqueness, and coordinator prerequisites
 
 ### Runtime Refresh
 
@@ -124,7 +124,7 @@ Stored at `~/.orbit/workspaces/<workspaceId>/config.json`. Can be updated at run
 
 The final agent prompt is assembled in this order:
 
-1. **Orbit fixed context** (agent identity, permissions, available agents, collaboration rules)
+1. **Orbit fixed context** (agent identity, available agents, collaboration rules)
 2. **Final answer rules** (output format constraints)
 3. **Workspace system prompt** (from `WorkspaceConfig.systemPrompt`, if set)
 4. **Workspace rules** (from `WorkspaceConfig.rules`, if set)
@@ -214,9 +214,9 @@ Codex and Claude prompts are written to stdin. CodeBuddy uses ACP v1 over newlin
 - tool/activity events
 - runtime output for diagnostics
 
-CodeBuddy is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are first evaluated against the employee's `PermissionProfile`; no CodeBuddy bypass-permissions flag is used.
+CodeBuddy is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no CodeBuddy bypass-permissions flag is used.
 
-The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, profile-allowed requests are approved automatically. Both modes select ACP one-time decisions only, and the employee permission profile remains the hard security ceiling. Interrupting or stopping a run rejects and clears any pending request.
+The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request.
 
 ## Activity Stream
 

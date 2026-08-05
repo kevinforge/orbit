@@ -35,7 +35,6 @@ export class AgentRegistry {
           id: profile.id,
           label: profile.name,
           cwd: profile.cwd,
-          permissionProfile: profile.permissionProfile,
           runtime,
           eventBus,
           sessionStore,

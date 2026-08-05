@@ -1,9 +1,8 @@
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
-import { permissionProfile } from "../core/agent-profiles.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PendingPermission, type PermissionDecision, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 
 const initialState: AppState = {
@@ -1763,45 +1762,6 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
 
 const RUNTIMES: readonly AgentRuntimeKind[] = AGENT_RUNTIME_PRIORITY;
 const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
-const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
-  { key: "canReadFiles", label: "读取文件", hint: "允许数字员工读取工作区中的文件内容。" },
-  { key: "canWriteFiles", label: "写入文件", hint: "允许数字员工创建、修改或删除工作区中的文件。" },
-  { key: "canRunCommands", label: "运行命令", hint: "允许数字员工执行终端命令（如构建、测试等）。" },
-  { key: "canInstallDependencies", label: "安装依赖", hint: "允许数字员工安装项目依赖包（如 npm install）。" },
-  { key: "canGitCommit", label: "Git 提交", hint: "允许数字员工执行 git commit 和 git push 操作。" },
-];
-
-function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange: (pp: PermissionProfile) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const pp: PermissionProfile = config.permissionProfile ?? permissionProfile(config.role);
-
-  return (
-    <div className="permSection">
-      <button type="button" className="permToggle" onClick={() => setExpanded((v) => !v)}>
-        {expanded ? "▼" : "▶"} 权限设置
-      </button>
-      {expanded ? (
-        <div className="permFields">
-          {PERM_FLAGS.map(({ key, label, hint }) => (
-            <label key={key} className="permLabel">
-              <input type="checkbox" checked={pp[key] as boolean} onChange={(e) => onChange({ ...pp, [key]: e.target.checked })} /> {label}
-              <span className="fieldHint" title={hint}>?</span>
-            </label>
-          ))}
-          <div className="fieldWithHint">
-            <input
-              placeholder="允许访问的目录（逗号分隔）"
-              value={pp.allowedDirectories.join(", ")}
-              onChange={(e) => onChange({ ...pp, allowedDirectories: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
-            />
-            <span className="fieldHint" title="限制数字员工只能访问指定目录。留空表示允许访问整个工作区。多个目录用逗号分隔。">?</span>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 // Global settings - only runtime-level config
 function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
   const [enableRunLogs, setEnableRunLogs] = useState(false);
@@ -2201,7 +2161,6 @@ function AgentManagerPanel({
         runtime: firstAvailableRuntime,
         systemPrompt: "",
         enabled: true,
-        permissionProfile: permissionProfile(role),
       },
       ...prev,
     ]);
@@ -2344,7 +2303,7 @@ function AgentManagerPanel({
                           <span className="fieldHint" title="数字员工能力的简短描述。其他数字员工发现可协作成员时会看到此内容。">?</span>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">角色 <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
+                          <span className="pillLabel">角色 <span className="fieldHint" title="决定数字员工的默认职责和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
                           <div className="pillOptions">
                             {ROLES.map((r) => (
                               <button
@@ -2353,7 +2312,7 @@ function AgentManagerPanel({
                                 className={`pillBtn ${config.role === r ? "pillActive" : ""}`}
                                 onClick={() => {
                                   if (config.role === r) return;
-                                  updateConfig(i, { role: r, permissionProfile: permissionProfile(r) });
+                                   updateConfig(i, { role: r });
                                 }}
                               >
                                 {r}
@@ -2415,7 +2374,6 @@ function AgentManagerPanel({
                           <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
                         </div>
-                        <PermissionEditor config={config} onChange={(pp) => updateConfig(i, { permissionProfile: pp })} />
                       </div>
                     </div>
                   ) : null}

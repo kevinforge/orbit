@@ -27,7 +27,7 @@ import {
   type ToolKind,
 } from "@agentclientprotocol/sdk";
 
-import type { AgentActivityEvent, AgentId, PermissionProfile } from "../shared/types.ts";
+import type { AgentActivityEvent, AgentId } from "../shared/types.ts";
 import type { AgentRuntime, AgentRuntimeRunHandle, AgentRuntimeRunOptions } from "./agent-runtime.ts";
 import { interruptProcessTree } from "./claude-cli-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
@@ -329,29 +329,22 @@ function formatValue(value: unknown): string {
 
 export function decideCodeBuddyPermission(
   request: RequestPermissionRequest,
-  profile: PermissionProfile,
-  cwd: string,
 ): RequestPermissionResponse {
-  const allowed = isToolAllowed(request.toolCall.kind, request.toolCall.rawInput, profile)
-    && areLocationsAllowed(request.toolCall.locations, profile, cwd);
-  return selectCodeBuddyPermission(request, allowed ? "allow" : "reject");
+  return selectCodeBuddyPermission(request, "allow");
 }
 
 export async function resolveCodeBuddyPermission(
   request: RequestPermissionRequest,
   options: CodeBuddyAcpRunOptions,
 ): Promise<RequestPermissionResponse> {
-  const allowed = isToolAllowed(request.toolCall.kind, request.toolCall.rawInput, options.permissionProfile)
-    && areLocationsAllowed(request.toolCall.locations, options.permissionProfile, options.cwd);
-  if (!allowed || options.approvalMode !== "full-access") {
-    if (!allowed || !options.requestPermission) {
-      return selectCodeBuddyPermission(request, "reject");
-    }
-
+  const kind = resolvePermissionKind(request);
+  const toolName = codeBuddyToolName(request);
+  if (options.approvalMode !== "full-access") {
+    if (!options.requestPermission) return selectCodeBuddyPermission(request, "reject");
     const decision = await options.requestPermission({
       id: request.toolCall.toolCallId,
-      title: request.toolCall.title || toolKindLabel(request.toolCall.kind),
-      ...(request.toolCall.kind ? { kind: request.toolCall.kind } : {}),
+      title: request.toolCall.title || toolName || toolKindLabel(kind),
+      ...(kind ? { kind } : {}),
       ...(request.toolCall.rawInput === undefined ? {} : { input: formatValue(request.toolCall.rawInput) }),
       ...(request.toolCall.locations?.length
         ? { locations: request.toolCall.locations.map((location) => location.path) }
@@ -360,7 +353,7 @@ export async function resolveCodeBuddyPermission(
     return selectCodeBuddyPermission(request, decision);
   }
 
-  return selectCodeBuddyPermission(request, "allow");
+  return decideCodeBuddyPermission(request);
 }
 
 function selectCodeBuddyPermission(
@@ -374,70 +367,71 @@ function selectCodeBuddyPermission(
     : { outcome: { outcome: "cancelled" } };
 }
 
-function toolKindLabel(kind: ToolKind | null | undefined): string {
+type PermissionKind = ToolKind | "write";
+
+function codeBuddyToolName(request: RequestPermissionRequest): string | undefined {
+  const value = request.toolCall._meta?.["codebuddy.ai/toolName"];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function resolvePermissionKind(request: RequestPermissionRequest): PermissionKind | undefined {
+  if (request.toolCall.kind && request.toolCall.kind !== "other") return request.toolCall.kind;
+  const normalized = codeBuddyToolName(request)?.toLowerCase().replace(/[\s_/-]+/g, "");
+  switch (normalized) {
+    case "read":
+    case "readfile":
+      return "read";
+    case "glob":
+    case "grep":
+    case "search":
+    case "find":
+    case "ls":
+      return "search";
+    case "webfetch":
+    case "websearch":
+      return "fetch";
+    case "write":
+    case "writefile":
+      return "write";
+    case "edit":
+    case "notebookedit":
+    case "applypatch":
+    case "multiedit":
+      return "edit";
+    case "delete":
+    case "remove":
+      return "delete";
+    case "move":
+    case "rename":
+      return "move";
+    case "bash":
+    case "shell":
+    case "execute":
+    case "terminal":
+    case "runcommand":
+      return "execute";
+    case "askuserquestion":
+    case "todowrite":
+      return "think";
+    case "exitplanmode":
+      return "switch_mode";
+    default:
+      return request.toolCall.kind ?? undefined;
+  }
+}
+
+function toolKindLabel(kind: PermissionKind | null | undefined): string {
   switch (kind) {
     case "read": return "读取文件";
     case "search": return "搜索文件";
     case "fetch": return "访问网络";
+    case "write": return "写入文件";
     case "edit": return "编辑文件";
     case "delete": return "删除文件";
     case "move": return "移动文件";
     case "execute": return "执行命令";
     default: return "执行操作";
   }
-}
-
-function isToolAllowed(
-  kind: ToolKind | null | undefined,
-  rawInput: unknown,
-  profile: PermissionProfile,
-): boolean {
-  switch (kind) {
-    case "read":
-    case "search":
-      return profile.canReadFiles;
-    case "fetch":
-      return profile.canRunCommands;
-    case "edit":
-    case "delete":
-    case "move":
-      return profile.canWriteFiles;
-    case "execute": {
-      const command = formatValue(rawInput).toLowerCase();
-      if (looksLikeDependencyInstall(command) && !profile.canInstallDependencies) return false;
-      if (looksLikeGitWrite(command) && !profile.canGitCommit) return false;
-      return profile.canRunCommands;
-    }
-    case "think":
-    case "switch_mode":
-      return true;
-    case "other":
-    default:
-      return profile.canRunCommands && profile.canWriteFiles;
-  }
-}
-
-function looksLikeDependencyInstall(command: string): boolean {
-  return /\b(npm\s+(install|i)|pnpm\s+(add|install)|yarn\s+add|bun\s+add|pip\s+install|cargo\s+add|brew\s+install|apt(-get)?\s+install)\b/.test(command);
-}
-
-function looksLikeGitWrite(command: string): boolean {
-  return /\bgit\s+(commit|push|tag|merge|rebase|reset|checkout|switch|branch\s+-[dD])\b/.test(command);
-}
-
-function areLocationsAllowed(
-  locations: RequestPermissionRequest["toolCall"]["locations"],
-  profile: PermissionProfile,
-  cwd: string,
-): boolean {
-  if (!locations?.length) return true;
-  const roots = profile.allowedDirectories.map((directory) => path.resolve(cwd, directory));
-  return locations.every((location) => roots.some((root) => isPathInside(root, path.resolve(location.path))));
-}
-
-function isPathInside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function spawnCodeBuddyAcpConnection(

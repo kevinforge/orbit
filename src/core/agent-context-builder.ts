@@ -42,18 +42,6 @@ function renderIdentitySection(profile: AgentProfile | undefined, agentId: Agent
   ].join("\n");
 }
 
-function renderPermissionsSection(profile: AgentProfile | undefined): string {
-  if (!profile) return "";
-  const lines = [
-    `- read files: ${profile.permissionProfile.canReadFiles ? "yes" : "no"}`,
-    `- write files: ${profile.permissionProfile.canWriteFiles ? "yes" : "no"}`,
-    `- run commands: ${profile.permissionProfile.canRunCommands ? "yes" : "no"}`,
-    `- install dependencies: ${profile.permissionProfile.canInstallDependencies ? "yes" : "no"}`,
-    `- git commit: ${profile.permissionProfile.canGitCommit ? "yes" : "no"}`,
-  ];
-  return ["<permissions>", ...lines, "</permissions>"].join("\n");
-}
-
 function renderAvailableAgentsSection(profiles: readonly AgentProfile[]): string {
   const agentLines = profiles.map((agent) => {
     const desc = agent.description ? ` - ${agent.description}` : "";
@@ -206,7 +194,6 @@ export function buildAgentContext(input: AgentContextInput): string {
 
   const sections: string[] = [
     renderIdentitySection(profile, input.agentId),
-    renderPermissionsSection(profile),
     renderAvailableAgentsSection(input.profiles),
     renderCollaborationRulesSection(),
     // Supervisor constraints only for coordinator role

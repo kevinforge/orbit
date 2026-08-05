@@ -52,8 +52,7 @@ Orbit coordinates CLI-backed digital employees. The digital employees require at
 
 - Five built-in digital employee templates: product manager (`pm`), architect, developer, tester, and supervisor
 - Custom digital employee creation and configuration via UI
-- Per-employee permissions for file access, commands, dependency installs, and git operations
-- Per-message approval modes: ask before sensitive ACP operations or auto-approve within the employee's configured permission boundary
+- Per-message approval modes: ask before ACP tool operations or auto-approve them for the current task
 - Workspace templates for blank or multi-employee collaboration setups
 - Multiple conversations with background execution and visible running employees
 - Explicit assignments, handoffs, and per-employee run queues

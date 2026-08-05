@@ -12,13 +12,12 @@ Use these terms in docs, issues, PRs, screenshots, and user-facing copy.
   running digital employee work in the background while you view another
   conversation.
 - **Digital employee**: an enabled CLI-backed worker configured in Orbit. Each
-  digital employee has an id, display name, runtime, system prompt, permissions,
-  and optional triggers.
+  digital employee has an id, display name, runtime, system prompt, and optional
+  triggers.
 - **Runtime**: the command-line tool that powers a digital employee. Orbit
   currently supports Claude Code, Codex, and CodeBuddy.
 - **Supervisor**: a coordinator-role digital employee. It watches the
-  conversation and can assign work, but it is configured without file, command,
-  dependency-install, or git permissions.
+  conversation and can assign work; its system prompt defines that coordination-only role.
 - **Assignment marker**: an `@id:` marker that tells Orbit which digital
   employee should receive work.
 - **Handoff**: a digital employee reply that creates a new assignment marker for

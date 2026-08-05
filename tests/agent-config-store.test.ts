@@ -225,36 +225,6 @@ test("rejects empty name", () => {
   assert.ok(errors.some((e) => e.includes("name")));
 });
 
-test("rejects permissionProfile with empty allowedDirectories", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "agent1", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      permissionProfile: {
-        canReadFiles: true, canWriteFiles: false, canRunCommands: false,
-        canInstallDependencies: false, canGitCommit: false, allowedDirectories: [],
-      },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("allowedDirectories")));
-});
-
-test("accepts config with valid permissionProfile", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "agent1", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      permissionProfile: {
-        canReadFiles: true, canWriteFiles: true, canRunCommands: true,
-        canInstallDependencies: false, canGitCommit: false, allowedDirectories: ["."],
-      },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
 test("accepts config with no enabled agents", () => {
   const configs: AgentConfig[] = DEFAULT_AGENT_CONFIGS.map((c) => ({ ...c, enabled: false }));
   const errors = validateAgentConfigs(configs);
@@ -264,21 +234,6 @@ test("accepts config with no enabled agents", () => {
 test("rejects empty config list", () => {
   const errors = validateAgentConfigs([]);
   assert.ok(errors.length > 0);
-});
-
-test("rejects permissionProfile with non-boolean canReadFiles", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "agent1", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      permissionProfile: {
-        canReadFiles: "yes" as unknown as boolean, canWriteFiles: false, canRunCommands: false,
-        canInstallDependencies: false, canGitCommit: false, allowedDirectories: ["."],
-      },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("canReadFiles")));
 });
 
 test("rejects invalid role", () => {
@@ -303,23 +258,6 @@ test("rejects missing enabled field", () => {
   ];
   const errors = validateAgentConfigs(configs);
   assert.ok(errors.some((e) => e.includes("enabled")), `Expected an enabled error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects permissionProfile with missing boolean fields", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "agent1", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      permissionProfile: {
-        canReadFiles: true, allowedDirectories: ["."],
-      } as unknown as AgentConfig["permissionProfile"],
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("canWriteFiles")));
-  assert.ok(errors.some((e) => e.includes("canRunCommands")));
-  assert.ok(errors.some((e) => e.includes("canInstallDependencies")));
-  assert.ok(errors.some((e) => e.includes("canGitCommit")));
 });
 
 test("rejects non-string id without throwing", () => {
@@ -356,54 +294,6 @@ test("rejects non-object array element without throwing", () => {
   assert.ok(errors.some((e) => e.includes("object")), `Expected an object error, got: ${JSON.stringify(errors)}`);
 });
 
-// --- Permission profile persistence (#26) ---
-
-test("DEFAULT_AGENT_CONFIGS include permissionProfile for each agent", () => {
-  for (const config of DEFAULT_AGENT_CONFIGS) {
-    assert.ok(config.permissionProfile, `${config.id} should have permissionProfile`);
-    assert.equal(typeof config.permissionProfile!.canReadFiles, "boolean", `${config.id} canReadFiles`);
-    assert.equal(typeof config.permissionProfile!.canWriteFiles, "boolean", `${config.id} canWriteFiles`);
-    assert.equal(typeof config.permissionProfile!.canRunCommands, "boolean", `${config.id} canRunCommands`);
-    assert.equal(typeof config.permissionProfile!.canInstallDependencies, "boolean", `${config.id} canInstallDependencies`);
-    assert.equal(typeof config.permissionProfile!.canGitCommit, "boolean", `${config.id} canGitCommit`);
-    assert.ok(Array.isArray(config.permissionProfile!.allowedDirectories), `${config.id} allowedDirectories`);
-    // coordinator agents have no file access, so empty allowedDirectories is valid
-    if (config.role !== "coordinator") {
-      assert.ok(config.permissionProfile!.allowedDirectories.length > 0, `${config.id} allowedDirectories non-empty`);
-    }
-  }
-});
-
-test("save persists permissionProfile in agents.json on disk", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
-    const configs: AgentConfig[] = [
-      {
-        id: "agent1", name: "A", role: "general", runtime: "claude-code",
-        systemPrompt: "do stuff", enabled: true,
-        permissionProfile: {
-          canReadFiles: true, canWriteFiles: false, canRunCommands: true,
-          canInstallDependencies: false, canGitCommit: false, allowedDirectories: ["."],
-        },
-      },
-    ];
-    store.save("ws1", configs);
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    const savedConfigs = raw.configs as AgentConfig[];
-    assert.ok(savedConfigs[0].permissionProfile, "file should contain permissionProfile");
-    assert.equal(savedConfigs[0].permissionProfile.canReadFiles, true);
-    assert.equal(savedConfigs[0].permissionProfile.canWriteFiles, false);
-    assert.equal(savedConfigs[0].permissionProfile.canRunCommands, true);
-    assert.equal(savedConfigs[0].permissionProfile.canInstallDependencies, false);
-    assert.equal(savedConfigs[0].permissionProfile.canGitCommit, false);
-    assert.deepEqual(savedConfigs[0].permissionProfile.allowedDirectories, ["."]);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("load migrates old configs missing permissionProfile to role defaults", () => {
   const dir = tempDir();
   try {
@@ -417,12 +307,36 @@ test("load migrates old configs missing permissionProfile to role defaults", () 
     const loaded = store.load("ws1");
     // auto-migration adds 5 missing default templates → 1 + 5 = 6
     assert.equal(loaded.length, 6);
-    // After migration, should have permissionProfile derived from role
-    assert.ok(loaded[0].permissionProfile, "should migrate old config with permissionProfile");
-    assert.equal(loaded[0].permissionProfile!.canReadFiles, true);
-    assert.equal(loaded[0].permissionProfile!.canWriteFiles, true);
-    assert.equal(loaded[0].permissionProfile!.canRunCommands, true);
-    assert.equal(loaded[0].permissionProfile!.canInstallDependencies, true);
+    assert.equal("permissionProfile" in loaded[0], false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("load removes legacy permission settings", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({
+      configs: [{
+        id: "legacy", name: "Legacy", role: "general", runtime: "claude-code",
+        systemPrompt: "legacy", enabled: true,
+        permissionProfile: {
+          canReadFiles: true,
+          canWriteFiles: true,
+          canRunCommands: true,
+          allowedDirectories: ["."],
+        },
+      }],
+      _meta: { migrationVersion: 3 },
+    }));
+
+    const loaded = store.load("ws1");
+    assert.equal("permissionProfile" in loaded[0], false);
+    const saved = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    assert.equal("permissionProfile" in saved.configs[0], false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -482,26 +396,22 @@ test("load migrates legacy default agent names to Chinese names with ids while p
   }
 });
 
-test("reset outputs configs with permissionProfile", () => {
+test("reset outputs configs without permission settings", () => {
   const dir = tempDir();
   try {
     const store = new AgentConfigStore(dir);
     const reset = store.reset("ws1");
-    for (const config of reset) {
-      assert.ok(config.permissionProfile, `${config.id} should have permissionProfile after reset`);
-    }
+    assert.ok(reset.every((config) => !("permissionProfile" in config)));
     // Check file on disk too
     const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
     const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    for (const entry of (raw.configs as AgentConfig[])) {
-      assert.ok(entry.permissionProfile, `${entry.id} on disk should have permissionProfile`);
-    }
+    assert.ok((raw.configs as AgentConfig[]).every((entry) => !("permissionProfile" in entry)));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("validate still permits configs without permissionProfile (backward compat)", () => {
+test("validate accepts configs without permission settings", () => {
   const configs: AgentConfig[] = [
     { id: "old", name: "Old", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
   ];
@@ -509,16 +419,10 @@ test("validate still permits configs without permissionProfile (backward compat)
   assert.deepEqual(errors, []);
 });
 
-test("supervisor uses coordinator role with all-false permissionProfile", () => {
+test("supervisor uses the coordinator role", () => {
   const supervisor = DEFAULT_AGENT_CONFIGS.find((c) => c.id === "supervisor");
   assert.ok(supervisor, "supervisor should exist in defaults");
   assert.equal(supervisor!.role, "coordinator");
-  const pp = supervisor!.permissionProfile!;
-  assert.equal(pp.canReadFiles, false, "supervisor cannot read files");
-  assert.equal(pp.canWriteFiles, false, "supervisor cannot write files");
-  assert.equal(pp.canRunCommands, false, "supervisor cannot run commands");
-  assert.equal(pp.canInstallDependencies, false, "supervisor cannot install dependencies");
-  assert.equal(pp.canGitCommit, false, "supervisor cannot git commit");
 });
 
 test("supervisor systemPrompt forbids reading files and using tools", () => {
@@ -534,7 +438,6 @@ test("supervisor systemPrompt forbids reading files and using tools", () => {
 test("coordinator is a valid role accepted by validation", () => {
   const configs: AgentConfig[] = [
     { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
-      permissionProfile: { canReadFiles: false, canWriteFiles: false, canRunCommands: false, canInstallDependencies: false, canGitCommit: false, allowedDirectories: [] },
     },
     { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
@@ -542,10 +445,9 @@ test("coordinator is a valid role accepted by validation", () => {
   assert.deepEqual(errors, []);
 });
 
-test("coordinator permissionProfile with empty allowedDirectories is valid", () => {
+test("coordinator role is valid", () => {
   const configs: AgentConfig[] = [
     { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
-      permissionProfile: { canReadFiles: false, canWriteFiles: false, canRunCommands: false, canInstallDependencies: false, canGitCommit: false, allowedDirectories: [] },
     },
     { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
@@ -792,7 +694,7 @@ test("validate does not require permissionProfile for each config", () => {
   // permissionProfile is optional in AgentConfig by design
   const configs: AgentConfig[] = [
     { id: "a", name: "A", role: "pm", runtime: "codex", systemPrompt: "do pm stuff", enabled: true },
-    { id: "b", name: "B", role: "developer", runtime: "claude-code", systemPrompt: "do dev stuff", enabled: true, permissionProfile: undefined },
+    { id: "b", name: "B", role: "developer", runtime: "claude-code", systemPrompt: "do dev stuff", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);

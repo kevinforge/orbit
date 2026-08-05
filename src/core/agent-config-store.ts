@@ -2,7 +2,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { hasActiveChannelWatchTriggers, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind } from "../shared/types.ts";
-import { permissionProfile } from "./agent-profiles.ts";
 
 export type { AgentConfig };
 
@@ -10,7 +9,7 @@ const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester"
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 const RESERVED_IDS = new Set(["all"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const CURRENT_MIGRATION_VERSION = 3;
+const CURRENT_MIGRATION_VERSION = 4;
 
 const DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string> = {
   pm: "产品经理（pm）",
@@ -49,7 +48,6 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
       "- 输出结构化需求：问题陈述、验收标准、边缘情况、考虑的替代方案\n\n" +
       "永远不要对所有事情说\"是\"。你的工作是产品判断，而非执行。Do not edit code unless explicitly assigned.",
     enabled: false,
-    permissionProfile: permissionProfile("pm"),
   },
   {
     id: "architect",
@@ -60,7 +58,6 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes. Review code for correctness, security, and maintainability when assigned.",
     enabled: false,
-    permissionProfile: permissionProfile("architect"),
   },
   {
     id: "developer",
@@ -71,7 +68,6 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's developer. Follow strict TDD: write failing tests first, then implement the minimal code to pass them. Before writing any code, always create a feature branch from main (e.g. feat/issue-N-description). Run npm run test && npm run build after each meaningful change. Commit, push, and open a draft PR. Never commit directly to main.",
     enabled: false,
-    permissionProfile: permissionProfile("developer"),
   },
   {
     id: "tester",
@@ -82,7 +78,6 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's tester. Validate behavior, run tests, inspect regressions, and report risks. Do not modify production code unless explicitly assigned.",
     enabled: false,
-    permissionProfile: permissionProfile("tester"),
   },
   {
     id: "supervisor",
@@ -108,7 +103,6 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
       "Before assigning: check conversation history to avoid duplicating work " +
       "already in progress. Each message MUST have either @agent: or @user:.",
     enabled: false,
-    permissionProfile: permissionProfile("coordinator"),
     triggers: {
       onUnassignedMessage: true,
       onAgentBlocked: true,
@@ -163,22 +157,6 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
 
     if (typeof config.systemPrompt !== "string" || !config.systemPrompt.trim()) {
       errors.push(`Agent "${configId}" systemPrompt is required.`);
-    }
-
-    if (config.permissionProfile) {
-      const pp = config.permissionProfile;
-      const boolFlags: (keyof Pick<typeof pp, "canReadFiles" | "canWriteFiles" | "canRunCommands" | "canInstallDependencies" | "canGitCommit">)[] =
-        ["canReadFiles", "canWriteFiles", "canRunCommands", "canInstallDependencies", "canGitCommit"];
-      for (const flag of boolFlags) {
-        if (typeof pp[flag] !== "boolean") {
-          errors.push(`Agent "${config.id}" permissionProfile.${flag} must be a boolean.`);
-        }
-      }
-      if (!Array.isArray(pp.allowedDirectories)) {
-        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be an array.`);
-      } else if (pp.allowedDirectories.length === 0 && (pp.canReadFiles || pp.canWriteFiles || pp.canRunCommands)) {
-        errors.push(`Agent "${config.id}" permissionProfile.allowedDirectories must be non-empty when file or command access is enabled.`);
-      }
     }
 
     if (config.triggers !== undefined) {
@@ -286,20 +264,18 @@ export class AgentConfigStore {
       if (!Array.isArray(configs) || configs.length === 0) {
         return structuredClone(DEFAULT_AGENT_CONFIGS);
       }
+      let migrated = false;
+      for (const config of configs) {
+        if ("permissionProfile" in config) {
+          delete (config as AgentConfig & { permissionProfile?: unknown }).permissionProfile;
+          migrated = true;
+        }
+      }
       const errors = validateAgentConfigs(configs);
       if (errors.length > 0) {
         console.error(`[orbit] Invalid agents.json, using defaults: ${errors.join("; ")}`);
         return structuredClone(DEFAULT_AGENT_CONFIGS);
       }
-      // Migrate old configs missing permissionProfile
-      let migrated = false;
-      for (const config of configs) {
-        if (!config.permissionProfile) {
-          config.permissionProfile = permissionProfile(config.role);
-          migrated = true;
-        }
-      }
-
       // Auto-add new default templates only when migration version is behind
       if (storedVersion < CURRENT_MIGRATION_VERSION) {
         const savedIds = new Set(configs.map((c) => c.id));

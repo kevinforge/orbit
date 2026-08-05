@@ -11,16 +11,7 @@ import {
   type CodeBuddyAcpConnection,
   type CodeBuddyAcpConnector,
 } from "../src/core/codebuddy-acp-runtime.ts";
-import type { AgentActivityEvent, PermissionProfile } from "../src/shared/types.ts";
-
-const permissionProfile: PermissionProfile = {
-  canReadFiles: true,
-  canWriteFiles: true,
-  canRunCommands: true,
-  canInstallDependencies: false,
-  canGitCommit: false,
-  allowedDirectories: ["."],
-};
+import type { AgentActivityEvent } from "../src/shared/types.ts";
 
 type FakeOptions = {
   capabilities?: Awaited<ReturnType<CodeBuddyAcpConnection["initialize"]>>["agentCapabilities"];
@@ -75,7 +66,6 @@ function runOptions(overrides: Record<string, unknown> = {}) {
     agentId: "tester",
     cwd: "D:/workspace",
     prompt: "hello",
-    permissionProfile,
     ...overrides,
   };
 }
@@ -265,7 +255,7 @@ test("interrupt sends session/cancel and rejects the turn", async () => {
   assert.ok(fake.calls.some((call) => call.method === "session/cancel"));
 });
 
-test("permission decisions honor tool and profile restrictions", () => {
+test("full-access permission decisions allow supported ACP options", () => {
   const request = {
     sessionId: "session",
     toolCall: { toolCallId: "tool", kind: "execute" as const, rawInput: { command: "npm install left-pad" } },
@@ -275,21 +265,11 @@ test("permission decisions honor tool and profile restrictions", () => {
     ],
   };
 
-  assert.deepEqual(decideCodeBuddyPermission(request, permissionProfile, "D:/workspace"), {
-    outcome: { outcome: "selected", optionId: "reject" },
-  });
-  assert.deepEqual(decideCodeBuddyPermission(
-    { ...request, toolCall: { ...request.toolCall, kind: "read", rawInput: { path: "README.md" } } },
-    permissionProfile,
-    "D:/workspace",
-  ), {
+  assert.deepEqual(decideCodeBuddyPermission(request), {
     outcome: { outcome: "selected", optionId: "allow" },
   });
-
   assert.deepEqual(decideCodeBuddyPermission(
     { ...request, options: [{ optionId: "always", name: "Always", kind: "allow_always" }] },
-    { ...permissionProfile, canInstallDependencies: true },
-    "D:/workspace",
   ), {
     outcome: { outcome: "cancelled" },
   });
@@ -318,7 +298,39 @@ test("ask mode waits for the Orbit permission decision", async () => {
   assert.deepEqual(response, { outcome: { outcome: "selected", optionId: "allow" } });
 });
 
-test("full access auto-approves only operations allowed by the agent profile", async () => {
+test("permission decisions recognize CodeBuddy tool names when ACP kind is omitted", async () => {
+  const request = {
+    sessionId: "session",
+    toolCall: {
+      toolCallId: "tool-read",
+      rawInput: { file_path: "README.md" },
+      _meta: { "codebuddy.ai/toolName": "Read" },
+    },
+    options: [
+      { optionId: "allow", name: "Allow", kind: "allow_once" as const },
+      { optionId: "reject", name: "Reject", kind: "reject_once" as const },
+    ],
+  };
+  const seen: unknown[] = [];
+
+  const response = await resolveCodeBuddyPermission(request, runOptions({
+    approvalMode: "ask",
+    requestPermission: async (permission: unknown) => {
+      seen.push(permission);
+      return "allow";
+    },
+  }));
+
+  assert.deepEqual(seen, [{
+    id: "tool-read",
+    title: "Read",
+    kind: "read",
+    input: '{"file_path":"README.md"}',
+  }]);
+  assert.deepEqual(response, { outcome: { outcome: "selected", optionId: "allow" } });
+});
+
+test("full access auto-approves all ACP permission requests", async () => {
   const request = {
     sessionId: "session",
     toolCall: { toolCallId: "tool-full", title: "Install package", kind: "execute" as const, rawInput: { command: "npm install left-pad" } },
@@ -329,16 +341,10 @@ test("full access auto-approves only operations allowed by the agent profile", a
   };
   let asked = false;
 
-  const denied = await resolveCodeBuddyPermission(request, runOptions({
+  const allowed = await resolveCodeBuddyPermission(request, runOptions({
     approvalMode: "full-access",
     requestPermission: async () => { asked = true; return "allow"; },
   }));
   assert.equal(asked, false);
-  assert.deepEqual(denied, { outcome: { outcome: "selected", optionId: "reject" } });
-
-  const allowed = await resolveCodeBuddyPermission(
-    { ...request, toolCall: { ...request.toolCall, title: "Run tests", rawInput: { command: "npm test" } } },
-    runOptions({ approvalMode: "full-access" }),
-  );
   assert.deepEqual(allowed, { outcome: { outcome: "selected", optionId: "allow" } });
 });

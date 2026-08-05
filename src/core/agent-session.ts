@@ -5,7 +5,6 @@ import type {
   ApprovalMode,
   PendingPermission,
   PermissionDecision,
-  PermissionProfile,
   RunResult,
 } from "../shared/types.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
@@ -18,7 +17,6 @@ export type AgentSessionOptions = {
   id: AgentId;
   label: string;
   cwd: string;
-  permissionProfile: PermissionProfile;
   runtime: AgentRuntime;
   eventBus: EventBus;
   quietWindowMs?: number;
@@ -175,7 +173,6 @@ export class AgentSession {
       agentId: this.id,
       cwd: this.options.cwd,
       prompt,
-      permissionProfile: this.options.permissionProfile,
       approvalMode,
       resumeSessionId,
       imagePaths,

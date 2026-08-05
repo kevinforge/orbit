@@ -76,7 +76,7 @@ test("generateUniqueId works for IDs with hyphens", () => {
   assert.equal(newId, "my-agent-copy");
 });
 
-test("structuredClone creates deep copy of permissionProfile", () => {
+test("structuredClone creates a deep copy of agent config", () => {
   const source: AgentConfig = {
     id: "developer",
     name: "Developer",
@@ -84,21 +84,11 @@ test("structuredClone creates deep copy of permissionProfile", () => {
     runtime: "claude-code",
     systemPrompt: "You are a developer.",
     enabled: true,
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: true,
-      allowedDirectories: ["src/", "tests/"],
-    },
   };
   const copy = structuredClone(source);
-  // Modify copy's permissionProfile
-  copy.permissionProfile!.allowedDirectories.push("dist/");
-  // Source should remain unchanged
-  assert.deepEqual(source.permissionProfile!.allowedDirectories, ["src/", "tests/"]);
-  assert.deepEqual(copy.permissionProfile!.allowedDirectories, ["src/", "tests/", "dist/"]);
+  copy.ui = { label: "Developer copy" };
+  assert.equal(source.ui, undefined);
+  assert.deepEqual(copy.ui, { label: "Developer copy" });
 });
 
 test("copyAgentConfig adds (副本) suffix to name", () => {
@@ -197,14 +187,6 @@ test("copyAgentConfig preserves all other fields", () => {
     systemPrompt: "You write clean code.",
     enabled: true,
     description: "Writes code",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: true,
-      allowedDirectories: [],
-    },
     ui: { label: "Dev" },
   };
   const existing: AgentConfig[] = [source];
@@ -213,5 +195,4 @@ test("copyAgentConfig preserves all other fields", () => {
   assert.equal(copy.runtime, "claude-code");
   assert.equal(copy.systemPrompt, "You write clean code.");
   assert.equal(copy.description, "Writes code");
-  assert.deepEqual(copy.permissionProfile, source.permissionProfile);
 });

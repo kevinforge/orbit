@@ -55,23 +55,6 @@ test("includes <identity> section with agent name, id, and role", () => {
   assert.ok(context.includes("Role: developer"));
 });
 
-// --- <permissions> section ---
-
-test("includes <permissions> section with all permission flags", () => {
-  const profiles = createDefaultAgentProfiles("D:/project");
-  const context = buildAgentContext({
-    agentId: "developer",
-    profiles,
-    agentMessage: "@developer: test",
-  });
-
-  assert.ok(context.includes("<permissions>"), "should have <permissions> opening tag");
-  assert.ok(context.includes("</permissions>"), "should have </permissions> closing tag");
-  assert.ok(context.includes("read files: yes"));
-  assert.ok(context.includes("write files: yes"));
-  assert.ok(context.includes("git commit: yes"));
-});
-
 // --- <available-agents> section ---
 
 test("includes <available-agents> section with all agents", () => {
@@ -109,14 +92,6 @@ test("available agents omits description when empty without extra formatting", (
       runtime: "claude-code" as const,
       cwd: "D:/project",
       systemPrompt: "You are a PM.",
-      permissionProfile: {
-        canReadFiles: true,
-        canWriteFiles: false,
-        canRunCommands: false,
-        canInstallDependencies: false,
-        canGitCommit: false,
-        allowedDirectories: [],
-      },
     },
     {
       id: "dev",
@@ -126,14 +101,6 @@ test("available agents omits description when empty without extra formatting", (
       runtime: "claude-code" as const,
       cwd: "D:/project",
       systemPrompt: "You are a Dev.",
-      permissionProfile: {
-        canReadFiles: true,
-        canWriteFiles: true,
-        canRunCommands: true,
-        canInstallDependencies: true,
-        canGitCommit: true,
-        allowedDirectories: [],
-      },
     },
   ];
 
@@ -202,14 +169,6 @@ test("supervisor context includes <supervisor-constraints> section", () => {
       runtime: "claude-code" as const,
       cwd: "D:/project",
       systemPrompt: "You coordinate.",
-      permissionProfile: {
-        canReadFiles: false,
-        canWriteFiles: false,
-        canRunCommands: false,
-        canInstallDependencies: false,
-        canGitCommit: false,
-        allowedDirectories: [],
-      },
     },
   ];
 
@@ -357,14 +316,6 @@ test("agent role systemPrompt with </ does not break XML structure", () => {
     runtime: "claude-code" as const,
     cwd: "D:/project",
     systemPrompt: "You are Dev. Check </orbit-context> for details.",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: true,
-      allowedDirectories: [],
-    },
   }];
 
   const context = buildAgentContext({
@@ -471,15 +422,13 @@ test("sections appear in correct precedence order", () => {
   });
 
   const identityIdx = tagIndex(context, "identity");
-  const permissionsIdx = tagIndex(context, "permissions");
   const agentsIdx = tagIndex(context, "available-agents");
   const rulesIdx = tagIndex(context, "collaboration-rules");
   const workspaceIdx = tagIndex(context, "workspace-context");
   const roleIdx = tagIndex(context, "agent-role");
   const taskIdx = tagIndex(context, "current-task");
 
-  assert.ok(identityIdx < permissionsIdx, "identity before permissions");
-  assert.ok(permissionsIdx < agentsIdx, "permissions before available-agents");
+  assert.ok(identityIdx < agentsIdx, "identity before available-agents");
   assert.ok(agentsIdx < rulesIdx, "available-agents before collaboration-rules");
   assert.ok(rulesIdx < workspaceIdx, "collaboration-rules before workspace-context");
   assert.ok(workspaceIdx < roleIdx, "workspace-context before agent-role");
@@ -522,7 +471,6 @@ test("all sections present with workspace config (regression check)", () => {
 
   assert.ok(context.includes("<orbit-context>"));
   assert.ok(context.includes("<identity>"));
-  assert.ok(context.includes("<permissions>"));
   assert.ok(context.includes("<available-agents>"));
   assert.ok(context.includes("<collaboration-rules>"));
   assert.ok(context.includes("<workspace-context>"));

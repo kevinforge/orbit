@@ -2,15 +2,6 @@ export type AgentId = string;
 
 export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general" | "coordinator";
 
-export type PermissionProfile = {
-  canReadFiles: boolean;
-  canWriteFiles: boolean;
-  canRunCommands: boolean;
-  canInstallDependencies: boolean;
-  canGitCommit: boolean;
-  allowedDirectories: string[];
-};
-
 export type ApprovalMode = "ask" | "full-access";
 
 export type PermissionDecision = "allow" | "reject";
@@ -62,7 +53,6 @@ export type AgentConfig = {
   role: AgentRole;
   runtime: AgentRuntimeKind;
   systemPrompt: string;
-  permissionProfile?: PermissionProfile;
   enabled: boolean;
   ui?: AgentConfigUi;
   triggers?: ChannelWatchTriggers;
@@ -76,7 +66,6 @@ export type AgentProfile = {
   runtime: AgentRuntimeKind;
   cwd: string;
   systemPrompt: string;
-  permissionProfile: PermissionProfile;
   triggers?: ChannelWatchTriggers;
 };
 

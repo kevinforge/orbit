@@ -16,7 +16,6 @@ export type ClaudeCliRunOptions = {
   agentId: AgentId;
   cwd: string;
   prompt: string;
-  permissionProfile?: unknown;
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;

@@ -44,14 +44,6 @@ function makeSupervisorProfile(id = "supervisor"): AgentProfile {
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: "You are a supervisor.",
-    permissionProfile: {
-      canReadFiles: false,
-      canWriteFiles: false,
-      canRunCommands: false,
-      canInstallDependencies: false,
-      canGitCommit: false,
-      allowedDirectories: [],
-    },
     triggers: {
       onUnassignedMessage: true,
       onAgentBlocked: true,
@@ -67,14 +59,6 @@ function makePlainAgentProfile(id: AgentId): AgentProfile {
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: `You are ${id}.`,
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: true,
-      allowedDirectories: [],
-    },
   };
 }
 
@@ -1294,14 +1278,6 @@ test("Issue #82: run.failed triggers supervisor with onRunFailed configured", as
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: "You are a supervisor.",
-    permissionProfile: {
-      canReadFiles: false,
-      canWriteFiles: false,
-      canRunCommands: false,
-      canInstallDependencies: false,
-      canGitCommit: false,
-      allowedDirectories: [],
-    },
     triggers: {
       onRunFailed: true,
     },
@@ -1364,14 +1340,6 @@ test("run.failed does NOT trigger supervisor without onRunFailed configured", as
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: "You are a supervisor.",
-    permissionProfile: {
-      canReadFiles: false,
-      canWriteFiles: false,
-      canRunCommands: false,
-      canInstallDependencies: false,
-      canGitCommit: false,
-      allowedDirectories: [],
-    },
     triggers: {
       onUnassignedMessage: true,
       // onRunFailed is NOT configured

@@ -13,7 +13,6 @@ export type CodexCliRunOptions = {
   agentId: AgentId;
   cwd: string;
   prompt: string;
-  permissionProfile?: unknown;
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;

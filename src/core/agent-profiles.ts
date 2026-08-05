@@ -1,67 +1,8 @@
-import type { AgentConfig, AgentId, AgentProfile, AgentRole, AgentRuntimeKind, PermissionProfile } from "../shared/types.ts";
+import type { AgentConfig, AgentId, AgentProfile, AgentRuntimeKind } from "../shared/types.ts";
 
 export type AgentRuntimeOverrides = Partial<Record<AgentId, AgentRuntimeKind>>;
 
 const CONFIGURABLE_RUNTIME_KINDS = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
-
-export function permissionProfile(role: AgentRole): PermissionProfile {
-  switch (role) {
-    case "pm":
-      return {
-        canReadFiles: true,
-        canWriteFiles: false,
-        canRunCommands: false,
-        canInstallDependencies: false,
-        canGitCommit: false,
-        allowedDirectories: ["."],
-      };
-    case "architect":
-      return {
-        canReadFiles: true,
-        canWriteFiles: false,
-        canRunCommands: true,
-        canInstallDependencies: false,
-        canGitCommit: false,
-        allowedDirectories: ["."],
-      };
-    case "developer":
-      return {
-        canReadFiles: true,
-        canWriteFiles: true,
-        canRunCommands: true,
-        canInstallDependencies: true,
-        canGitCommit: true,
-        allowedDirectories: ["."],
-      };
-    case "tester":
-      return {
-        canReadFiles: true,
-        canWriteFiles: false,
-        canRunCommands: true,
-        canInstallDependencies: false,
-        canGitCommit: false,
-        allowedDirectories: ["."],
-      };
-    case "coordinator":
-      return {
-        canReadFiles: false,
-        canWriteFiles: false,
-        canRunCommands: false,
-        canInstallDependencies: false,
-        canGitCommit: false,
-        allowedDirectories: [],
-      };
-    default:
-      return {
-        canReadFiles: true,
-        canWriteFiles: true,
-        canRunCommands: true,
-        canInstallDependencies: false,
-        canGitCommit: false,
-        allowedDirectories: ["."],
-      };
-  }
-}
 
 export function parseAgentRuntimeOverrides(value: string | undefined): AgentRuntimeOverrides {
   const overrides: AgentRuntimeOverrides = {};
@@ -94,7 +35,6 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       cwd,
       systemPrompt:
         "You are Orbit's product manager. Clarify requirements, define scope, acceptance criteria, and review whether implementation matches user needs. Do not edit code unless explicitly assigned.",
-      permissionProfile: permissionProfile("pm"),
     },
     {
       id: "architect",
@@ -105,7 +45,6 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       cwd,
       systemPrompt:
         "You are Orbit's architect. Design technical boundaries, module responsibilities, migration plans, and review implementation risk. Prefer scoped, testable changes. Review code for correctness, security, and maintainability when assigned.",
-      permissionProfile: permissionProfile("architect"),
     },
     {
       id: "developer",
@@ -116,7 +55,6 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       cwd,
       systemPrompt:
         "You are Orbit's developer. Follow strict TDD: write failing tests first, then implement the minimal code to pass them. Before writing any code, always create a feature branch from main (e.g. feat/issue-N-description). Run npm run test && npm run build after each meaningful change. Commit, push, and open a draft PR. Never commit directly to main.",
-      permissionProfile: permissionProfile("developer"),
     },
     {
       id: "tester",
@@ -127,7 +65,6 @@ export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentR
       cwd,
       systemPrompt:
         "You are Orbit's tester. Validate behavior, run tests, inspect regressions, and report risks. Do not modify production code unless explicitly assigned.",
-      permissionProfile: permissionProfile("tester"),
     },
   ];
 }
@@ -141,7 +78,6 @@ export function configsToProfiles(configs: readonly AgentConfig[], cwd: string):
     runtime: config.runtime,
     cwd,
     systemPrompt: config.systemPrompt,
-    permissionProfile: config.permissionProfile ?? permissionProfile(config.role),
     triggers: config.triggers,
   }));
 }

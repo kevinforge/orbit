@@ -7,14 +7,12 @@ import type {
   AgentRuntimeKind,
   ApprovalMode,
   PermissionDecision,
-  PermissionProfile,
 } from "../shared/types.ts";
 
 export type AgentRuntimeRunOptions = {
   agentId: AgentId;
   prompt: string;
   cwd: string;
-  permissionProfile: PermissionProfile;
   approvalMode?: ApprovalMode;
   requestPermission?: (request: AgentPermissionRequest) => Promise<PermissionDecision>;
   resumeSessionId?: string;
