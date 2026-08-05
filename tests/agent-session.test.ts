@@ -598,3 +598,54 @@ test("publishes and resolves runtime permission requests", async () => {
   finishRun("clean final");
   await sendPromise;
 });
+
+test("publishes and resolves runtime elicitation requests", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  const events: Array<{ type: string }> = [];
+  eventBus.subscribe((event) => events.push(event));
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const result = new Promise<string>((resolve) => { finishRun = resolve; });
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result,
+        sessionId: Promise.resolve("elicitation-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+  session.start();
+  const sendPromise = session.send("run-elicitation", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const responsePromise = runOptions!.requestElicitation!({
+    message: "Choose a strategy",
+    mode: "form",
+    requestedSchema: { type: "object", properties: { strategy: { type: "string" } } },
+  });
+  const pending = session.pendingElicitations();
+  assert.equal(pending.length, 1);
+  assert.ok(events.some((event) => event.type === "elicitation.requested"));
+
+  assert.equal(session.resolveElicitation(pending[0]!.id, { action: "accept", content: { strategy: "safe" } }), true);
+  assert.deepEqual(await responsePromise, { action: "accept", content: { strategy: "safe" } });
+  assert.equal(session.pendingElicitations().length, 0);
+  assert.ok(events.some((event) => event.type === "elicitation.resolved"));
+
+  finishRun("clean final");
+  await sendPromise;
+});

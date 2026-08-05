@@ -1,4 +1,4 @@
-import type { AgentId, AgentProfile, AgentState, PendingPermission, PermissionDecision } from "../shared/types.ts";
+import type { AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
 import { AgentSession } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { claudeCodeRuntime } from "./claude-cli-runtime.ts";
@@ -82,9 +82,22 @@ export class AgentRegistry {
     return [...this.sessions.values()].flatMap((session) => session.pendingPermissions());
   }
 
+  pendingElicitations(): PendingElicitation[] {
+    return [...this.sessions.values()].flatMap((session) => session.pendingElicitations());
+  }
+
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
     for (const session of this.sessions.values()) {
       if (session.resolvePermission(requestId, decision)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  resolveElicitation(requestId: string, response: ElicitationResponse): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.resolveElicitation(requestId, response)) {
         return true;
       }
     }

@@ -21,7 +21,7 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { ApprovalMode, ConversationInfo, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import type { ApprovalMode, ConversationInfo, ElicitationResponse, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { ConversationContext } from "./conversation-context.ts";
@@ -454,6 +454,7 @@ const server = http.createServer(async (req, res) => {
         runningSummaries: buildRunningSummaries(),
         runtimeAvailability: getRuntimeAvailabilityArray(),
         pendingPermissions: ctx?.pendingPermissions() ?? [],
+        pendingElicitations: ctx?.pendingElicitations() ?? [],
       });
       return;
     }
@@ -506,6 +507,23 @@ const server = http.createServer(async (req, res) => {
       const ctx = getActiveContext();
       if (!ctx?.resolvePermission(requestId, decision)) {
         sendJson(res, 404, { ok: false, message: "Permission request is no longer pending." });
+        return;
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/elicitations/resolve") {
+      const input = await readJson(req);
+      const requestId = isRecord(input) && typeof input.requestId === "string" ? input.requestId : "";
+      const response = parseElicitationResponse(input);
+      if (!requestId || !response) {
+        sendJson(res, 400, { ok: false, message: "A valid requestId and elicitation response are required." });
+        return;
+      }
+      const ctx = getActiveContext();
+      if (!ctx?.resolveElicitation(requestId, response)) {
+        sendJson(res, 404, { ok: false, message: "Elicitation request is no longer pending." });
         return;
       }
       sendJson(res, 200, { ok: true });
@@ -1237,6 +1255,38 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
 }
 
 const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseElicitationResponse(input: unknown): ElicitationResponse | null {
+  if (!isRecord(input) || typeof input.action !== "string") return null;
+  if (input.action === "decline") return { action: "decline" };
+  if (input.action === "cancel") return { action: "cancel" };
+  if (input.action !== "accept") return null;
+
+  if (input.content === undefined) return { action: "accept" };
+  if (!isRecord(input.content)) return null;
+
+  const content: Record<string, string | number | boolean | string[]> = {};
+  for (const [key, value] of Object.entries(input.content)) {
+    if (typeof value === "string" || typeof value === "boolean") {
+      content[key] = value;
+      continue;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      content[key] = value;
+      continue;
+    }
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+      content[key] = value;
+      continue;
+    }
+    return null;
+  }
+  return { action: "accept", content };
+}
 
 function readJson(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {

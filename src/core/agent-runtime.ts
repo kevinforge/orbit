@@ -5,9 +5,25 @@ import type {
   AgentId,
   AgentPermissionRequest,
   AgentRuntimeKind,
+  AgentElicitationRequest,
   ApprovalMode,
+  ElicitationResponse,
   PermissionDecision,
 } from "../shared/types.ts";
+
+export class AgentRunCancelledError extends Error {
+  readonly userMessage: string;
+
+  constructor(message: string, userMessage = "运行已取消。") {
+    super(message);
+    this.name = "AgentRunCancelledError";
+    this.userMessage = userMessage;
+  }
+}
+
+export function isAgentRunCancelledError(error: unknown): error is AgentRunCancelledError {
+  return error instanceof AgentRunCancelledError;
+}
 
 export type AgentRuntimeRunOptions = {
   agentId: AgentId;
@@ -15,6 +31,7 @@ export type AgentRuntimeRunOptions = {
   cwd: string;
   approvalMode?: ApprovalMode;
   requestPermission?: (request: AgentPermissionRequest) => Promise<PermissionDecision>;
+  requestElicitation?: (request: AgentElicitationRequest) => Promise<ElicitationResponse>;
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;

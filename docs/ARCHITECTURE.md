@@ -31,7 +31,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/agent-profiles.ts` | Built-in role definitions and config-to-profile conversion |
 | `src/core/agent-config-store.ts` | Persistent agent configuration (load/save/reset/validate) |
 | `src/core/agent-registry.ts` | Owns agent sessions and exposes agent state |
-| `src/core/agent-session.ts` | Starts one runtime adapter run, tracks status, and owns pending permission decisions |
+| `src/core/agent-session.ts` | Starts one runtime adapter run, tracks status, and owns pending permission and elicitation decisions |
 | `src/core/agent-runtime.ts` | Shared runtime adapter contract |
 | `src/core/claude-cli-runtime.ts` | Spawns Claude Code CLI and parses stream JSON output |
 | `src/core/codex-cli-runtime.ts` | Spawns Codex CLI and parses JSONL output |
@@ -214,9 +214,9 @@ Codex and Claude prompts are written to stdin. CodeBuddy uses ACP v1 over newlin
 - tool/activity events
 - runtime output for diagnostics
 
-CodeBuddy is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no CodeBuddy bypass-permissions flag is used.
+CodeBuddy is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no CodeBuddy bypass-permissions flag is used. Orbit also advertises ACP elicitation support for form and URL modes. Form requests become transient pending UI forms; URL requests show the full external URL and require explicit user consent before returning `accept`. Unsupported custom modes or schema fields are cancelled instead of being guessed at.
 
-The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request.
+The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request. Elicitation uses separate `elicitation.requested` and `elicitation.resolved` events and `/api/elicitations/resolve`, so user input is not treated as a security approval.
 
 ## Activity Stream
 

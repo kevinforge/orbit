@@ -14,6 +14,56 @@ export type AgentPermissionRequest = {
   locations?: string[];
 };
 
+export type ElicitationFieldSchema = {
+  type: "string" | "number" | "integer" | "boolean" | "array" | string;
+  title?: string | null;
+  description?: string | null;
+  default?: string | number | boolean | string[] | null;
+  enum?: string[] | null;
+  oneOf?: Array<{ const: string; title: string; description?: string | null }> | null;
+  minimum?: number | null;
+  maximum?: number | null;
+  minLength?: number | null;
+  maxLength?: number | null;
+  minItems?: number | null;
+  maxItems?: number | null;
+  items?: { type?: string; enum?: string[]; anyOf?: Array<{ const: string; title: string; description?: string | null }> };
+};
+
+export type ElicitationSchema = {
+  type?: "object";
+  title?: string | null;
+  description?: string | null;
+  properties?: Record<string, ElicitationFieldSchema>;
+  required?: string[] | null;
+};
+
+export type AgentElicitationRequest = {
+  id?: string;
+  message: string;
+  mode: "form" | "url" | string;
+  requestedSchema?: ElicitationSchema;
+  elicitationId?: string;
+  url?: string;
+  sessionId?: string;
+  toolCallId?: string | null;
+};
+
+export type ElicitationContent = Record<string, string | number | boolean | string[]>;
+
+export type ElicitationResponse =
+  | { action: "accept"; content?: ElicitationContent }
+  | { action: "decline" }
+  | { action: "cancel" };
+
+export type PendingElicitation = Omit<AgentElicitationRequest, "id"> & {
+  id: string;
+  conversationId: string;
+  agentId: AgentId;
+  runId: string;
+  createdAt: string;
+};
+
 export type PendingPermission = AgentPermissionRequest & {
   conversationId: string;
   agentId: AgentId;
@@ -246,6 +296,8 @@ export type RuntimeEvent =
   | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
   | { type: "permission.requested"; conversationId: string; permission: PendingPermission }
   | { type: "permission.resolved"; conversationId: string; requestId: string }
+  | { type: "elicitation.requested"; conversationId: string; elicitation: PendingElicitation }
+  | { type: "elicitation.resolved"; conversationId: string; requestId: string }
   | { type: "running.updated"; summaries: RunningSummary[] }
   | { type: "runtime.availability.updated"; availability: RuntimeAvailability[] }
   | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
@@ -330,4 +382,5 @@ export type AppState = {
   runningSummaries: RunningSummary[];
   runtimeAvailability: RuntimeAvailability[];
   pendingPermissions: PendingPermission[];
+  pendingElicitations: PendingElicitation[];
 };

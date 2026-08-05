@@ -26,6 +26,7 @@ function state(conversationId: string, messages: ChatMessage[]): AppState {
     runningSummaries: [],
     runtimeAvailability: [],
     pendingPermissions: [],
+    pendingElicitations: [],
   };
 }
 

@@ -13,9 +13,11 @@ import { MessageRouter } from "../core/message-router.ts";
 import { ChannelWatchService } from "../core/channel-watch.ts";
 import {
   hasActiveChannelWatchTriggers,
+  type ElicitationResponse,
   type AgentId,
   type AgentProfile,
   type GlobalRuntimeConfig,
+  type PendingElicitation,
   type PendingPermission,
   type PermissionDecision,
   type WorkspaceRuntimeConfig,
@@ -168,8 +170,16 @@ export class ConversationContext {
     return this.agents.pendingPermissions();
   }
 
+  pendingElicitations(): PendingElicitation[] {
+    return this.agents.pendingElicitations();
+  }
+
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
     return this.agents.resolvePermission(requestId, decision);
+  }
+
+  resolveElicitation(requestId: string, response: ElicitationResponse): boolean {
+    return this.agents.resolveElicitation(requestId, response);
   }
 
   refreshProfiles(profiles: readonly AgentProfile[]): void {

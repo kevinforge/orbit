@@ -59,7 +59,7 @@ Orbit coordinates CLI-backed digital employees. The digital employees require at
 - Collaboration Insights for task outcomes, employee collaboration, execution timelines, and duration trends
 - Markdown rendering for employee replies
 - Session persistence across runs
-- Native ACP v1 transport for CodeBuddy, including structured tool activity, human-in-the-loop approvals, and cancellation
+- Native ACP v1 transport for CodeBuddy, including structured tool activity, human-in-the-loop approvals, cancellation, and structured user elicitation (forms and external URLs)
 
 ## License And Security
 

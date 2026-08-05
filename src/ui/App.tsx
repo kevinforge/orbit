@@ -2,7 +2,7 @@ import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, us
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 
 const initialState: AppState = {
@@ -15,6 +15,7 @@ const initialState: AppState = {
   runningSummaries: [],
   runtimeAvailability: [],
   pendingPermissions: [],
+  pendingElicitations: [],
 };
 
 type ActiveView = "conversation" | "analysis";
@@ -52,6 +53,7 @@ export function App() {
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>(loadApprovalMode);
   const [showApprovalModeMenu, setShowApprovalModeMenu] = useState(false);
   const [resolvingPermissionIds, setResolvingPermissionIds] = useState<string[]>([]);
+  const [resolvingElicitationIds, setResolvingElicitationIds] = useState<string[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
@@ -441,6 +443,34 @@ export function App() {
       }));
     } finally {
       setResolvingPermissionIds((current) => current.filter((id) => id !== requestId));
+    }
+  }
+
+  async function resolveElicitation(requestId: string, response: ElicitationResponse) {
+    if (resolvingElicitationIds.includes(requestId)) return;
+    setResolvingElicitationIds((current) => [...current, requestId]);
+    try {
+      const httpResponse = await fetch("/api/elicitations/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, ...response }),
+      });
+      if (!httpResponse.ok && httpResponse.status !== 404) {
+        throw new Error(`Elicitation request failed: ${httpResponse.status}`);
+      }
+      if (httpResponse.status === 404) {
+        setState((current) => ({
+          ...current,
+          pendingElicitations: current.pendingElicitations.filter((elicitation) => elicitation.id !== requestId),
+        }));
+      }
+    } catch {
+      setState((current) => ({
+        ...current,
+        messages: [...current.messages, createLocalSystemMessage("提交输入失败，请检查本地服务是否正在运行。")],
+      }));
+    } finally {
+      setResolvingElicitationIds((current) => current.filter((id) => id !== requestId));
     }
   }
 
@@ -1183,6 +1213,19 @@ export function App() {
             ))}
           </div>
         ) : null}
+        {state.pendingElicitations.length > 0 ? (
+          <div className="elicitationStack" aria-live="polite">
+            {state.pendingElicitations.map((elicitation) => (
+              <ElicitationPanel
+                key={elicitation.id}
+                elicitation={elicitation}
+                agentLabel={agentsById.get(elicitation.agentId)?.label ?? elicitation.agentId}
+                resolving={resolvingElicitationIds.includes(elicitation.id)}
+                onResponse={(response) => resolveElicitation(elicitation.id, response)}
+              />
+            ))}
+          </div>
+        ) : null}
         <form className="composer" onSubmit={sendMessage}>
           <div className={`composerInputWrap${pendingAttachments.length > 0 ? " hasAttachments" : ""}`}>
             {pendingAttachments.length > 0 && (
@@ -1408,6 +1451,186 @@ function PermissionApprovalPanel(props: {
         </button>
       </div>
     </section>
+  );
+}
+
+function ElicitationPanel(props: {
+  elicitation: PendingElicitation;
+  agentLabel: string;
+  resolving: boolean;
+  onResponse: (response: ElicitationResponse) => void;
+}) {
+  const schema = props.elicitation.requestedSchema;
+  const fields = Object.entries(schema?.properties ?? {});
+  const hasUnsupportedFields = fields.some(([, field]) => (
+    !["string", "number", "integer", "boolean", "array"].includes(field.type) ||
+    (field.type === "array" && !field.items)
+  ));
+  const [values, setValues] = useState<ElicitationContent>(() => {
+    const defaults: ElicitationContent = {};
+    for (const [name, field] of fields) {
+      defaults[name] = field.default ?? (field.type === "boolean" ? false : field.type === "array" ? [] : "");
+    }
+    return defaults;
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  if (props.elicitation.mode === "url") {
+    return (
+      <section className="elicitationPanel" aria-label={`${props.agentLabel} 请求外部输入`}>
+        <span className="elicitationIcon" aria-hidden="true">?</span>
+        <div className="elicitationContent">
+          <strong>{props.agentLabel} 需要你的输入</strong>
+          <span>{props.elicitation.message}</span>
+          {props.elicitation.url ? (
+            <a href={props.elicitation.url} target="_blank" rel="noreferrer" className="elicitationUrl">
+              打开外部页面
+            </a>
+          ) : null}
+          {props.elicitation.url ? <code title={props.elicitation.url}>{props.elicitation.url}</code> : null}
+        </div>
+        <div className="elicitationActions">
+          <button type="button" className="permissionRejectBtn" disabled={props.resolving} onClick={() => props.onResponse({ action: "decline" })}>拒绝</button>
+          <button type="button" className="permissionAllowBtn" disabled={props.resolving} onClick={() => props.onResponse({ action: "accept" })}>
+            {props.resolving ? <span className="sendSpinner" aria-hidden="true" /> : "同意继续"}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (props.elicitation.mode !== "form" || !schema || hasUnsupportedFields) {
+    return (
+      <section className="elicitationPanel" aria-label={`${props.agentLabel} 请求输入`}>
+        <span className="elicitationIcon" aria-hidden="true">?</span>
+        <div className="elicitationContent">
+          <strong>{props.agentLabel} 请求输入</strong>
+          <span>{props.elicitation.message}</span>
+          <small>当前版本暂不支持这种输入类型。</small>
+        </div>
+        <div className="elicitationActions">
+          <button type="button" className="permissionRejectBtn" disabled={props.resolving} onClick={() => props.onResponse({ action: "cancel" })}>关闭</button>
+        </div>
+      </section>
+    );
+  }
+
+  const formSchema = schema;
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content: ElicitationContent = {};
+    const required = new Set(formSchema.required ?? []);
+
+    for (const [name, field] of fields) {
+      const value = values[name];
+      const isEmpty = value === "" || (Array.isArray(value) && value.length === 0);
+      if (required.has(name) && isEmpty) {
+        setError(`请填写“${field.title || name}”`);
+        return;
+      }
+      if (isEmpty) continue;
+
+      if (field.type === "number" || field.type === "integer") {
+        const numberValue = typeof value === "number" ? value : Number(value);
+        if (!Number.isFinite(numberValue) || (field.type === "integer" && !Number.isInteger(numberValue))) {
+          setError(`“${field.title || name}”必须是有效的${field.type === "integer" ? "整数" : "数字"}`);
+          return;
+        }
+        if (field.minimum != null && numberValue < field.minimum || field.maximum != null && numberValue > field.maximum) {
+          setError(`“${field.title || name}”超出允许范围`);
+          return;
+        }
+        content[name] = numberValue;
+        continue;
+      }
+
+      if (field.type === "string" && typeof value === "string") {
+        if (field.minLength != null && value.length < field.minLength || field.maxLength != null && value.length > field.maxLength) {
+          setError(`“${field.title || name}”长度不符合要求`);
+          return;
+        }
+      }
+      if (field.type === "array" && Array.isArray(value)) {
+        if (field.minItems != null && value.length < field.minItems || field.maxItems != null && value.length > field.maxItems) {
+          setError(`“${field.title || name}”选择数量不符合要求`);
+          return;
+        }
+      }
+      content[name] = value;
+    }
+
+    setError(null);
+    props.onResponse({ action: "accept", content });
+  }
+
+  return (
+    <section className="elicitationPanel elicitationFormPanel" aria-label={`${props.agentLabel} 请求输入`}>
+      <span className="elicitationIcon" aria-hidden="true">?</span>
+      <form className="elicitationForm" onSubmit={submit}>
+        <strong>{props.agentLabel} 需要你的输入</strong>
+        <span>{props.elicitation.message}</span>
+        {formSchema.title ? <h4>{formSchema.title}</h4> : null}
+        {formSchema.description ? <small>{formSchema.description}</small> : null}
+        {fields.map(([name, field]) => (
+          <ElicitationField
+            key={name}
+            name={name}
+            field={field}
+            value={values[name]}
+            onChange={(value) => setValues((current) => ({ ...current, [name]: value }))}
+          />
+        ))}
+        {error ? <div className="elicitationError" role="alert">{error}</div> : null}
+        <div className="elicitationActions">
+          <button type="button" className="permissionRejectBtn" disabled={props.resolving} onClick={() => props.onResponse({ action: "decline" })}>拒绝</button>
+          <button type="submit" className="permissionAllowBtn" disabled={props.resolving}>
+            {props.resolving ? <span className="sendSpinner" aria-hidden="true" /> : "提交"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function ElicitationField(props: {
+  name: string;
+  field: ElicitationFieldSchema;
+  value: string | number | boolean | string[] | undefined;
+  onChange: (value: string | number | boolean | string[]) => void;
+}) {
+  const label = props.field.title || props.name;
+  const options = props.field.enum?.map((value) => ({ const: value, title: value }))
+    ?? props.field.oneOf
+    ?? (props.field.items?.enum?.map((value) => ({ const: value, title: value }))
+      ?? props.field.items?.anyOf);
+  const isMulti = props.field.type === "array";
+
+  return (
+    <label className="elicitationField">
+      <span>{label}{props.field.description ? <small>{props.field.description}</small> : null}</span>
+      {options && !isMulti ? (
+        <select value={typeof props.value === "string" ? props.value : ""} onChange={(event) => props.onChange(event.target.value)}>
+          <option value="">请选择</option>
+          {options.map((option) => <option key={option.const} value={option.const}>{option.title}</option>)}
+        </select>
+      ) : isMulti ? (
+        <select multiple value={Array.isArray(props.value) ? props.value : []} onChange={(event) => props.onChange(Array.from(event.target.selectedOptions, (option) => option.value))}>
+          {(options ?? []).map((option) => <option key={option.const} value={option.const}>{option.title}</option>)}
+        </select>
+      ) : props.field.type === "boolean" ? (
+        <input type="checkbox" checked={props.value === true} onChange={(event) => props.onChange(event.target.checked)} />
+      ) : (
+        <input
+          type={props.field.type === "number" || props.field.type === "integer" ? "number" : "text"}
+          value={typeof props.value === "string" || typeof props.value === "number" ? props.value : ""}
+          min={props.field.minimum ?? undefined}
+          max={props.field.maximum ?? undefined}
+          step={props.field.type === "integer" ? 1 : "any"}
+          onChange={(event) => props.onChange(event.target.value)}
+        />
+      )}
+    </label>
   );
 }
 
@@ -2496,6 +2719,20 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
+  if (event.type === "elicitation.requested") {
+    if (state.pendingElicitations.some((elicitation) => elicitation.id === event.elicitation.id)) {
+      return state;
+    }
+    return { ...state, pendingElicitations: [...state.pendingElicitations, event.elicitation] };
+  }
+
+  if (event.type === "elicitation.resolved") {
+    return {
+      ...state,
+      pendingElicitations: state.pendingElicitations.filter((elicitation) => elicitation.id !== event.requestId),
+    };
+  }
+
   if (event.type === "terminal.chunk") {
     return state;
   }
@@ -2542,6 +2779,7 @@ function normalizeState(nextState: AppState): AppState {
     runningSummaries: nextState.runningSummaries ?? [],
     runtimeAvailability: nextState.runtimeAvailability ?? [],
     pendingPermissions: nextState.pendingPermissions ?? [],
+    pendingElicitations: nextState.pendingElicitations ?? [],
   };
 }
 

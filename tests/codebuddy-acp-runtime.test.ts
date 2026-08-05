@@ -7,10 +7,12 @@ import {
   buildCodeBuddyAcpCommand,
   createCodeBuddyAcpRuntime,
   decideCodeBuddyPermission,
+  resolveCodeBuddyElicitation,
   resolveCodeBuddyPermission,
   type CodeBuddyAcpConnection,
   type CodeBuddyAcpConnector,
 } from "../src/core/codebuddy-acp-runtime.ts";
+import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
 import type { AgentActivityEvent } from "../src/shared/types.ts";
 
 type FakeOptions = {
@@ -255,6 +257,17 @@ test("interrupt sends session/cancel and rejects the turn", async () => {
   assert.ok(fake.calls.some((call) => call.method === "session/cancel"));
 });
 
+test("ACP cancelled turns expose a typed cancellation error", async () => {
+  const fake = fakeConnector({ promptResponse: { stopReason: "cancelled" } });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+
+  await assert.rejects(runtime.run(runOptions()).result, (error: unknown) => {
+    assert.ok(error instanceof AgentRunCancelledError);
+    assert.equal(error.userMessage, "运行已取消。");
+    return true;
+  });
+});
+
 test("full-access permission decisions allow supported ACP options", () => {
   const request = {
     sessionId: "session",
@@ -328,6 +341,37 @@ test("permission decisions recognize CodeBuddy tool names when ACP kind is omitt
     input: '{"file_path":"README.md"}',
   }]);
   assert.deepEqual(response, { outcome: { outcome: "selected", optionId: "allow" } });
+});
+
+test("elicitation requests wait for a structured Orbit response", async () => {
+  const seen: unknown[] = [];
+  const response = await resolveCodeBuddyElicitation({
+    sessionId: "session",
+    mode: "form",
+    message: "Choose a strategy",
+    requestedSchema: {
+      type: "object",
+      properties: { strategy: { type: "string", enum: ["safe", "fast"] } },
+      required: ["strategy"],
+    },
+  }, runOptions({
+    requestElicitation: async (request: unknown) => {
+      seen.push(request);
+      return { action: "accept", content: { strategy: "safe" } };
+    },
+  }));
+
+  assert.deepEqual(seen, [{
+    message: "Choose a strategy",
+    mode: "form",
+    sessionId: "session",
+    requestedSchema: {
+      type: "object",
+      properties: { strategy: { type: "string", enum: ["safe", "fast"] } },
+      required: ["strategy"],
+    },
+  }]);
+  assert.deepEqual(response, { action: "accept", content: { strategy: "safe" } });
 });
 
 test("full access auto-approves all ACP permission requests", async () => {

@@ -10,6 +10,8 @@ import {
   methods,
   ndJsonStream,
   type AgentCapabilities,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   type ContentBlock,
   type ClientConnection,
   type InitializeRequest,
@@ -27,8 +29,8 @@ import {
   type ToolKind,
 } from "@agentclientprotocol/sdk";
 
-import type { AgentActivityEvent, AgentId } from "../shared/types.ts";
-import type { AgentRuntime, AgentRuntimeRunHandle, AgentRuntimeRunOptions } from "./agent-runtime.ts";
+import type { AgentActivityEvent, AgentElicitationRequest, AgentId } from "../shared/types.ts";
+import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunHandle, type AgentRuntimeRunOptions } from "./agent-runtime.ts";
 import { interruptProcessTree } from "./claude-cli-runtime.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
 
@@ -88,12 +90,23 @@ export function runCodeBuddyAcp(
   let acceptingUpdates = false;
   let activeSessionId: string | null = null;
   let cancelled = false;
+  let permissionRejected = false;
   let closed = false;
   let cancelTimer: NodeJS.Timeout | null = null;
   const answerParts: string[] = [];
   const toolStates = new Map<string, ToolState>();
 
-  const connection = connector(options, (notification) => {
+  const connectorOptions: CodeBuddyAcpRunOptions = {
+    ...options,
+    requestPermission: options.requestPermission
+      ? async (request) => {
+        const decision = await options.requestPermission!(request);
+        if (decision === "reject") permissionRejected = true;
+        return decision;
+      }
+      : undefined,
+  };
+  const connection = connector(connectorOptions, (notification) => {
     if (!acceptingUpdates || notification.sessionId !== activeSessionId) {
       return;
     }
@@ -121,7 +134,12 @@ export function runCodeBuddyAcp(
     try {
       const initialized = await connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {},
+        clientCapabilities: {
+          elicitation: {
+            form: {},
+            url: {},
+          },
+        },
         clientInfo: { name: "Orbit", version: "1.0.0" },
       });
       validateInitializeResponse(initialized);
@@ -142,7 +160,10 @@ export function runCodeBuddyAcp(
       acceptingUpdates = false;
 
       if (cancelled || response.stopReason === "cancelled") {
-        throw new Error("CodeBuddy ACP turn was cancelled.");
+        throw new AgentRunCancelledError(
+          "CodeBuddy ACP turn was cancelled.",
+          permissionRejected ? "权限申请已拒绝，任务已停止。" : "运行已取消。",
+        );
       }
       if (response.stopReason === "refusal") {
         throw new Error("CodeBuddy ACP refused the request.");
@@ -356,6 +377,34 @@ export async function resolveCodeBuddyPermission(
   return decideCodeBuddyPermission(request);
 }
 
+export async function resolveCodeBuddyElicitation(
+  request: CreateElicitationRequest,
+  options: CodeBuddyAcpRunOptions,
+): Promise<CreateElicitationResponse> {
+  if (!options.requestElicitation) {
+    return { action: "cancel" };
+  }
+
+  return options.requestElicitation(toAgentElicitationRequest(request));
+}
+
+function toAgentElicitationRequest(request: CreateElicitationRequest): AgentElicitationRequest {
+  const raw = request as unknown as Record<string, unknown>;
+  return {
+    message: request.message,
+    mode: request.mode,
+    ...(typeof raw.sessionId === "string" ? { sessionId: raw.sessionId } : {}),
+    ...(typeof raw.requestId === "string" || typeof raw.requestId === "number" ? { id: String(raw.requestId) } : {}),
+    ...(typeof raw.toolCallId === "string" ? { toolCallId: raw.toolCallId } : {}),
+    ...(request.mode === "form" && raw.requestedSchema && typeof raw.requestedSchema === "object"
+      ? { requestedSchema: raw.requestedSchema as AgentElicitationRequest["requestedSchema"] }
+      : {}),
+    ...(request.mode === "url" && typeof raw.elicitationId === "string" && typeof raw.url === "string"
+      ? { elicitationId: raw.elicitationId, url: raw.url }
+      : {}),
+  };
+}
+
 function selectCodeBuddyPermission(
   request: RequestPermissionRequest,
   decision: "allow" | "reject",
@@ -456,6 +505,16 @@ function spawnCodeBuddyAcpConnection(
     .onRequest(methods.client.session.requestPermission, ({ params }) => (
       resolveCodeBuddyPermission(params, options)
     ))
+    .onRequest(methods.client.elicitation.create, ({ params }) => (
+      resolveCodeBuddyElicitation(params, options)
+    ))
+    .onNotification(methods.client.elicitation.complete, ({ params }) => {
+      options.onActivity?.({
+        type: "status",
+        text: `外部输入流程已完成：${params.elicitationId}`,
+        timestamp: new Date().toISOString(),
+      });
+    })
     .onNotification(methods.client.session.update, ({ params }) => {
       onSessionUpdate(params);
     });

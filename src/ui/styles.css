@@ -1713,6 +1713,134 @@ button:active:not(:disabled) {
   cursor: wait;
 }
 
+.elicitationStack {
+  display: grid;
+  gap: 8px;
+  padding: 8px 24px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.elicitationPanel {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  box-shadow: var(--shadow-sm);
+}
+
+.elicitationIcon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--secondary);
+  background: var(--secondary-bg);
+  font-weight: 800;
+}
+
+.elicitationContent,
+.elicitationForm {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.elicitationContent strong,
+.elicitationForm > strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.elicitationContent code {
+  max-width: min(720px, 55vw);
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.elicitationUrl {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.elicitationFormPanel {
+  grid-template-columns: 34px minmax(0, 1fr);
+}
+
+.elicitationForm {
+  grid-column: 2;
+}
+
+.elicitationForm h4 {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.elicitationField {
+  display: grid;
+  gap: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.elicitationField span {
+  display: grid;
+  gap: 2px;
+}
+
+.elicitationField small,
+.elicitationForm > small {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.elicitationField input:not([type="checkbox"]),
+.elicitationField select {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  font: inherit;
+}
+
+.elicitationField select[multiple] {
+  min-height: 70px;
+}
+
+.elicitationError {
+  color: var(--danger, #c2410c);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.elicitationActions {
+  display: flex;
+  grid-column: 3;
+  gap: 8px;
+  align-self: end;
+}
+
+.elicitationForm .elicitationActions {
+  grid-column: auto;
+  justify-content: flex-end;
+}
+
 .composerActions {
   display: flex;
   gap: 8px;
@@ -4227,11 +4355,29 @@ button:active:not(:disabled) {
     padding-inline: 12px;
   }
 
+  .elicitationStack {
+    padding-inline: 12px;
+  }
+
   .permissionApproval {
     grid-template-columns: 30px minmax(0, 1fr);
   }
 
   .permissionApprovalActions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .elicitationPanel {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .elicitationForm {
+    grid-column: 2;
+  }
+
+  .elicitationActions,
+  .elicitationForm .elicitationActions {
     grid-column: 1 / -1;
     justify-content: flex-end;
   }

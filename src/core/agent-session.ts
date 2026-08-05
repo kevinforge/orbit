@@ -1,13 +1,16 @@
 import type {
+  AgentElicitationRequest,
   AgentId,
   AgentPermissionRequest,
   AgentStatus,
   ApprovalMode,
+  ElicitationResponse,
+  PendingElicitation,
   PendingPermission,
   PermissionDecision,
   RunResult,
 } from "../shared/types.ts";
-import type { AgentRuntime } from "./agent-runtime.ts";
+import { isAgentRunCancelledError, type AgentRuntime } from "./agent-runtime.ts";
 import { sanitizeAgentVisibleReply } from "./agent-prompt.ts";
 import { isCleanFinalAnswer } from "./claude-output-detector.ts";
 import { EventBus } from "./event-bus.ts";
@@ -38,10 +41,17 @@ type PendingPermissionState = {
   resolve: (decision: PermissionDecision) => void;
 };
 
+type PendingElicitationState = {
+  elicitation: PendingElicitation;
+  resolve: (response: ElicitationResponse) => void;
+};
+
 export class AgentSession {
   private status: AgentStatus = "stopped";
   private activeRun: ActiveRun | null = null;
   private pendingPermission: PendingPermissionState | null = null;
+  private readonly pendingElicitationStates = new Map<string, PendingElicitationState>();
+  private elicitationCount = 0;
   private runCount = 0;
 
   constructor(private readonly options: AgentSessionOptions) {}
@@ -93,6 +103,7 @@ export class AgentSession {
   stop(): void {
     if (this.activeRun) {
       this.settlePendingPermission(this.activeRun.runId, "reject");
+      this.settlePendingElicitations(this.activeRun.runId, { action: "cancel" });
       // Terminate entire process tree (same behavior as interrupt)
       this.activeRun.child.interrupt();
       this.activeRun = null;
@@ -108,6 +119,7 @@ export class AgentSession {
     }
 
     this.settlePendingPermission(runId, "reject");
+    this.settlePendingElicitations(runId, { action: "cancel" });
     // Terminate entire process tree
     this.activeRun.child.interrupt();
     this.activeRun = null;
@@ -125,12 +137,29 @@ export class AgentSession {
     return this.pendingPermission ? [this.pendingPermission.permission] : [];
   }
 
+  pendingElicitations(): PendingElicitation[] {
+    return [...this.pendingElicitationStates.values()].map((pending) => pending.elicitation);
+  }
+
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
     const pending = this.pendingPermission;
     if (!pending || pending.permission.id !== requestId) {
       return false;
     }
     this.settlePendingPermission(pending.permission.runId, decision);
+    return true;
+  }
+
+  resolveElicitation(requestId: string, response: ElicitationResponse): boolean {
+    const pending = this.pendingElicitationStates.get(requestId);
+    if (!pending) return false;
+    this.pendingElicitationStates.delete(requestId);
+    pending.resolve(response);
+    this.options.eventBus.publish({
+      type: "elicitation.resolved",
+      conversationId: this.options.conversationId,
+      requestId,
+    });
     return true;
   }
 
@@ -177,6 +206,7 @@ export class AgentSession {
       resumeSessionId,
       imagePaths,
       requestPermission: (request) => this.requestPermission(runId, request),
+      requestElicitation: (request) => this.requestElicitation(runId, request),
       onOutput: (text) => {
         this.options.eventBus.publish({
           type: "terminal.chunk",
@@ -218,6 +248,7 @@ export class AgentSession {
         }
 
         this.settlePendingPermission(runId, "reject");
+        this.settlePendingElicitations(runId, { action: "cancel" });
         this.activeRun = null;
         this.setStatus("idle");
         const cleaned = sanitizeAgentVisibleReply(result.trim());
@@ -238,12 +269,14 @@ export class AgentSession {
         }
 
         this.settlePendingPermission(runId, "reject");
+        this.settlePendingElicitations(runId, { action: "cancel" });
         this.activeRun = null;
 
-        // CRITICAL: Check if status is already "idle" (set by interrupt()).
-        // If so, this rejection was caused by interrupt, not a real error.
-        // Do NOT overwrite the idle status in this case.
-        if (this.status !== "idle") {
+        // ACP reports a rejected permission as a cancelled turn. Keep the
+        // agent available for the next task instead of leaving it in error.
+        if (isAgentRunCancelledError(error)) {
+          this.setStatus("idle");
+        } else if (this.status !== "idle") {
           this.setStatus("error");
         }
 
@@ -286,6 +319,42 @@ export class AgentSession {
     });
   }
 
+  private requestElicitation(runId: string, request: AgentElicitationRequest): Promise<ElicitationResponse> {
+    if (this.activeRun?.runId !== runId) {
+      return Promise.resolve({ action: "cancel" });
+    }
+
+    const id = `${runId}:elicitation-${++this.elicitationCount}`;
+    const elicitation: PendingElicitation = {
+      ...request,
+      id,
+      conversationId: this.options.conversationId,
+      agentId: this.id,
+      runId,
+      createdAt: new Date().toISOString(),
+    };
+
+    return new Promise((resolve) => {
+      this.pendingElicitationStates.set(id, { elicitation, resolve });
+      this.options.eventBus.publish({
+        type: "elicitation.requested",
+        conversationId: this.options.conversationId,
+        elicitation,
+      });
+      this.options.eventBus.publish({
+        type: "run.activity",
+        conversationId: this.options.conversationId,
+        agentId: this.id,
+        runId,
+        activity: {
+          type: "status",
+          text: `等待用户输入：${request.message}`,
+          timestamp: elicitation.createdAt,
+        },
+      });
+    });
+  }
+
   private settlePendingPermission(runId: string, decision: PermissionDecision): void {
     const pending = this.pendingPermission;
     if (!pending || pending.permission.runId !== runId) {
@@ -310,6 +379,19 @@ export class AgentSession {
         timestamp: new Date().toISOString(),
       },
     });
+  }
+
+  private settlePendingElicitations(runId: string, response: ElicitationResponse): void {
+    for (const [requestId, pending] of this.pendingElicitationStates) {
+      if (pending.elicitation.runId !== runId) continue;
+      this.pendingElicitationStates.delete(requestId);
+      pending.resolve(response);
+      this.options.eventBus.publish({
+        type: "elicitation.resolved",
+        conversationId: this.options.conversationId,
+        requestId,
+      });
+    }
   }
 
   private persistSession(sessionId: string): void {

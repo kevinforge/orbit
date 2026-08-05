@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { EventBus } from "../src/core/event-bus.ts";
+import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
 import { MessageStore } from "../src/core/message-store.ts";
 import { classifyTerminalActivities, classifyTerminalActivity, RunManager } from "../src/core/run-manager.ts";
 import type { AgentId, ChatMessage, RunResult } from "../src/shared/types.ts";
@@ -116,6 +117,40 @@ test("propagates the source approval mode to the agent run and result message", 
 
   assert.equal(receivedMode, "full-access");
   assert.equal(messages.get(run.resultMessageId)?.approvalMode, "full-access");
+});
+
+test("treats ACP cancellation after permission rejection as a cancelled run", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() {
+            return Promise.reject(new AgentRunCancelledError(
+              "CodeBuddy ACP turn was cancelled.",
+              "权限申请已拒绝，任务已停止。",
+            ));
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const run = manager.enqueue("developer", "work", createSourceMessage());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const message = messages.get(run.resultMessageId);
+  assert.equal(run.status, "cancelled");
+  assert.equal(message?.status, "cancelled");
+  assert.equal(message?.runStatus, "cancelled");
+  assert.equal(message?.content, "developer 权限申请已拒绝，任务已停止。");
 });
 
 test("terminal chunks append visible activity to the running message", async () => {

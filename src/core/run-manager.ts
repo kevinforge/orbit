@@ -12,6 +12,7 @@ import { randomBytes } from "node:crypto";
 import type { EventBus } from "./event-bus.ts";
 import type { MessageStore } from "./message-store.ts";
 import { parseJsonObjects } from "./json-stream-parser.ts";
+import { isAgentRunCancelledError } from "./agent-runtime.ts";
 
 type AgentRunner = {
   get(agentId: AgentId): {
@@ -172,7 +173,7 @@ export class RunManager {
     return { ok: false, reason: "not_cancellable" };
   }
 
-  private markCancelled(run: ManagedRun, phase: "before start" | "during execution"): void {
+  private markCancelled(run: ManagedRun, phase: "before start" | "during execution", reason?: string): void {
     run.status = "cancelled";
     run.completedAt = new Date().toISOString();
     // Only remove from active if interrupting a running run
@@ -182,14 +183,16 @@ export class RunManager {
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
 
-    const activityText = phase === "before start"
+    const activityText = reason ?? (phase === "before start"
       ? "Cancelled by user before start."
-      : "Interrupted by user during execution.";
+      : "Interrupted by user during execution.");
     this.appendActivity(run, activityText);
 
-    const contentText = phase === "before start"
-      ? `${this.resolveAgentLabel(run.agentId)} 排队任务已取消。`
-      : `${this.resolveAgentLabel(run.agentId)} 运行已中断。`;
+    const contentText = reason
+      ? `${this.resolveAgentLabel(run.agentId)} ${reason}`
+      : phase === "before start"
+        ? `${this.resolveAgentLabel(run.agentId)} 排队任务已取消。`
+        : `${this.resolveAgentLabel(run.agentId)} 运行已中断。`;
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: contentText,
@@ -285,7 +288,13 @@ export class RunManager {
 
     void result
       .then((runResult) => this.complete(run, runResult))
-      .catch((error: unknown) => this.fail(run, error instanceof Error ? error.message : String(error)));
+      .catch((error: unknown) => {
+        if (isAgentRunCancelledError(error)) {
+          this.markCancelled(run, "during execution", error.userMessage);
+          return;
+        }
+        this.fail(run, error instanceof Error ? error.message : String(error));
+      });
   }
 
   private complete(run: ManagedRun, runResult: RunResult): void {
