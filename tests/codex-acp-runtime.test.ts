@@ -10,6 +10,7 @@ import {
   type CodexAcpConnection,
   type CodexAcpConnector,
 } from "../src/core/codex-acp-runtime.ts";
+import { createAcpRuntime, type AcpRuntimeDefinition } from "../src/core/acp-runtime.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
 
 type FakeOptions = {
@@ -164,4 +165,37 @@ test("Codex ACP cancelled turns expose a typed cancellation error", async () => 
     assert.match(error.message, /Codex ACP turn was cancelled/);
     return true;
   });
+});
+
+test("per-run env reaches command resolution through the real spawn path", async () => {
+  // Regression guard: spawnAcpConnection must forward options.env to
+  // definition.buildCommand, otherwise CODEX_ACP_PATH / CLAUDE_ACP_PATH passed
+  // per run are ignored in favor of process.env. Uses the real default connector
+  // (spawnAcpConnection) with a spy definition wrapping the real Codex resolver.
+  let receivedEnv: NodeJS.ProcessEnv | undefined;
+  let resolvedCommand: { file: string; args: string[] } | undefined;
+  const definition: AcpRuntimeDefinition = {
+    kind: "codex",
+    displayName: "Codex",
+    buildCommand(env) {
+      receivedEnv = env;
+      resolvedCommand = buildCodexAcpCommand(env);
+      return resolvedCommand;
+    },
+  };
+  const runtime = createAcpRuntime(definition);
+  // The custom path does not exist, so the spawned process fails fast. buildCommand
+  // is invoked synchronously inside spawnAcpConnection before run() returns, so the
+  // assertions below observe it directly. Awaiting the doomed result lets runAcp's
+  // own finally clean up the connection without a manual kill.
+  const handle = runtime.run(runOptions({ env: { CODEX_ACP_PATH: "D:/tools/custom-codex-acp.exe" } }));
+  try {
+    assert.equal(receivedEnv?.CODEX_ACP_PATH, "D:/tools/custom-codex-acp.exe");
+    assert.ok(
+      resolvedCommand?.file === "D:/tools/custom-codex-acp.exe" ||
+        resolvedCommand?.args.at(-1) === "D:/tools/custom-codex-acp.exe",
+    );
+  } finally {
+    await handle.result.catch(() => {});
+  }
 });

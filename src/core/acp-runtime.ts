@@ -68,7 +68,7 @@ export type AcpCommand = {
 export type AcpRuntimeDefinition = {
   kind: AgentRuntimeKind;
   displayName: string;
-  buildCommand: () => AcpCommand;
+  buildCommand: (env?: NodeJS.ProcessEnv) => AcpCommand;
   agentIdEnvNames?: string[];
   toolNameMetaKeys?: string[];
   envForRun?: (options: AcpRunOptions) => NodeJS.ProcessEnv;
@@ -527,8 +527,8 @@ export function spawnAcpConnection(
   options: AcpRunOptions,
   onSessionUpdate: (notification: SessionNotification) => void,
 ): AcpConnection {
-  const command = definition.buildCommand();
   const baseEnv = options.env ?? process.env;
+  const command = definition.buildCommand(baseEnv);
   const child = spawn(command.file, command.args, {
     cwd: options.cwd,
     env: createEnv(definition, options.agentId, {
