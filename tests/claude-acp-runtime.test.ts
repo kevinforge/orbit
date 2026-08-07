@@ -106,6 +106,52 @@ test("creates a Claude ACP session and advertises elicitation", async () => {
   assert.deepEqual(initialize.clientCapabilities.elicitation, { form: {}, url: {} });
 });
 
+test("returns only Claude's last assistant message while preserving visible progress output", async () => {
+  const output: string[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify({
+        sessionId: "claude-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "progress-1",
+          content: { type: "text", text: "Reading the project first." },
+        },
+      });
+      notify({
+        sessionId: "claude-session",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "hidden reasoning" },
+        },
+      });
+      notify({
+        sessionId: "claude-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "final-1",
+          content: { type: "text", text: "Final " },
+        },
+      });
+      notify({
+        sessionId: "claude-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "final-1",
+          content: { type: "text", text: "answer" },
+        },
+      });
+    },
+  });
+  const runtime = createClaudeAcpRuntime(fake.connector);
+
+  assert.equal(
+    await runtime.run(runOptions({ onOutput: (text: string) => output.push(text) })).result,
+    "Final answer",
+  );
+  assert.deepEqual(output, ["Reading the project first.", "Final ", "answer"]);
+});
+
 test("resumes an existing Claude ACP session without replaying loaded history", async () => {
   const fake = fakeConnector({
     capabilities: { sessionCapabilities: { resume: {} } },

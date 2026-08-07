@@ -43,6 +43,19 @@ export function isCodexDiagnosticMessage(update: Parameters<NonNullable<AcpRunti
     && /^(?:Config warning|Warning):/.test(update.content.text);
 }
 
+export function classifyCodexAnswerChunk(
+  update: Parameters<NonNullable<AcpRuntimeDefinition["classifyAnswerChunk"]>>[0],
+): ReturnType<NonNullable<AcpRuntimeDefinition["classifyAnswerChunk"]>> {
+  const meta = update._meta;
+  if (!meta || typeof meta !== "object") return undefined;
+  const codexMeta = meta.codex;
+  if (!codexMeta || typeof codexMeta !== "object") return undefined;
+  const phase = (codexMeta as Record<string, unknown>).phase;
+  if (phase === "final_answer") return "final";
+  if (phase === "commentary") return "progress";
+  return undefined;
+}
+
 const CODEX_ACP: AcpRuntimeDefinition = {
   kind: "codex",
   displayName: "Codex",
@@ -50,6 +63,7 @@ const CODEX_ACP: AcpRuntimeDefinition = {
   agentIdEnvNames: ["CODEX_AGENT_ID"],
   envForRun: codexAcpEnvForRun,
   isDiagnosticMessage: isCodexDiagnosticMessage,
+  classifyAnswerChunk: classifyCodexAnswerChunk,
 };
 
 export function createCodexAcpRuntime(

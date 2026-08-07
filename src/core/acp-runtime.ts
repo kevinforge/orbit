@@ -65,6 +65,8 @@ export type AcpCommand = {
   env?: NodeJS.ProcessEnv;
 };
 
+export type AcpAnswerChunkDisposition = "candidate" | "final" | "progress" | "ignore";
+
 export type AcpRuntimeDefinition = {
   kind: AgentRuntimeKind;
   displayName: string;
@@ -73,11 +75,24 @@ export type AcpRuntimeDefinition = {
   toolNameMetaKeys?: string[];
   envForRun?: (options: AcpRunOptions) => NodeJS.ProcessEnv;
   isDiagnosticMessage?: (update: SessionNotification["update"]) => boolean;
+  classifyAnswerChunk?: (update: SessionNotification["update"]) => AcpAnswerChunkDisposition | undefined;
 };
 
 type ToolState = {
   name: string;
   status?: ToolCallStatus | null;
+};
+
+type AnswerMessage = {
+  candidateParts: string[];
+  finalParts: string[];
+};
+
+type AnswerState = {
+  messages: Map<string, AnswerMessage>;
+  order: string[];
+  unscopedCandidateParts: string[];
+  unscopedFinalParts: string[];
 };
 
 export function createAcpRuntime(
@@ -107,7 +122,7 @@ export function runAcp(
   let permissionRejected = false;
   let closed = false;
   let cancelTimer: NodeJS.Timeout | null = null;
-  const answerParts: string[] = [];
+  const answerState = createAnswerState();
   const toolStates = new Map<string, ToolState>();
 
   const connectorOptions: AcpRunOptions = {
@@ -124,7 +139,7 @@ export function runAcp(
     if (!acceptingUpdates || notification.sessionId !== activeSessionId) {
       return;
     }
-    handleSessionUpdate(notification, answerParts, toolStates, options, definition);
+    handleSessionUpdate(notification, answerState, toolStates, options, definition);
   });
 
   let resolveSessionId!: (sessionId: string | null) => void;
@@ -184,7 +199,7 @@ export function runAcp(
         throw new Error(`${definition.displayName} ACP refused the request.`);
       }
 
-      const answer = answerParts.join("").trim();
+      const answer = selectFinalAnswer(answerState).trim();
       if (!answer) {
         throw new Error(`${definition.displayName} ACP completed with ${response.stopReason} but no final answer.`);
       }
@@ -306,7 +321,7 @@ function pathToFileUri(filePath: string): string {
 
 function handleSessionUpdate(
   notification: SessionNotification,
-  answerParts: string[],
+  answerState: AnswerState,
   toolStates: Map<string, ToolState>,
   options: AcpRunOptions,
   definition: AcpRuntimeDefinition,
@@ -326,8 +341,14 @@ function handleSessionUpdate(
         }
         return;
       }
-      answerParts.push(update.content.text);
+
+      const disposition = definition.classifyAnswerChunk?.(update) ?? "candidate";
+      if (disposition === "ignore") return;
+
       options.onOutput?.(update.content.text);
+      if (disposition === "progress") return;
+
+      appendAnswerChunk(answerState, update, disposition, update.content.text);
     }
     return;
   }
@@ -365,6 +386,77 @@ function handleSessionUpdate(
       timestamp: new Date().toISOString(),
     });
   }
+}
+
+function createAnswerState(): AnswerState {
+  return {
+    messages: new Map(),
+    order: [],
+    unscopedCandidateParts: [],
+    unscopedFinalParts: [],
+  };
+}
+
+function appendAnswerChunk(
+  state: AnswerState,
+  update: SessionNotification["update"],
+  disposition: "candidate" | "final",
+  text: string,
+): void {
+  const messageId = getAgentMessageId(update);
+  if (!messageId) {
+    const parts = disposition === "final" ? state.unscopedFinalParts : state.unscopedCandidateParts;
+    parts.push(text);
+    return;
+  }
+
+  let message = state.messages.get(messageId);
+  if (!message) {
+    message = { candidateParts: [], finalParts: [] };
+    state.messages.set(messageId, message);
+    state.order.push(messageId);
+  }
+  if (disposition === "final") {
+    if (message.candidateParts.length) {
+      message.finalParts.push(...message.candidateParts);
+      message.candidateParts.length = 0;
+    }
+    message.finalParts.push(text);
+    return;
+  }
+
+  const parts = message.finalParts.length ? message.finalParts : message.candidateParts;
+  parts.push(text);
+}
+
+function getAgentMessageId(update: SessionNotification["update"]): string | undefined {
+  if ("messageId" in update && typeof update.messageId === "string" && update.messageId) {
+    return update.messageId;
+  }
+
+  const meta = update._meta;
+  if (!meta || typeof meta !== "object") return undefined;
+  const flatMessageId = meta["codebuddy.ai/messageId"];
+  if (typeof flatMessageId === "string" && flatMessageId) return flatMessageId;
+
+  const codeBuddyMeta = meta["codebuddy.ai"];
+  if (!codeBuddyMeta || typeof codeBuddyMeta !== "object") return undefined;
+  const nestedMessageId = (codeBuddyMeta as Record<string, unknown>).messageId;
+  return typeof nestedMessageId === "string" && nestedMessageId ? nestedMessageId : undefined;
+}
+
+function selectFinalAnswer(state: AnswerState): string {
+  for (let index = state.order.length - 1; index >= 0; index -= 1) {
+    const message = state.messages.get(state.order[index]!);
+    if (message?.finalParts.length) return message.finalParts.join("");
+  }
+  if (state.unscopedFinalParts.length) return state.unscopedFinalParts.join("");
+
+  for (let index = state.order.length - 1; index >= 0; index -= 1) {
+    const message = state.messages.get(state.order[index]!);
+    if (message?.candidateParts.length) return message.candidateParts.join("");
+  }
+  return state.unscopedCandidateParts.join("");
 }
 
 function emitActivity(options: AcpRunOptions, activity: AgentActivityEvent): void {

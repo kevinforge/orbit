@@ -37,12 +37,23 @@ export function buildCodeBuddyAcpCommand(): { file: string; args: string[] } {
   return { file: "cmd.exe", args: ["/d", "/s", "/c", "codebuddy.cmd", ...args] };
 }
 
+export function classifyCodeBuddyAnswerChunk(
+  update: Parameters<NonNullable<AcpRuntimeDefinition["classifyAnswerChunk"]>>[0],
+): ReturnType<NonNullable<AcpRuntimeDefinition["classifyAnswerChunk"]>> {
+  const meta = update._meta;
+  if (!meta || typeof meta !== "object") return undefined;
+  if (meta["codebuddy.ai/isCompactInternal"] === true) return "ignore";
+  if (meta["codebuddy.ai/memberEvent"] !== undefined) return "progress";
+  return undefined;
+}
+
 const CODEBUDDY_ACP: AcpRuntimeDefinition = {
   kind: "codebuddy",
   displayName: "CodeBuddy",
   buildCommand: buildCodeBuddyAcpCommand,
   agentIdEnvNames: ["CODEBUDDY_AGENT_ID"],
   toolNameMetaKeys: ["codebuddy.ai/toolName"],
+  classifyAnswerChunk: classifyCodeBuddyAnswerChunk,
 };
 
 export function createCodeBuddyAcpRuntime(

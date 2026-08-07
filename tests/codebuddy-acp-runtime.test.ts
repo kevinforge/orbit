@@ -109,6 +109,62 @@ test("creates an ACP session and returns streamed agent text", async () => {
   assert.equal(fake.wasClosed(), true);
 });
 
+test("keeps CodeBuddy progress and internal messages out of the final answer", async () => {
+  const output: string[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "progress-1",
+          content: { type: "text", text: "CHECKING" },
+        },
+      });
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "hidden reasoning" },
+        },
+      });
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "final-1",
+          content: { type: "text", text: "FINAL_CODEBUDDY" },
+        },
+      });
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "member-1",
+          content: { type: "text", text: "member progress" },
+          _meta: { "codebuddy.ai/memberEvent": { type: "message" } },
+        },
+      });
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "compact-1",
+          content: { type: "text", text: "internal compact summary" },
+          _meta: { "codebuddy.ai/isCompactInternal": true },
+        },
+      });
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+
+  assert.equal(
+    await runtime.run(runOptions({ onOutput: (text: string) => output.push(text) })).result,
+    "FINAL_CODEBUDDY",
+  );
+  assert.deepEqual(output, ["CHECKING", "FINAL_CODEBUDDY", "member progress"]);
+});
+
 test("loads an existing session and suppresses replayed history", async () => {
   const fake = fakeConnector({
     capabilities: { loadSession: true },

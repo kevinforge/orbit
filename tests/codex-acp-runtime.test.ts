@@ -115,6 +115,63 @@ test("keeps Codex adapter warnings out of the final answer", async () => {
   }]);
 });
 
+test("uses Codex final-answer phase instead of commentary or thought chunks", async () => {
+  const output: string[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "commentary-1",
+          content: { type: "text", text: "Inspecting the project." },
+          _meta: { codex: { phase: "commentary" } },
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "hidden reasoning" },
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "final-1",
+          content: { type: "text", text: "Final " },
+          _meta: { codex: { phase: "final_answer" } },
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "final-1",
+          content: { type: "text", text: "answer" },
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "commentary-2",
+          content: { type: "text", text: "Late commentary" },
+          _meta: { codex: { phase: "commentary" } },
+        },
+      });
+    },
+  });
+  const runtime = createCodexAcpRuntime(fake.connector);
+
+  assert.equal(
+    await runtime.run(runOptions({ onOutput: (text: string) => output.push(text) })).result,
+    "Final answer",
+  );
+  assert.deepEqual(output, ["Inspecting the project.", "Final ", "answer", "Late commentary"]);
+});
+
 test("creates a Codex ACP session and returns streamed text", async () => {
   const fake = fakeConnector({
     onPrompt(notify) {
@@ -168,10 +225,7 @@ test("Codex ACP cancelled turns expose a typed cancellation error", async () => 
 });
 
 test("per-run env reaches command resolution through the real spawn path", async () => {
-  // Regression guard: spawnAcpConnection must forward options.env to
-  // definition.buildCommand, otherwise CODEX_ACP_PATH / CLAUDE_ACP_PATH passed
-  // per run are ignored in favor of process.env. Uses the real default connector
-  // (spawnAcpConnection) with a spy definition wrapping the real Codex resolver.
+  const commandPath = `D:/tools/orbit-missing-acp-${process.pid}-${Date.now()}.exe`;
   let receivedEnv: NodeJS.ProcessEnv | undefined;
   let resolvedCommand: { file: string; args: string[] } | undefined;
   const definition: AcpRuntimeDefinition = {
@@ -184,16 +238,11 @@ test("per-run env reaches command resolution through the real spawn path", async
     },
   };
   const runtime = createAcpRuntime(definition);
-  // The custom path does not exist, so the spawned process fails fast. buildCommand
-  // is invoked synchronously inside spawnAcpConnection before run() returns, so the
-  // assertions below observe it directly. Awaiting the doomed result lets runAcp's
-  // own finally clean up the connection without a manual kill.
-  const handle = runtime.run(runOptions({ env: { CODEX_ACP_PATH: "D:/tools/custom-codex-acp.exe" } }));
+  const handle = runtime.run(runOptions({ env: { CODEX_ACP_PATH: commandPath } }));
   try {
-    assert.equal(receivedEnv?.CODEX_ACP_PATH, "D:/tools/custom-codex-acp.exe");
+    assert.equal(receivedEnv?.CODEX_ACP_PATH, commandPath);
     assert.ok(
-      resolvedCommand?.file === "D:/tools/custom-codex-acp.exe" ||
-        resolvedCommand?.args.at(-1) === "D:/tools/custom-codex-acp.exe",
+      resolvedCommand?.file === commandPath || resolvedCommand?.args.at(-1) === commandPath,
     );
   } finally {
     await handle.result.catch(() => {});
