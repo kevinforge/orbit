@@ -37,12 +37,12 @@ node --version
 npm --version
 ```
 
-If `node --version` prints `v20.x.x` or newer, and `npm --version` prints a version, Node.js and npm are ready.
+If `node --version` prints `v22.x.x` or newer, and `npm --version` prints a version, Node.js and npm are ready.
 
-If Node.js is missing or older than 20:
+If Node.js is missing or older than 22:
 
 1. Open https://nodejs.org/
-2. Download the LTS version. Use Node.js 20 or newer.
+2. Download the LTS version. Use Node.js 22 or newer.
 3. Install it with the default options.
 4. Close your terminal and open a new one.
 5. Run `node --version` and `npm --version` again.
@@ -52,8 +52,8 @@ Orbit provides the web workspace. The actual work is performed by CLI runtimes. 
 Check your runtimes:
 
 ```powershell
-claude --version
-codex --version
+claude-agent-acp --version
+codex-acp --version
 codebuddy --version
 ```
 
@@ -63,8 +63,8 @@ If none of the commands work, install at least one runtime:
 
 | Runtime | Common use | Install |
 | --- | --- | --- |
-| Claude Code | Development and supervision | `npm install -g @anthropic-ai/claude-code` |
-| OpenAI Codex | Product, architecture, general work | `npm install -g @openai/codex` |
+| Claude Code | Development and supervision | `npm install -g @agentclientprotocol/claude-agent-acp` |
+| OpenAI Codex | Product, architecture, general work | `npm install -g @openai/codex @agentclientprotocol/codex-acp` |
 | CodeBuddy | Testing or custom agents | `npm install -g @tencent-ai/codebuddy-code` |
 
 Orbit shows the same install command in the agent settings panel when a runtime is missing. You can copy that command from the UI, install the CLI in a terminal, complete the CLI's own login flow, and then re-detect the runtime in Orbit.
@@ -77,7 +77,7 @@ npm config set registry https://registry.npmmirror.com
 
 If you are on a company proxy, configure npm or your shell proxy settings before running `npm install -g ...`.
 
-After installing a runtime, run the version check again, for example `codebuddy --version`. Then run that CLI directly in your terminal and complete its own login or authorization flow. Orbit can only use CLIs that already work on your machine.
+After installing a runtime, run the version check again, for example `codebuddy --version`. For Claude Code, run `claude-agent-acp --cli`; for Codex, run `codex` to complete login. Orbit can only use runtimes that already work on your machine.
 
 ## Step 1: Install Orbit
 

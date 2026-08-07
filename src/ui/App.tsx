@@ -2545,7 +2545,7 @@ function AgentManagerPanel({
                           </div>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">运行时 <span className="fieldHint" title="驱动该数字员工的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
+                          <span className="pillLabel">运行时 <span className="fieldHint" title="驱动该数字员工的本地运行时。claude-code = Claude ACP，codex = Codex ACP，codebuddy = CodeBuddy ACP。">?</span></span>
                           <div className="pillOptions">
                             {RUNTIMES.map((r) => {
                               const isAvail = isRuntimeAvailable(r);

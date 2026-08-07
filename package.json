@@ -27,7 +27,7 @@
     "orbit": "bin/orbit.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "files": [
     "bin/orbit.js",

@@ -28,12 +28,12 @@ node --version
 npm --version
 ```
 
-如果 `node --version` 显示 `v20.x.x` 或更高版本，并且 `npm --version` 能显示版本号，说明 Node.js 和 npm 已可用。
+如果 `node --version` 显示 `v22.x.x` 或更高版本，并且 `npm --version` 能显示版本号，说明 Node.js 和 npm 已可用。
 
-如果没有 Node.js，或版本低于 20：
+如果没有 Node.js，或版本低于 22：
 
 1. 打开 https://nodejs.org/
-2. 下载 LTS 版本，要求 Node.js 20 或更高。
+2. 下载 LTS 版本，要求 Node.js 22 或更高。
 3. 使用默认选项安装。
 4. 关闭当前终端，重新打开一个新的终端。
 5. 再次运行 `node --version` 和 `npm --version`。
@@ -43,8 +43,8 @@ Orbit 提供网页工作台，真正执行任务的是背后的 CLI 运行时。
 检查运行时：
 
 ```powershell
-claude --version
-codex --version
+claude-agent-acp --version
+codex-acp --version
 codebuddy --version
 ```
 
@@ -54,8 +54,8 @@ codebuddy --version
 
 | 运行时 | 常见用途 | 安装方式 |
 | --- | --- | --- |
-| Claude Code | 开发、监督 | `npm install -g @anthropic-ai/claude-code` |
-| OpenAI Codex | 产品、架构、通用任务 | `npm install -g @openai/codex` |
+| Claude Code | 开发、监督 | `npm install -g @agentclientprotocol/claude-agent-acp` |
+| OpenAI Codex | 产品、架构、通用任务 | `npm install -g @openai/codex @agentclientprotocol/codex-acp` |
 | CodeBuddy | 测试或自定义员工 | `npm install -g @tencent-ai/codebuddy-code` |
 
 如果 npm 安装卡住、超时或下载失败，通常是网络无法稳定访问 npm 源。可以切换到能访问 npm 的网络，或临时使用镜像源：
@@ -64,7 +64,7 @@ codebuddy --version
 npm config set registry https://registry.npmmirror.com
 ```
 
-安装运行时后，再运行版本检查。然后在终端里单独运行对应 CLI，按它自己的提示完成登录或授权。Orbit 只能调用已经能在本机正常运行的 CLI。
+安装运行时后，再运行版本检查。Claude Code 可执行 `claude-agent-acp --cli` 完成登录，Codex 可执行 `codex` 完成登录；其他运行时按各自 CLI 的提示完成授权。Orbit 只能调用已经能在本机正常运行的运行时。
 
 ## 第 1 步：安装 Orbit
 

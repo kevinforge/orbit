@@ -88,6 +88,6 @@ Orbit 本身不需要 CLI 环境，但它调度的 agent 需要：
 
 | Runtime | 安装方式 |
 |---------|----------|
-| Claude Code | `npm install -g @anthropic-ai/claude-code` |
-| Codex | `npm install -g @openai/codex` |
+| Claude Code | `npm install -g @agentclientprotocol/claude-agent-acp` |
+| Codex | `npm install -g @openai/codex @agentclientprotocol/codex-acp` |
 | CodeBuddy | 参考官方安装文档 |

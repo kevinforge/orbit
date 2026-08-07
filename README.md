@@ -40,12 +40,12 @@ New to Orbit? Start with the [quickstart](docs/QUICKSTART.md). Chinese readers c
 
 ## Requirements
 
-Orbit coordinates CLI-backed digital employees. The digital employees require at least one supported runtime CLI:
+Orbit requires Node.js 22 or newer and at least one supported runtime:
 
 | Runtime | Install |
 |---------|---------|
-| Claude Code | `npm install -g @anthropic-ai/claude-code` |
-| Codex | `npm install -g @openai/codex` |
+| Claude Code (ACP) | `npm install -g @agentclientprotocol/claude-agent-acp` |
+| Codex (ACP) | `npm install -g @openai/codex @agentclientprotocol/codex-acp` |
 | CodeBuddy (ACP support required) | `npm install -g @tencent-ai/codebuddy-code` |
 
 ## Features
@@ -59,7 +59,7 @@ Orbit coordinates CLI-backed digital employees. The digital employees require at
 - Collaboration Insights for task outcomes, employee collaboration, execution timelines, and duration trends
 - Markdown rendering for employee replies
 - Session persistence across runs
-- Native ACP v1 transport for CodeBuddy, including structured tool activity, human-in-the-loop approvals, cancellation, and structured user elicitation (forms and external URLs)
+- Native ACP v1 transport for Claude Code, Codex, and CodeBuddy, including structured tool activity, human-in-the-loop approvals, cancellation, and structured user elicitation (forms and external URLs)
 
 ## License And Security
 

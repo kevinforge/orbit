@@ -1,63 +1,28 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
-import { Readable, Writable } from "node:stream";
 
-import {
-  PROTOCOL_VERSION,
-  client,
-  methods,
-  ndJsonStream,
-  type AgentCapabilities,
-  type CreateElicitationRequest,
-  type CreateElicitationResponse,
-  type ContentBlock,
-  type ClientConnection,
-  type InitializeRequest,
-  type InitializeResponse,
-  type LoadSessionRequest,
-  type NewSessionRequest,
-  type NewSessionResponse,
-  type PromptRequest,
-  type PromptResponse,
-  type RequestPermissionRequest,
-  type RequestPermissionResponse,
-  type ResumeSessionRequest,
-  type SessionNotification,
-  type ToolCallStatus,
-  type ToolKind,
+import type {
+  CreateElicitationRequest,
+  CreateElicitationResponse,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
 } from "@agentclientprotocol/sdk";
 
-import type { AgentActivityEvent, AgentElicitationRequest, AgentId } from "../shared/types.ts";
-import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunHandle, type AgentRuntimeRunOptions } from "./agent-runtime.ts";
-import { interruptProcessTree } from "./claude-cli-runtime.ts";
-import { extractReadableText } from "./ansi-text-extractor.ts";
+import {
+  createAcpRuntime,
+  decideAcpPermission,
+  resolveAcpElicitation,
+  resolveAcpPermission,
+  runAcp,
+  type AcpConnection,
+  type AcpConnector,
+  type AcpRunOptions,
+  type AcpRuntimeDefinition,
+} from "./acp-runtime.ts";
+import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
 
-const CANCEL_GRACE_MS = 1_500;
-
-export type CodeBuddyAcpRunOptions = AgentRuntimeRunOptions;
-
-export type CodeBuddyAcpConnection = {
-  readonly pid: number;
-  initialize(request: InitializeRequest): Promise<InitializeResponse>;
-  newSession(request: NewSessionRequest): Promise<NewSessionResponse>;
-  loadSession(request: LoadSessionRequest): Promise<void>;
-  resumeSession(request: ResumeSessionRequest): Promise<void>;
-  prompt(request: PromptRequest): Promise<PromptResponse>;
-  cancel(sessionId: string): Promise<void>;
-  close(): void;
-};
-
-export type CodeBuddyAcpConnector = (
-  options: CodeBuddyAcpRunOptions,
-  onSessionUpdate: (notification: SessionNotification) => void,
-) => CodeBuddyAcpConnection;
-
-type ToolState = {
-  name: string;
-  status?: ToolCallStatus | null;
-};
+export type CodeBuddyAcpRunOptions = AcpRunOptions;
+export type CodeBuddyAcpConnection = AcpConnection;
+export type CodeBuddyAcpConnector = AcpConnector;
 
 export function buildCodeBuddyAcpArgs(): string[] {
   return ["--acp"];
@@ -72,523 +37,45 @@ export function buildCodeBuddyAcpCommand(): { file: string; args: string[] } {
   return { file: "cmd.exe", args: ["/d", "/s", "/c", "codebuddy.cmd", ...args] };
 }
 
+const CODEBUDDY_ACP: AcpRuntimeDefinition = {
+  kind: "codebuddy",
+  displayName: "CodeBuddy",
+  buildCommand: buildCodeBuddyAcpCommand,
+  agentIdEnvNames: ["CODEBUDDY_AGENT_ID"],
+  toolNameMetaKeys: ["codebuddy.ai/toolName"],
+};
+
 export function createCodeBuddyAcpRuntime(
-  connector: CodeBuddyAcpConnector = spawnCodeBuddyAcpConnection,
+  connector?: CodeBuddyAcpConnector,
 ): AgentRuntime {
-  return {
-    kind: "codebuddy",
-    transport: "acp",
-    protocolVersion: PROTOCOL_VERSION,
-    run: (options) => runCodeBuddyAcp(options, connector),
-  };
+  return createAcpRuntime(CODEBUDDY_ACP, connector);
 }
 
 export function runCodeBuddyAcp(
   options: CodeBuddyAcpRunOptions,
-  connector: CodeBuddyAcpConnector = spawnCodeBuddyAcpConnection,
+  connector?: CodeBuddyAcpConnector,
 ): AgentRuntimeRunHandle {
-  let acceptingUpdates = false;
-  let activeSessionId: string | null = null;
-  let cancelled = false;
-  let permissionRejected = false;
-  let closed = false;
-  let cancelTimer: NodeJS.Timeout | null = null;
-  const answerParts: string[] = [];
-  const toolStates = new Map<string, ToolState>();
-
-  const connectorOptions: CodeBuddyAcpRunOptions = {
-    ...options,
-    requestPermission: options.requestPermission
-      ? async (request) => {
-        const decision = await options.requestPermission!(request);
-        if (decision === "reject") permissionRejected = true;
-        return decision;
-      }
-      : undefined,
-  };
-  const connection = connector(connectorOptions, (notification) => {
-    if (!acceptingUpdates || notification.sessionId !== activeSessionId) {
-      return;
-    }
-    handleSessionUpdate(notification, answerParts, toolStates, options);
-  });
-
-  let resolveSessionId!: (sessionId: string | null) => void;
-  let sessionIdSettled = false;
-  const sessionId = new Promise<string | null>((resolve) => {
-    resolveSessionId = (value) => {
-      if (sessionIdSettled) return;
-      sessionIdSettled = true;
-      resolve(value);
-    };
-  });
-
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    if (cancelTimer) clearTimeout(cancelTimer);
-    connection.close();
-  };
-
-  const result = (async () => {
-    try {
-      const initialized = await connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          elicitation: {
-            form: {},
-            url: {},
-          },
-        },
-        clientInfo: { name: "Orbit", version: "1.0.0" },
-      });
-      validateInitializeResponse(initialized);
-
-      activeSessionId = await prepareSession(
-        connection,
-        initialized.agentCapabilities,
-        options.cwd,
-        options.resumeSessionId,
-      );
-      resolveSessionId(activeSessionId);
-
-      acceptingUpdates = true;
-      const response = await connection.prompt({
-        sessionId: activeSessionId,
-        prompt: buildPromptContent(options.prompt, options.imagePaths, initialized.agentCapabilities),
-      });
-      acceptingUpdates = false;
-
-      if (cancelled || response.stopReason === "cancelled") {
-        throw new AgentRunCancelledError(
-          "CodeBuddy ACP turn was cancelled.",
-          permissionRejected ? "权限申请已拒绝，任务已停止。" : "运行已取消。",
-        );
-      }
-      if (response.stopReason === "refusal") {
-        throw new Error("CodeBuddy ACP refused the request.");
-      }
-
-      const answer = answerParts.join("").trim();
-      if (!answer) {
-        throw new Error(`CodeBuddy ACP completed with ${response.stopReason} but no final answer.`);
-      }
-      return answer;
-    } finally {
-      acceptingUpdates = false;
-      resolveSessionId(activeSessionId);
-      close();
-    }
-  })();
-
-  const interrupt = () => {
-    if (cancelled || closed) return;
-    cancelled = true;
-    if (!activeSessionId) {
-      close();
-      return;
-    }
-
-    void connection.cancel(activeSessionId).catch(() => close());
-    cancelTimer = setTimeout(close, CANCEL_GRACE_MS);
-    cancelTimer.unref?.();
-  };
-
-  return {
-    process: {
-      kill: close,
-      pid: connection.pid,
-      interrupt,
-    },
-    result,
-    sessionId,
-  };
-}
-
-async function prepareSession(
-  connection: CodeBuddyAcpConnection,
-  capabilities: AgentCapabilities | undefined,
-  cwd: string,
-  existingSessionId?: string,
-): Promise<string> {
-  const absoluteCwd = path.resolve(cwd);
-  if (!existingSessionId) {
-    const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
-    return created.sessionId;
-  }
-
-  const request = {
-    sessionId: existingSessionId,
-    cwd: absoluteCwd,
-    mcpServers: [],
-  };
-  if (capabilities?.sessionCapabilities?.resume) {
-    await connection.resumeSession(request satisfies ResumeSessionRequest);
-    return existingSessionId;
-  }
-  if (capabilities?.loadSession) {
-    await connection.loadSession(request);
-    return existingSessionId;
-  }
-
-  throw new Error(
-    "CodeBuddy ACP could not resume the session because the agent does not advertise session/load or session/resume.",
-  );
-}
-
-function validateInitializeResponse(response: InitializeResponse): void {
-  if (response.protocolVersion !== PROTOCOL_VERSION) {
-    throw new Error(
-      `Unsupported CodeBuddy ACP protocol version ${response.protocolVersion}; Orbit requires ${PROTOCOL_VERSION}.`,
-    );
-  }
-}
-
-function buildPromptContent(
-  prompt: string,
-  imagePaths: string[] | undefined,
-  capabilities: AgentCapabilities | undefined,
-): ContentBlock[] {
-  const blocks: ContentBlock[] = [{ type: "text", text: prompt }];
-  if (!imagePaths?.length) return blocks;
-
-  if (!capabilities?.promptCapabilities?.image) {
-    blocks.push({
-      type: "text",
-      text: `\nAttached image paths:\n${imagePaths.map((imagePath) => `- ${imagePath}`).join("\n")}`,
-    });
-    return blocks;
-  }
-
-  for (const imagePath of imagePaths) {
-    blocks.push({
-      type: "image",
-      data: fs.readFileSync(imagePath).toString("base64"),
-      mimeType: imageMimeType(imagePath),
-      uri: pathToFileUri(imagePath),
-    });
-  }
-  return blocks;
-}
-
-function imageMimeType(imagePath: string): string {
-  switch (path.extname(imagePath).toLowerCase()) {
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".webp":
-      return "image/webp";
-    default:
-      return "image/png";
-  }
-}
-
-function pathToFileUri(filePath: string): string {
-  const normalized = path.resolve(filePath).replaceAll("\\", "/");
-  return `file://${normalized.startsWith("/") ? "" : "/"}${encodeURI(normalized)}`;
-}
-
-function handleSessionUpdate(
-  notification: SessionNotification,
-  answerParts: string[],
-  toolStates: Map<string, ToolState>,
-  options: CodeBuddyAcpRunOptions,
-): void {
-  const update = notification.update;
-  if (update.sessionUpdate === "agent_message_chunk") {
-    if (update.content.type === "text") {
-      answerParts.push(update.content.text);
-      options.onOutput?.(update.content.text);
-    }
-    return;
-  }
-
-  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
-    return;
-  }
-
-  const previous = toolStates.get(update.toolCallId);
-  const name = update.name ?? update.title ?? previous?.name ?? update.kind ?? "tool";
-  const status = update.status ?? previous?.status;
-  toolStates.set(update.toolCallId, { name, status });
-
-  if (!previous && status !== "completed" && status !== "failed") {
-    emitActivity(options, {
-      type: "tool.started",
-      name,
-      ...(update.rawInput === undefined ? {} : { input: formatValue(update.rawInput) }),
-      timestamp: new Date().toISOString(),
-    });
-  }
-  if (status === "completed" && previous?.status !== "completed") {
-    emitActivity(options, {
-      type: "tool.completed",
-      name,
-      ...(update.rawOutput === undefined ? {} : { summary: formatValue(update.rawOutput) }),
-      timestamp: new Date().toISOString(),
-    });
-  }
-  if (status === "failed" && previous?.status !== "failed") {
-    emitActivity(options, {
-      type: "tool.failed",
-      name,
-      ...(update.rawOutput === undefined ? {} : { summary: formatValue(update.rawOutput) }),
-      timestamp: new Date().toISOString(),
-    });
-  }
-}
-
-function emitActivity(options: CodeBuddyAcpRunOptions, activity: AgentActivityEvent): void {
-  options.onActivity?.(activity);
-}
-
-function formatValue(value: unknown): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  if (!text) return "";
-  return text.length > 500 ? `${text.slice(0, 497)}...` : text;
+  return runAcp(options, CODEBUDDY_ACP, connector);
 }
 
 export function decideCodeBuddyPermission(
   request: RequestPermissionRequest,
 ): RequestPermissionResponse {
-  return selectCodeBuddyPermission(request, "allow");
+  return decideAcpPermission(request);
 }
 
-export async function resolveCodeBuddyPermission(
+export function resolveCodeBuddyPermission(
   request: RequestPermissionRequest,
   options: CodeBuddyAcpRunOptions,
 ): Promise<RequestPermissionResponse> {
-  const kind = resolvePermissionKind(request);
-  const toolName = codeBuddyToolName(request);
-  if (options.approvalMode !== "full-access") {
-    if (!options.requestPermission) return selectCodeBuddyPermission(request, "reject");
-    const decision = await options.requestPermission({
-      id: request.toolCall.toolCallId,
-      title: request.toolCall.title || toolName || toolKindLabel(kind),
-      ...(kind ? { kind } : {}),
-      ...(request.toolCall.rawInput === undefined ? {} : { input: formatValue(request.toolCall.rawInput) }),
-      ...(request.toolCall.locations?.length
-        ? { locations: request.toolCall.locations.map((location) => location.path) }
-        : {}),
-    });
-    return selectCodeBuddyPermission(request, decision);
-  }
-
-  return decideCodeBuddyPermission(request);
+  return resolveAcpPermission(request, options, CODEBUDDY_ACP);
 }
 
-export async function resolveCodeBuddyElicitation(
+export function resolveCodeBuddyElicitation(
   request: CreateElicitationRequest,
   options: CodeBuddyAcpRunOptions,
 ): Promise<CreateElicitationResponse> {
-  if (!options.requestElicitation) {
-    return { action: "cancel" };
-  }
-
-  return options.requestElicitation(toAgentElicitationRequest(request));
-}
-
-function toAgentElicitationRequest(request: CreateElicitationRequest): AgentElicitationRequest {
-  const raw = request as unknown as Record<string, unknown>;
-  return {
-    message: request.message,
-    mode: request.mode,
-    ...(typeof raw.sessionId === "string" ? { sessionId: raw.sessionId } : {}),
-    ...(typeof raw.requestId === "string" || typeof raw.requestId === "number" ? { id: String(raw.requestId) } : {}),
-    ...(typeof raw.toolCallId === "string" ? { toolCallId: raw.toolCallId } : {}),
-    ...(request.mode === "form" && raw.requestedSchema && typeof raw.requestedSchema === "object"
-      ? { requestedSchema: raw.requestedSchema as AgentElicitationRequest["requestedSchema"] }
-      : {}),
-    ...(request.mode === "url" && typeof raw.elicitationId === "string" && typeof raw.url === "string"
-      ? { elicitationId: raw.elicitationId, url: raw.url }
-      : {}),
-  };
-}
-
-function selectCodeBuddyPermission(
-  request: RequestPermissionRequest,
-  decision: "allow" | "reject",
-): RequestPermissionResponse {
-  const selectedKind = decision === "allow" ? "allow_once" : "reject_once";
-  const selected = request.options.find((option) => option.kind === selectedKind);
-  return selected
-    ? { outcome: { outcome: "selected", optionId: selected.optionId } }
-    : { outcome: { outcome: "cancelled" } };
-}
-
-type PermissionKind = ToolKind | "write";
-
-function codeBuddyToolName(request: RequestPermissionRequest): string | undefined {
-  const value = request.toolCall._meta?.["codebuddy.ai/toolName"];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function resolvePermissionKind(request: RequestPermissionRequest): PermissionKind | undefined {
-  if (request.toolCall.kind && request.toolCall.kind !== "other") return request.toolCall.kind;
-  const normalized = codeBuddyToolName(request)?.toLowerCase().replace(/[\s_/-]+/g, "");
-  switch (normalized) {
-    case "read":
-    case "readfile":
-      return "read";
-    case "glob":
-    case "grep":
-    case "search":
-    case "find":
-    case "ls":
-      return "search";
-    case "webfetch":
-    case "websearch":
-      return "fetch";
-    case "write":
-    case "writefile":
-      return "write";
-    case "edit":
-    case "notebookedit":
-    case "applypatch":
-    case "multiedit":
-      return "edit";
-    case "delete":
-    case "remove":
-      return "delete";
-    case "move":
-    case "rename":
-      return "move";
-    case "bash":
-    case "shell":
-    case "execute":
-    case "terminal":
-    case "runcommand":
-      return "execute";
-    case "askuserquestion":
-    case "todowrite":
-      return "think";
-    case "exitplanmode":
-      return "switch_mode";
-    default:
-      return request.toolCall.kind ?? undefined;
-  }
-}
-
-function toolKindLabel(kind: PermissionKind | null | undefined): string {
-  switch (kind) {
-    case "read": return "读取文件";
-    case "search": return "搜索文件";
-    case "fetch": return "访问网络";
-    case "write": return "写入文件";
-    case "edit": return "编辑文件";
-    case "delete": return "删除文件";
-    case "move": return "移动文件";
-    case "execute": return "执行命令";
-    default: return "执行操作";
-  }
-}
-
-function spawnCodeBuddyAcpConnection(
-  options: CodeBuddyAcpRunOptions,
-  onSessionUpdate: (notification: SessionNotification) => void,
-): CodeBuddyAcpConnection {
-  const command = buildCodeBuddyAcpCommand();
-  const child = spawn(command.file, command.args, {
-    cwd: options.cwd,
-    env: createEnv(options.agentId, options.env ?? process.env),
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-    detached: os.platform() !== "win32",
-  });
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => {
-    const readable = extractReadableText(chunk);
-    if (readable) options.onOutput?.(readable);
-  });
-
-  const app = client({ name: "Orbit" })
-    .onRequest(methods.client.session.requestPermission, ({ params }) => (
-      resolveCodeBuddyPermission(params, options)
-    ))
-    .onRequest(methods.client.elicitation.create, ({ params }) => (
-      resolveCodeBuddyElicitation(params, options)
-    ))
-    .onNotification(methods.client.elicitation.complete, ({ params }) => {
-      options.onActivity?.({
-        type: "status",
-        text: `外部输入流程已完成：${params.elicitationId}`,
-        timestamp: new Date().toISOString(),
-      });
-    })
-    .onNotification(methods.client.session.update, ({ params }) => {
-      onSessionUpdate(params);
-    });
-  const stream = ndJsonStream(
-    Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-    Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
-  );
-  const acp = app.connect(stream);
-
-  return connectionFromProcess(child, acp);
-}
-
-function connectionFromProcess(
-  child: ChildProcessWithoutNullStreams,
-  acp: ClientConnection,
-): CodeBuddyAcpConnection {
-  const pid = child.pid ?? 0;
-  let closed = false;
-  let rejectProcessFailure!: (error: Error) => void;
-  const processFailure = new Promise<never>((_resolve, reject) => {
-    rejectProcessFailure = reject;
-  });
-  child.once("error", (error) => rejectProcessFailure(error));
-  child.once("exit", (code, signal) => {
-    if (!closed) {
-      rejectProcessFailure(new Error(
-        `CodeBuddy ACP process exited unexpectedly (${code === null ? signal : `code ${code}`}).`,
-      ));
-    }
-  });
-  const request = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, processFailure]);
-
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    if (pid > 0) {
-      if (os.platform() === "win32") {
-        // Finish tree termination before closing stdio. If cmd.exe exits first,
-        // taskkill can no longer discover and terminate CodeBuddy's Node child.
-        spawnSync("taskkill", ["/pid", String(pid), "/F", "/T"], {
-          windowsHide: true,
-          stdio: "ignore",
-        });
-      } else {
-        interruptProcessTree(pid);
-      }
-    } else {
-      child.kill();
-    }
-    acp.close();
-  };
-
-  return {
-    pid,
-    initialize: (params) => request(acp.agent.request(methods.agent.initialize, params)),
-    newSession: (params) => request(acp.agent.request(methods.agent.session.new, params)),
-    loadSession: async (params) => {
-      await request(acp.agent.request(methods.agent.session.load, params));
-    },
-    resumeSession: async (params) => {
-      await request(acp.agent.request(methods.agent.session.resume, params));
-    },
-    prompt: (params) => request(acp.agent.request(methods.agent.session.prompt, params)),
-    cancel: (sessionId) => request(acp.agent.notify(methods.agent.session.cancel, { sessionId })),
-    close,
-  };
-}
-
-function createEnv(agentId: AgentId, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return {
-    ...env,
-    ORBIT_AGENT_ID: agentId,
-    CODEBUDDY_AGENT_ID: agentId,
-  };
+  return resolveAcpElicitation(request, options);
 }
 
 export const codeBuddyRuntime = createCodeBuddyAcpRuntime();

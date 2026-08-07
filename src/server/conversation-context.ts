@@ -101,17 +101,12 @@ export class ConversationContext {
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
         const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
-        // Only inject <current-attachments> for Claude CLI (which doesn't support --image flag)
-        // Codex CLI and CodeBuddy ACP use native image content, so no prompt injection is needed.
-        const agentProfile = profiles.find((p) => p.id === agentId);
-        const shouldInjectImagePaths = imagePaths?.length && agentProfile?.runtime === "claude-code";
         return buildAgentContext({
           agentId,
           profiles,
           agentMessage: prompt,
           history,
           workspaceConfig: self._workspaceConfig,
-          imagePaths: shouldInjectImagePaths ? imagePaths : undefined,
         });
       },
       onRunCompleted: (message) => {
@@ -204,17 +199,12 @@ export class ConversationContext {
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
         const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
-        // Only inject <current-attachments> for Claude CLI (which doesn't support --image flag)
-        // Codex CLI and CodeBuddy ACP use native image content, so no prompt injection is needed.
-        const agentProfile = profiles.find((p) => p.id === agentId);
-        const shouldInjectImagePaths = imagePaths?.length && agentProfile?.runtime === "claude-code";
         return buildAgentContext({
           agentId,
           profiles,
           agentMessage: prompt,
           history,
           workspaceConfig: self._workspaceConfig,
-          imagePaths: shouldInjectImagePaths ? imagePaths : undefined,
         });
       },
       onRunCompleted: (message) => {

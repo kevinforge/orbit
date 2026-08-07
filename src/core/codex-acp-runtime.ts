@@ -1,0 +1,68 @@
+import os from "node:os";
+
+import {
+  createAcpRuntime,
+  runAcp,
+  type AcpConnection,
+  type AcpConnector,
+  type AcpRunOptions,
+  type AcpRuntimeDefinition,
+} from "./acp-runtime.ts";
+import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
+
+export type CodexAcpRunOptions = AcpRunOptions;
+export type CodexAcpConnection = AcpConnection;
+export type CodexAcpConnector = AcpConnector;
+
+export function resolveCodexAcpCommand(env: NodeJS.ProcessEnv = process.env): string {
+  return env.CODEX_ACP_PATH?.trim() || "codex-acp";
+}
+
+export function buildCodexAcpCommand(
+  env: NodeJS.ProcessEnv = process.env,
+): { file: string; args: string[] } {
+  const command = resolveCodexAcpCommand(env);
+  if (os.platform() !== "win32") {
+    return { file: command, args: [] };
+  }
+
+  const windowsCommand = /\.(?:cmd|bat|exe)$/i.test(command) ? command : `${command}.cmd`;
+  return { file: "cmd.exe", args: ["/d", "/s", "/c", windowsCommand] };
+}
+
+export function codexAcpEnvForRun(options: Pick<CodexAcpRunOptions, "approvalMode">): NodeJS.ProcessEnv {
+  return {
+    INITIAL_AGENT_MODE: options.approvalMode === "full-access" ? "agent-full-access" : "agent",
+  };
+}
+
+export function isCodexDiagnosticMessage(update: Parameters<NonNullable<AcpRuntimeDefinition["isDiagnosticMessage"]>>[0]): boolean {
+  return update.sessionUpdate === "agent_message_chunk"
+    && update.content.type === "text"
+    && !("messageId" in update && update.messageId)
+    && /^(?:Config warning|Warning):/.test(update.content.text);
+}
+
+const CODEX_ACP: AcpRuntimeDefinition = {
+  kind: "codex",
+  displayName: "Codex",
+  buildCommand: buildCodexAcpCommand,
+  agentIdEnvNames: ["CODEX_AGENT_ID"],
+  envForRun: codexAcpEnvForRun,
+  isDiagnosticMessage: isCodexDiagnosticMessage,
+};
+
+export function createCodexAcpRuntime(
+  connector?: CodexAcpConnector,
+): AgentRuntime {
+  return createAcpRuntime(CODEX_ACP, connector);
+}
+
+export function runCodexAcp(
+  options: CodexAcpRunOptions,
+  connector?: CodexAcpConnector,
+): AgentRuntimeRunHandle {
+  return runAcp(options, CODEX_ACP, connector);
+}
+
+export const codexRuntime = createCodexAcpRuntime();

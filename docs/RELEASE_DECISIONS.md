@@ -136,7 +136,7 @@ Why:
 
 Recommended public wording:
 
-- Required: Node.js 20 or newer and at least one working runtime CLI.
+- Required: Node.js 22 or newer and at least one working runtime.
 - Optional runtime CLIs: Claude Code, Codex, and CodeBuddy.
 - Users can install missing runtime CLIs later from Orbit's UI prompts.
 - A digital employee cannot run until its selected runtime CLI is installed and

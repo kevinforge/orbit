@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { resolveCodexCommand } from "./codex-cli-runtime.ts";
+import { resolveClaudeAcpCommand } from "./claude-acp-runtime.ts";
+import { resolveCodexAcpCommand } from "./codex-acp-runtime.ts";
 
 // Re-export from shared browser-safe module
 export { runtimeKindToCliKey, runtimeMeta, type RuntimeMeta } from "./runtime-meta.ts";
@@ -62,31 +63,32 @@ export type RuntimeAvailabilityMap = Record<string, RuntimeProbeResult>;
 
 export async function probeAllRuntimes(): Promise<RuntimeProbeResult[]> {
   return Promise.all([
-    probeRuntime("claude"),
-    probeCodexRuntime(),
+    probeClaudeAcpRuntime(),
+    probeCodexAcpRuntime(),
     probeRuntime("codebuddy"),
   ]);
 }
 
-async function probeCodexRuntime(): Promise<RuntimeProbeResult> {
+async function probeClaudeAcpRuntime(): Promise<RuntimeProbeResult> {
   const checkedAt = new Date().toISOString();
-  // Use the same resolver as the actual Codex CLI runtime
-  const resolved = resolveCodexCommand();
-  if (resolved === "codex") {
-    // Bare fallback — use PATH probe
-    return probeRuntime("codex");
-  }
-  // Resolver found a non-default command (env var, install dir, etc.)
+  const resolved = resolveClaudeAcpCommand();
   if (path.isAbsolute(resolved)) {
-    // Absolute path — verify on disk
     return fs.existsSync(resolved)
-      ? { runtime: "codex", available: true, path: resolved, checkedAt }
-      : { runtime: "codex", available: false, path: null, error: `Configured path not found: ${resolved}`, checkedAt };
+      ? { runtime: "claude-agent-acp", available: true, path: resolved, checkedAt }
+      : { runtime: "claude-agent-acp", available: false, path: null, error: `Configured path not found: ${resolved}`, checkedAt };
   }
-  // Non-absolute command name (e.g. "custom-codex" from CODEX_CLI_PATH) —
-  // resolve via PATH just like the actual runtime does with spawn.
-  // Always report runtime: "codex" so UI/server look up the right key;
-  // the actual resolved command path goes in `path`.
   const result = await probeRuntime(resolved);
-  return { ...result, runtime: "codex" };
+  return { ...result, runtime: "claude-agent-acp" };
+}
+
+async function probeCodexAcpRuntime(): Promise<RuntimeProbeResult> {
+  const checkedAt = new Date().toISOString();
+  const resolved = resolveCodexAcpCommand();
+  if (path.isAbsolute(resolved)) {
+    return fs.existsSync(resolved)
+      ? { runtime: "codex-acp", available: true, path: resolved, checkedAt }
+      : { runtime: "codex-acp", available: false, path: null, error: `Configured path not found: ${resolved}`, checkedAt };
+  }
+  const result = await probeRuntime(resolved);
+  return { ...result, runtime: "codex-acp" };
 }

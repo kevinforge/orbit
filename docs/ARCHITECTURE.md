@@ -12,7 +12,7 @@ React UI
   -> RunManager
   -> AgentRegistry / AgentSession
   -> Runtime adapter
-  -> Codex or Claude Code CLI, or CodeBuddy ACP
+  -> Claude Code ACP, Codex ACP, or CodeBuddy ACP
   -> Runtime stream events
   -> MessageStore + TerminalTranscriptStore
   -> SSE
@@ -33,8 +33,9 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/agent-registry.ts` | Owns agent sessions and exposes agent state |
 | `src/core/agent-session.ts` | Starts one runtime adapter run, tracks status, and owns pending permission and elicitation decisions |
 | `src/core/agent-runtime.ts` | Shared runtime adapter contract |
-| `src/core/claude-cli-runtime.ts` | Spawns Claude Code CLI and parses stream JSON output |
-| `src/core/codex-cli-runtime.ts` | Spawns Codex CLI and parses JSONL output |
+| `src/core/acp-runtime.ts` | Shared ACP v1 client, session, approval, elicitation, cancellation, and activity mapping |
+| `src/core/claude-acp-runtime.ts` | Starts the external Claude Code ACP adapter |
+| `src/core/codex-acp-runtime.ts` | Starts the external Codex ACP adapter and maps approval modes to Codex agent modes |
 | `src/core/codebuddy-acp-runtime.ts` | Runs CodeBuddy through ACP v1 and maps session updates into Orbit events |
 | `src/core/run-manager.ts` | Per-agent run queue and lifecycle events |
 | `src/core/message-router.ts` | Routes user and agent messages containing explicit assignments |
@@ -154,7 +155,7 @@ The history is injected between `[Orbit Context]` and `[Full channel message]` i
 
 ## Session Persistence
 
-Each agent's backend session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. Records also identify the transport and protocol version when available. On subsequent runs, the runtime adapter restores the corresponding backend context. CodeBuddy prefers ACP `session/resume` when advertised and otherwise uses `session/load`; load-time history notifications are ignored because Orbit's message store remains the canonical conversation history. If restoration fails (e.g. session expired), the store is cleared and the run retries with a new session.
+Each agent's backend session ID is persisted via `src/core/session-store.ts`. Session records are namespaced by runtime, channel, conversation, and agent so switching an agent between Codex, Claude Code, and CodeBuddy does not reuse an incompatible session ID. Records also identify the transport and protocol version when available. On subsequent runs, ACP runtimes prefer `session/resume` when advertised and otherwise use `session/load`; load-time history notifications are ignored because Orbit's message store remains the canonical conversation history. If restoration fails (e.g. session expired), the store is cleared and the run retries with a new session.
 
 Session files are stored under `~/.orbit/sessions/<workspaceId>/<runtime>/<channelId>/<conversationId>/<agentId>.json`, namespaced by runtime, channel, conversation, and agent.
 
@@ -186,20 +187,20 @@ The server keeps one active UI pointer while retaining multiple live conversatio
 - **ConversationStore**: manages conversation metadata per workspace at `conversations/<workspaceId>/conversations.json`.
 - **Running summaries**: `/api/state` reports active employees for all retained contexts so the sidebar can identify background work.
 
-Codex uses the user's normal Codex CLI home. Orbit does not create per-agent `CODEX_HOME` directories; agent-level continuity is handled by the session store above, which passes each agent's own saved session ID back to the runtime on the next run.
+Codex ACP uses the user's normal Codex home. Orbit does not create per-agent `CODEX_HOME` directories; agent-level continuity is handled by the session store above, which passes each agent's saved session ID back to the adapter on the next run.
 
 ## Runtime Transports
 
 Orbit runs each backend through a runtime adapter. Codex uses:
 
 ```text
-codex exec --json --cd <cwd> --sandbox danger-full-access --dangerously-bypass-approvals-and-sandbox -
+codex-acp
 ```
 
 Claude Code uses:
 
 ```text
-claude --print --verbose --output-format stream-json --include-partial-messages --permission-mode bypassPermissions
+claude-agent-acp
 ```
 
 CodeBuddy uses:
@@ -208,19 +209,19 @@ CodeBuddy uses:
 codebuddy --acp
 ```
 
-Codex and Claude prompts are written to stdin. CodeBuddy uses ACP v1 over newline-delimited JSON-RPC on stdio. Runtime events are converted into:
+All three runtimes use ACP v1 over newline-delimited JSON-RPC on stdio. Runtime events are converted into:
 
 - final assistant text
 - tool/activity events
 - runtime output for diagnostics
 
-CodeBuddy is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no CodeBuddy bypass-permissions flag is used. Orbit also advertises ACP elicitation support for form and URL modes. Form requests become transient pending UI forms; URL requests show the full external URL and require explicit user consent before returning `accept`. Unsupported custom modes or schema fields are cancelled instead of being guessed at.
+Each ACP agent is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for “ask” and `agent-full-access` for “full access”. Orbit advertises ACP elicitation support for form and URL modes. Claude's `AskUserQuestion` is therefore rendered as a transient Orbit form. URL requests show the full external URL and require explicit user consent before returning `accept`. Unsupported custom modes or schema fields are cancelled instead of being guessed at.
 
 The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request. Elicitation uses separate `elicitation.requested` and `elicitation.resolved` events and `/api/elicitations/resolve`, so user input is not treated as a security approval.
 
 ## Activity Stream
 
-Activity events are derived from CLI stream output or ACP session updates and shown in the chat card:
+Activity events are derived from runtime stream output or ACP session updates and shown in the chat card:
 
 - run accepted / started / completed / failed
 - tool started / completed / failed

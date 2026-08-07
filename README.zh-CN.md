@@ -38,12 +38,12 @@ orbit
 
 ## 环境要求
 
-Orbit 负责协调 CLI 后端数字员工。数字员工至少需要一个可用的运行时 CLI：
+Orbit 需要 Node.js 22 或更高版本，并且至少有一个可用的运行时：
 
 | 运行时 | 安装方式 |
 |--------|----------|
-| Claude Code | `npm install -g @anthropic-ai/claude-code` |
-| Codex | `npm install -g @openai/codex` |
+| Claude Code（ACP） | `npm install -g @agentclientprotocol/claude-agent-acp` |
+| Codex（ACP） | `npm install -g @openai/codex @agentclientprotocol/codex-acp` |
 | CodeBuddy（需要支持 ACP） | `npm install -g @tencent-ai/codebuddy-code` |
 
 ## 功能
@@ -57,7 +57,7 @@ Orbit 负责协调 CLI 后端数字员工。数字员工至少需要一个可用
 - 协作洞察：任务结果、协作规模、执行时间线和耗时趋势
 - 数字员工回复支持 Markdown
 - 会话可在多次运行之间持久化
-- CodeBuddy 使用原生 ACP v1 传输，支持结构化工具活动、人工审批、任务取消和结构化用户反问（表单与外部 URL）
+- Claude Code、Codex 和 CodeBuddy 使用原生 ACP v1 传输，支持结构化工具活动、人工审批、任务取消和结构化用户反问（表单与外部 URL）
 
 ## 许可证与安全
 

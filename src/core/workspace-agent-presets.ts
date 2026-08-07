@@ -7,7 +7,7 @@ const MULTI_AGENT_ENABLED_IDS = new Set(["architect", "developer", "tester", "su
 const FALLBACK_RUNTIME: AgentRuntimeKind = "claude-code";
 
 export function preferredRuntimeFromAvailability(availability: readonly RuntimeAvailability[]): AgentRuntimeKind {
-  // RuntimeAvailability.runtime holds CLI keys ("claude", "codex", "codebuddy"),
+  // RuntimeAvailability.runtime holds executable keys ("claude-agent-acp", "codex-acp", "codebuddy"),
   // so we convert AgentRuntimeKind ("claude-code") to CLI key via runtimeKindToCliKey().
   const availableRuntimes = new Set(
     availability

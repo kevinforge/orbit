@@ -2,9 +2,11 @@ import type { AgentRuntimeKind } from "../shared/types.ts";
 
 export const AGENT_RUNTIME_PRIORITY: readonly AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
 
-/** Map AgentRuntimeKind to CLI probe key: claude-code → claude */
+/** Map AgentRuntimeKind to the executable used by its transport. */
 export function runtimeKindToCliKey(runtime: string): string {
-  return runtime === "claude-code" ? "claude" : runtime;
+  if (runtime === "claude-code") return "claude-agent-acp";
+  if (runtime === "codex") return "codex-acp";
+  return runtime;
 }
 
 /** Shared runtime metadata — labels, setup commands, and install URLs in one place */
@@ -15,14 +17,14 @@ export function runtimeMeta(runtime: string): RuntimeMeta {
     case "claude-code":
       return {
         label: "Claude Code",
-        installUrl: "https://docs.anthropic.com/en/docs/claude-code/quickstart",
-        installCommand: "npm install -g @anthropic-ai/claude-code",
+        installUrl: "https://github.com/agentclientprotocol/claude-agent-acp",
+        installCommand: "npm install -g @agentclientprotocol/claude-agent-acp",
       };
     case "codex":
       return {
         label: "OpenAI Codex",
-        installUrl: "https://developers.openai.com/codex/cli",
-        installCommand: "npm install -g @openai/codex",
+        installUrl: "https://github.com/agentclientprotocol/codex-acp",
+        installCommand: "npm install -g @openai/codex @agentclientprotocol/codex-acp",
       };
     case "codebuddy":
       return {

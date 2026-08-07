@@ -1,8 +1,8 @@
 import type { AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
 import { AgentSession } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
-import { claudeCodeRuntime } from "./claude-cli-runtime.ts";
-import { codexRuntime } from "./codex-cli-runtime.ts";
+import { claudeCodeRuntime } from "./claude-acp-runtime.ts";
+import { codexRuntime } from "./codex-acp-runtime.ts";
 import { codeBuddyRuntime } from "./codebuddy-acp-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import type { SessionStore } from "./session-store.ts";

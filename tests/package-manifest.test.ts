@@ -30,7 +30,7 @@ test("package build delegates to the protected standalone builder", () => {
   const manifest = readPackageJson();
   const standaloneBuilder = fs.readFileSync("scripts/build-standalone.mjs", "utf8");
 
-  assert.equal(manifest.engines?.node, ">=20");
+  assert.equal(manifest.engines?.node, ">=22");
   assert.match(manifest.scripts?.build ?? "", /node scripts\/build-standalone\.mjs/);
   assert.match(manifest.scripts?.["build:all"] ?? "", /--all --package-layout/);
   assert.equal(manifest.scripts?.["package:npm"], "node scripts/assemble-npm-package.mjs");
