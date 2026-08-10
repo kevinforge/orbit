@@ -1748,7 +1748,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
         <span className="agentTextRow">
           <strong>
             {props.agent.label}
-            {isRunning && <span className="agentRunningLabel">Running</span>}
+            {isRunning && <span className="agentRunningLabel">运行中</span>}
             <RuntimeBadge runtime={props.agent.runtime} />
           </strong>
           {props.onConfig && (
@@ -1776,11 +1776,6 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
           ) : null}
         </small>
       </span>
-      {showStatus ? (
-        <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
-          {isRuntimeMissing ? "missing" : props.agent.status}
-        </span>
-      ) : null}
     </button>
   );
 }
@@ -1796,7 +1791,7 @@ function MessageRow({
   parentMessage?: ChatMessage;
   agentsById: Map<AgentId, AgentState>;
 }) {
-  const author = message.kind === "user" ? "You" : message.kind === "agent" ? agent?.label ?? message.agentId ?? "agent" : "system";
+  const author = message.kind === "user" ? "你" : message.kind === "agent" ? agent?.label ?? message.agentId ?? "数字员工" : "系统";
   const isRunning = message.status === "running";
   const isQueued = message.runStatus === "queued";
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
@@ -1819,7 +1814,7 @@ function MessageRow({
       <div className="messageMeta">
         <strong>{author}</strong>
         {message.kind === "agent" && agent ? <RuntimeBadge runtime={agent.runtime} /> : null}
-        {message.status ? <span className={`statusPill ${message.status}`}>{message.status}</span> : null}
+        {message.status ? <span className={`statusPill ${message.status}`}>{messageStatusLabel(message.status)}</span> : null}
         {((isQueued || isRunning) && message.runId) || cancelling ? (
           <button
             type="button"
@@ -1852,9 +1847,8 @@ function MessageRow({
           {message.runIndex ? <span>第 {message.runIndex} 次执行</span> : null}
         </div>
       ) : null}
-      {handoffSummary ? <div className="handoffSummary">{handoffSummary}</div> : null}
+      {handoffSummary && parentMessage?.kind !== "user" ? <div className="handoffSummary">{handoffSummary}</div> : null}
       <div className="messageBody">
-        {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} /> : null}
         {message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
@@ -1877,8 +1871,19 @@ function MessageRow({
           </div>
         ) : null}
       </div>
+      {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} /> : null}
     </article>
   );
+}
+
+function messageStatusLabel(status: ChatMessage["status"]): string {
+  switch (status) {
+    case "running": return "运行中";
+    case "done": return "已完成";
+    case "error": return "失败";
+    case "cancelled": return "已取消";
+    default: return status ?? "";
+  }
 }
 
 function DurationDisplay({ startedAt, completedAt, isRunning }: { startedAt?: string; completedAt?: string; isRunning: boolean }) {
@@ -1927,22 +1932,12 @@ function DurationDisplay({ startedAt, completedAt, isRunning }: { startedAt?: st
 }
 
 function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; status?: ChatMessage["status"] }) {
-  const shouldAutoCollapse = status === "done" || status === "error";
-  const [manualOverride, setManualOverride] = useState(false);
-  const [expanded, setExpanded] = useState(!shouldAutoCollapse);
+  const [expanded, setExpanded] = useState(false);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const toolCount = activity.filter((item) => item.type === "tool.started").length;
   const failedCount = activity.filter((item) => item.type === "tool.failed").length;
   const errorCount = activity.filter((item) => item.type === "error").length;
   const latest = activity[activity.length - 1];
-  const visibleActivity = expanded ? activity : activity.slice(-3);
-
-  useEffect(() => {
-    if (!manualOverride) {
-      setExpanded(!shouldAutoCollapse);
-    }
-  }, [manualOverride, shouldAutoCollapse]);
-
   useEffect(() => {
     if (expanded) {
       timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight });
@@ -1950,36 +1945,32 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
   }, [activity.length, expanded]);
 
   function toggleExpanded() {
-    setManualOverride(true);
     setExpanded((value) => !value);
   }
 
   return (
     <div className={`activityPanel ${expanded ? "expanded" : "collapsed"}`} aria-label="Agent activity">
-      <div className="activityHeader">
-        <div className="activitySummary">
-          <strong>Activity</strong>
-          <span>{activity.length} events</span>
-          {toolCount > 0 ? <span>{toolCount} tools</span> : null}
-          {failedCount > 0 ? <span className="activityErrorCount">{failedCount} failed</span> : null}
-          {errorCount > 0 ? <span className="activityErrorCount">{errorCount} errors</span> : null}
-        </div>
-        {activity.length > 3 ? (
-          <button type="button" onClick={toggleExpanded}>
-            {expanded ? "Collapse" : "Show full"}
-          </button>
-        ) : null}
-      </div>
-      {latest ? <div className="activityLatest">{activityText(latest)}</div> : null}
-      <div className="activityTimeline" ref={timelineRef}>
-        {visibleActivity.map((item, index) => (
+      <button className="activityHeader" type="button" onClick={toggleExpanded} aria-expanded={expanded}>
+        <span className={`activityIndicator ${status ?? "done"}`} aria-hidden="true" />
+        <span className="activitySummary">
+          <strong>运行记录</strong>
+          <span>{activity.length} 条</span>
+          {toolCount > 0 ? <span>{toolCount} 个工具</span> : null}
+          {failedCount > 0 ? <span className="activityErrorCount">{failedCount} 个失败</span> : null}
+          {errorCount > 0 ? <span className="activityErrorCount">{errorCount} 个错误</span> : null}
+        </span>
+        {latest ? <span className="activityLatest">{activityText(latest)}</span> : null}
+        <span className="activityChevron" aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+      </button>
+      {expanded ? <div className="activityTimeline" ref={timelineRef}>
+        {activity.map((item, index) => (
           <div className={`activityItem ${item.type.replace(".", "-")}`} key={`${item.timestamp}_${index}`}>
             <span className="activityDot" aria-hidden="true" />
             <span className="activityText">{activityText(item)}</span>
             <time>{formatTime(item.timestamp)}</time>
           </div>
         ))}
-      </div>
+      </div> : null}
     </div>
   );
 }
@@ -2816,17 +2807,17 @@ function findMentionDraft(value: string, cursorIndex: number): { start: number; 
 
 function connectionLabel(state: "connecting" | "live" | "offline"): string {
   if (state === "live") {
-    return "live";
+    return "在线";
   }
   if (state === "offline") {
-    return "offline";
+    return "离线";
   }
-  return "connecting";
+  return "连接中";
 }
 
 const SIDEBAR_MIN_WIDTH = 280;
 const SIDEBAR_MAX_WIDTH = 460;
-const SIDEBAR_DEFAULT_WIDTH = 336;
+const SIDEBAR_DEFAULT_WIDTH = 292;
 
 export type WorkspaceCreationAction = { kind: "choosePreset" } | { kind: "create" };
 
