@@ -1330,9 +1330,7 @@ export function App() {
                   </div>
                 ) : null}
               </div>
-            </div>
-          </div>
-          <div className="composerActions">
+            <div className="composerActions">
             {hasRunningOrQueued ? (
               <button
                 type="button"
@@ -1347,6 +1345,8 @@ export function App() {
             <button type="submit" disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
               {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
             </button>
+            </div>
+          </div>
           </div>
         </form>
       </section>
@@ -1795,6 +1795,11 @@ function MessageRow({
   const isRunning = message.status === "running";
   const isQueued = message.runStatus === "queued";
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
+  const compactHandoffSource = parentMessage?.kind === "agent"
+    ? agentsById.get(parentMessage.agentId ?? "")?.label ?? parentMessage.agentId ?? "数字员工"
+    : null;
+  const isProgressPlaceholder = message.kind === "agent"
+    && (message.content.endsWith(" is working...") || message.content.endsWith(" queued..."));
   const [cancelling, setCancelling] = useState(false);
 
   async function cancelRun() {
@@ -1847,9 +1852,18 @@ function MessageRow({
           {message.runIndex ? <span>第 {message.runIndex} 次执行</span> : null}
         </div>
       ) : null}
-      {handoffSummary && parentMessage?.kind !== "user" ? <div className="handoffSummary">{handoffSummary}</div> : null}
+      {compactHandoffSource ? (
+        <div className="handoffSummary" title={handoffSummary ?? undefined}>
+          <span className="handoffSourcePrefix">来自</span>
+          <span>{compactHandoffSource}</span>
+        </div>
+      ) : handoffSummary && parentMessage?.kind !== "user" ? (
+        <div className="handoffSummary" title={handoffSummary}>{handoffSummary}</div>
+      ) : null}
       <div className="messageBody">
-        {message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
+        {isProgressPlaceholder ? (
+          <span className="messageProgressText">{isQueued ? "等待处理" : "正在处理"}</span>
+        ) : message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
             {message.attachments.map((att) => (
@@ -1878,6 +1892,7 @@ function MessageRow({
 
 function messageStatusLabel(status: ChatMessage["status"]): string {
   switch (status) {
+    case "sent": return "已发送";
     case "running": return "运行中";
     case "done": return "已完成";
     case "error": return "失败";

@@ -5333,4 +5333,167 @@ button:active:not(:disabled) {
     padding: 18px 22px;
     border-bottom-color: var(--border-light);
   }
+
+  /* Keep the work stream wide and let status live on the message edge. */
+  .messages {
+    padding-right: 56px;
+    padding-left: 56px;
+  }
+
+  .messages > .message {
+    width: min(1000px, 100%);
+    max-width: 1000px;
+  }
+
+  .message.user {
+    width: min(720px, 84%);
+  }
+
+  .message.agent {
+    padding-left: 12px;
+    border-top: 0;
+    border-left: 2px solid var(--border-light);
+  }
+
+  .message.agent:has(.statusPill.running),
+  .message.agent:has(.statusPill.queued) {
+    border-left-color: var(--warning);
+  }
+
+  .message.agent:has(.statusPill.error) {
+    border-left-color: var(--error);
+  }
+
+  .message.agent:has(.statusPill.done) {
+    border-left-color: var(--accent-border);
+  }
+
+  .messageProgressText {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .handoffSummary {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    width: fit-content;
+    max-width: 100%;
+    padding: 2px 7px;
+    border: 1px solid var(--border-light);
+    border-radius: 5px;
+    background: var(--bg-muted);
+    color: var(--text-muted);
+    font-size: 10.5px;
+  }
+
+  .handoffSourcePrefix {
+    color: var(--text-muted);
+  }
+
+  .agentConfigIcon {
+    opacity: 0;
+  }
+
+  .agentButton:hover .agentConfigIcon,
+  .agentButton:focus-visible .agentConfigIcon,
+  .agentButton.selected .agentConfigIcon {
+    opacity: 1;
+  }
+
+  .scrollToBottomHint {
+    width: 32px;
+    height: 32px;
+    margin-bottom: 12px;
+    border: 1px solid var(--accent-border);
+    background: var(--bg-surface);
+    color: var(--accent);
+    box-shadow: 0 4px 14px rgba(25, 54, 49, 0.12);
+  }
+
+  .scrollToBottomHint:hover {
+    background: var(--accent-subtle);
+    box-shadow: 0 6px 18px rgba(25, 54, 49, 0.16);
+  }
+
+  .approvalModeTrigger.fullAccess {
+    color: var(--text-secondary);
+    background: transparent;
+  }
+
+  .approvalModeTrigger.fullAccess:hover,
+  .approvalModeTrigger.fullAccess[aria-expanded="true"] {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  /* Codex-like white canvas: separate regions with borders, not tinted panels. */
+  :root {
+    --bg-base: #ffffff;
+    --bg-sidebar: #ffffff;
+    --bg-surface: #ffffff;
+    --bg-elevated: #ffffff;
+    --bg-muted: #f7f7f7;
+    --bg-hover: #f3f4f4;
+    --bg-input: #ffffff;
+    --border: #e5e7e6;
+    --border-light: #f0f1f1;
+    --accent-subtle: #eef8f5;
+    --accent-border: #b9ded5;
+  }
+
+  .shell,
+  .sidebar,
+  .conversation,
+  .messages,
+  .composer,
+  .conversationHeader {
+    background: #ffffff;
+  }
+
+  .messages {
+    background: #ffffff;
+  }
+
+  .composer {
+    display: block;
+  }
+
+  .composerModeRow {
+    justify-content: space-between;
+  }
+
+  .composerInputWrap {
+    background: #ffffff;
+  }
+
+  .composerActions {
+    align-items: center;
+    justify-content: flex-end;
+    align-self: stretch;
+    gap: 6px;
+    margin-left: auto;
+    padding: 0;
+  }
+
+  .composerActions button {
+    min-height: 30px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
+  .composerActions button[type="submit"] {
+    min-width: 76px;
+    box-shadow: none;
+  }
+
+  .composerActions button[type="submit"]:hover:not(:disabled) {
+    box-shadow: 0 2px 8px rgba(15, 118, 110, 0.16);
+  }
+
+  .interruptBtn {
+    border-width: 1px !important;
+    box-shadow: none !important;
+  }
 }
