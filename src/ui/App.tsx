@@ -1720,7 +1720,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
   const meta = runtimeMeta(props.agent.runtime);
   return (
     <button
-      className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""} ${showStatus ? "" : "statusHidden"}`}
+      className={`agentButton agentRole-${props.agent.role} ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""} ${showStatus ? "" : "statusHidden"}`}
       onClick={props.onClick}
       type="button"
       title={isRuntimeMissing ? `${meta.label} 未安装，该数字员工无法运行` : undefined}

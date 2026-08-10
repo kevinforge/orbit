@@ -301,6 +301,7 @@ button:active:not(:disabled) {
 }
 
 .agentButton {
+  --agent-role-color: var(--border);
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr);
   grid-template-areas:
@@ -310,7 +311,7 @@ button:active:not(:disabled) {
   width: 100%;
   min-height: 38px;
   border: 1px solid transparent;
-  border-left: 3px solid transparent;
+  border-left: 3px solid var(--agent-role-color);
   border-radius: 8px;
   padding: 6px 11px;
   color: var(--text-secondary);
@@ -322,6 +323,7 @@ button:active:not(:disabled) {
 
 .agentButton:hover {
   border-color: var(--border);
+  border-left-color: var(--agent-role-color);
   background: rgba(255, 255, 255, 0.7);
   box-shadow: none;
   transform: none;
@@ -329,9 +331,34 @@ button:active:not(:disabled) {
 
 .agentButton.selected {
   border-color: var(--border);
-  border-left-color: var(--accent);
+  border-left-color: var(--agent-role-color);
   background: var(--bg-surface);
   box-shadow: var(--shadow-xs);
+}
+
+.agentRole-pm {
+  --agent-role-color: #4f7fb5;
+}
+
+.agentRole-architect {
+  --agent-role-color: #7468bd;
+}
+
+.agentRole-developer {
+  --agent-role-color: #159487;
+}
+
+.agentRole-tester {
+  --agent-role-color: #c48a32;
+}
+
+.agentRole-supervisor,
+.agentRole-coordinator {
+  --agent-role-color: #d16b5c;
+}
+
+.agentRole-general {
+  --agent-role-color: #7b8790;
 }
 
 .agentButton.statusHidden {
@@ -2492,7 +2519,7 @@ button:active:not(:disabled) {
 /* In compact mode, selected agent should not look like it's running */
 .compactAgents .agentButton.selected {
   border-color: transparent;
-  border-left-color: transparent;
+  border-left-color: var(--agent-role-color);
   background: transparent;
   box-shadow: none;
 }
@@ -4946,17 +4973,18 @@ button:active:not(:disabled) {
     min-height: 40px;
     padding: 7px 9px;
     border: 1px solid transparent;
-    border-left: 2px solid transparent;
+    border-left: 2px solid var(--agent-role-color);
     border-radius: 9px;
   }
 
   .agentButton:hover {
+    border-left-color: var(--agent-role-color);
     background: var(--bg-hover);
   }
 
   .agentButton.selected {
     border-color: var(--border);
-    border-left-color: var(--accent);
+    border-left-color: var(--agent-role-color);
     background: var(--bg-surface);
     box-shadow: 0 1px 3px rgba(25, 54, 49, 0.06);
   }
