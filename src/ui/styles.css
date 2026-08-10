@@ -569,59 +569,6 @@ button:active:not(:disabled) {
   z-index: 1;
 }
 
-.conversationHeader.collapsed {
-  padding: 8px 24px;
-  gap: 10px;
-}
-
-.conversationHeader.collapsed .conversationHeaderLeft {
-  min-width: 0;
-}
-
-.conversationHeader.collapsed h1 {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.conversationHeader.collapsed .eyebrow {
-  font-size: 10px;
-  margin-bottom: 1px;
-}
-
-.conversationHeader.collapsed .workspacePath,
-.conversationHeader.collapsed .headerMeta {
-  display: none;
-}
-
-.headerCollapseBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.15s var(--ease-out), transform 0.25s var(--ease-out), background 0.15s var(--ease-out);
-  flex-shrink: 0;
-}
-
-.headerCollapseBtn:hover {
-  color: var(--text-primary);
-  background: var(--bg-base);
-}
-
-.conversationHeader.collapsed .headerCollapseBtn {
-  transform: rotate(180deg);
-}
-
 .conversationHeader h1,
 .eyebrow {
   margin: 0;
@@ -5392,7 +5339,7 @@ button:active:not(:disabled) {
   }
 
   .agentConfigIcon {
-    opacity: 0;
+    opacity: 0.55;
   }
 
   .agentButton:hover .agentConfigIcon,

@@ -94,7 +94,6 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
@@ -1098,31 +1097,14 @@ export function App() {
         />
       ) : (
       <section className="conversation" aria-label="Chat conversation">
-        <header className={`conversationHeader ${headerCollapsed ? "collapsed" : ""}`}>
-          {headerCollapsed ? (
-            <div className="conversationHeaderLeft">
-              {state.workspace.name ? <p className="eyebrow">{state.workspace.name}</p> : null}
-              <h1 title={state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}>
-                {state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}
-              </h1>
-            </div>
-          ) : (
-            <div className="conversationHeaderLeft">
-              <p className="eyebrow">{state.workspace.name || "工作区"}</p>
-              <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
-              {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
-            </div>
-          )}
+        <header className="conversationHeader">
+          <div className="conversationHeaderLeft">
+            <p className="eyebrow">{state.workspace.name || "工作区"}</p>
+            <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
+            {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
+          </div>
           <div className="conversationHeaderRight">
-            {!headerCollapsed && <span className="headerMeta">{state.messages.length} 条消息</span>}
-            <button
-              className="headerCollapseBtn"
-              type="button"
-              onClick={() => setHeaderCollapsed((c) => !c)}
-              title={headerCollapsed ? "展开头部" : "折叠头部"}
-            >
-              <NavIcon kind="collapse" />
-            </button>
+            <span className="headerMeta">{state.messages.length} 条消息</span>
           </div>
         </header>
 
