@@ -5496,4 +5496,140 @@ button:active:not(:disabled) {
     border-width: 1px !important;
     box-shadow: none !important;
   }
+
+  /* Secondary surfaces use the same quiet hierarchy as the conversation. */
+  .analysisHeader {
+    padding: 18px 40px 16px;
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .analysisHeader h1 {
+    font-size: 22px;
+  }
+
+  .analysisScroll {
+    padding: 24px 40px 48px;
+    background: #ffffff;
+  }
+
+  .analysisSummary {
+    gap: 0;
+    max-width: 1200px;
+    overflow: hidden;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+  }
+
+  .summaryCard,
+  .summaryCard.accent {
+    min-height: 116px;
+    padding: 16px 20px;
+    border: 0;
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .summaryCard + .summaryCard {
+    border-left: 1px solid var(--border-light);
+  }
+
+  .summaryCard.accent {
+    background: var(--accent-subtle);
+  }
+
+  .summaryCard strong {
+    font-size: 30px;
+  }
+
+  .analysisPanel {
+    max-width: 1200px;
+    border: 0;
+    border-top: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border-light);
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .analysisPanelHeading {
+    padding: 18px 0 14px;
+  }
+
+  .trendChart {
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .taskRowMain {
+    padding: 14px 0;
+  }
+
+  .taskRowMain:hover,
+  .taskRow.expanded .taskRowMain {
+    background: #fafbfb;
+  }
+
+  .taskDetail {
+    border-top: 1px solid var(--border-light);
+    background: var(--bg-muted);
+  }
+
+  .modalPanel {
+    width: min(760px, calc(100vw - 64px));
+    max-height: 86vh;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(15, 29, 27, 0.16);
+  }
+
+  .modalHeader {
+    padding: 16px 22px;
+  }
+
+  .settingsBody {
+    padding: 18px 22px;
+    gap: 8px;
+  }
+
+  .agentManagerIntro {
+    border: 0;
+    border-left: 3px solid var(--accent-border);
+    border-radius: 0;
+    padding: 10px 14px;
+    background: var(--accent-subtle);
+  }
+
+  .runtimeProbeRow {
+    padding: 10px 0;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+    background: #ffffff;
+  }
+
+  .configCard {
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .configCardExpanded {
+    background: #ffffff;
+    box-shadow: 0 1px 0 var(--accent-border);
+  }
+
+  .permissionApprovalStack,
+  .elicitationStack {
+    padding-right: 34px;
+    padding-left: 34px;
+    border-top: 0;
+  }
+
+  .permissionApproval,
+  .elicitationPanel {
+    border-color: var(--accent-border);
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: none;
+  }
 }
