@@ -54,7 +54,9 @@
     "marked": "^18.0.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "systeminformation": "^5.31.7"
+    "systeminformation": "^5.31.7",
+    "tdesign-icons-react": "^0.6.6",
+    "tdesign-react": "^1.18.1"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

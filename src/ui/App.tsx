@@ -5,6 +5,26 @@ import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../cor
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
 import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
+import * as TDesign from "tdesign-react";
+import {
+  AddIcon,
+  ChartIcon,
+  ChatBubbleHistoryIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  EditIcon,
+  FolderIcon,
+  MoreIcon,
+  ArrowDownIcon,
+  SecuredIcon,
+  SendIcon,
+  SettingIcon,
+  StopCircleIcon,
+  UsergroupIcon,
+} from "tdesign-icons-react";
+import { TaskDetailDrawer } from "./TaskDetailDrawer.tsx";
+
+const { Avatar, Button, Tooltip } = TDesign;
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
@@ -97,6 +117,7 @@ export function App() {
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
+  const [selectedTaskMessageId, setSelectedTaskMessageId] = useState<string | null>(null);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const isNearBottomRef = useRef(true);
 
@@ -124,7 +145,6 @@ export function App() {
     () => state.agents.filter((agent) => agent.runtimeAvailable === false),
     [state.agents],
   );
-
   const refreshWorkspaces = () => {
     fetch("/api/workspaces").then((r) => r.json()).then(setWorkspaces).catch(() => {});
   };
@@ -249,6 +269,11 @@ export function App() {
 
   const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
   const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
+  const selectedTaskMessage = selectedTaskMessageId ? messagesById.get(selectedTaskMessageId) ?? null : null;
+  const latestTaskMessage = useMemo(
+    () => [...state.messages].reverse().find((message) => message.kind === "agent" && (message.runId || message.activity?.length)) ?? null,
+    [state.messages],
+  );
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
   const hasCoordinator = useMemo(() => state.agents.some((agent) => agent.role === "coordinator" && hasActiveChannelWatchTriggers(agent.triggers)), [state.agents]);
@@ -846,18 +871,18 @@ export function App() {
       <aside className="sidebar" aria-label="工作区导航" aria-hidden={sidebarCollapsed}>
         <div className="sidebarTop">
           <div className="brandBlock">
-            <div className="brandMark">orbit</div>
+            <div className="brandMark"><img src="/assets/orbit-mark.png" alt="" />orbit</div>
             <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
-            <button className="sidebarCollapseBtn" type="button" onClick={() => setSidebarCollapsed(true)} title="隐藏侧边栏">
-              <NavIcon kind="collapse" />
-            </button>
+            <Tooltip content="隐藏侧边栏" placement="right">
+              <Button className="sidebarCollapseBtn" variant="text" shape="square" icon={<ChevronLeftIcon />} onClick={() => setSidebarCollapsed(true)} />
+            </Tooltip>
           </div>
         </div>
 
         <section className="navSection workspaceStack" aria-label="当前工作区和会话">
           <div className="navSectionHeader">
             <span>工作区</span>
-            <button type="button" onClick={createWorkspaceFromDirectoryPicker} disabled={isPickingDirectory} title="新建工作区">+</button>
+            <Button size="small" variant="text" shape="square" icon={<AddIcon />} onClick={createWorkspaceFromDirectoryPicker} disabled={isPickingDirectory} title="新建工作区" />
           </div>
           <div className="workspaceTree">
             {workspaces.length === 0 ? (
@@ -892,7 +917,7 @@ export function App() {
                         </form>
                       ) : (
                         <button className="workspaceNameButton" type="button" onClick={() => handleWorkspaceClick(ws.id)} title={ws.path}>
-                          <NavIcon kind="workspace" />
+                          <FolderIcon className="navIcon" />
                           <span>{ws.name}</span>
                         </button>
                       )}
@@ -938,7 +963,7 @@ export function App() {
                       </div>
                       {isWorkspaceConversationOpen ? (
                         <button className="rowIconButton persistent" type="button" onClick={() => createConversation(ws.id)} title="新建会话">
-                          <NavIcon kind="edit" />
+                          <EditIcon className="navIcon" />
                         </button>
                       ) : null}
                     </div>
@@ -1021,8 +1046,8 @@ export function App() {
 
         <section className="navSection compactAgents" aria-label="数字员工">
           <div className="navSectionHeader">
-            <span><NavIcon kind="agents" />数字员工</span>
-            <button type="button" onClick={() => setShowAgentManager(true)} disabled={!hasWorkspace} title="添加或启用数字员工">+</button>
+            <span><UsergroupIcon />数字员工</span>
+            <Button size="small" variant="text" shape="square" icon={<AddIcon />} onClick={() => setShowAgentManager(true)} disabled={!hasWorkspace} title="添加或启用数字员工" />
           </div>
           <nav className="agentList" aria-label="选择数字员工">
             {agentIds.length === 0 ? (
@@ -1054,7 +1079,7 @@ export function App() {
             disabled={!hasWorkspace}
             title="协作洞察"
           >
-            <NavIcon kind="analytics" />
+            <ChartIcon />
             <span>协作洞察</span>
           </button>
           <button
@@ -1063,7 +1088,7 @@ export function App() {
             onClick={() => setShowSettings(true)}
             title="设置"
           >
-            ⚙️
+            <SettingIcon />
             <span>设置</span>
           </button>
         </div>
@@ -1075,7 +1100,7 @@ export function App() {
         title="显示侧边栏"
         aria-label="显示侧边栏"
       >
-        <NavIcon kind="expand" />
+        <ChevronRightIcon />
       </button>
       <div
         className="sidebarResizeHandle"
@@ -1099,12 +1124,23 @@ export function App() {
       <section className="conversation" aria-label="Chat conversation">
         <header className="conversationHeader">
           <div className="conversationHeaderLeft">
-            <p className="eyebrow">{state.workspace.name || "工作区"}</p>
+            <div className="conversationBreadcrumb"><span>{state.workspace.name || "工作区"}</span><ChevronRightIcon /><span>会话</span><ChevronRightIcon /></div>
             <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
             {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
           </div>
           <div className="conversationHeaderRight">
-            <span className="headerMeta">{state.messages.length} 条消息</span>
+            <Avatar.Group size="28px" max={4}>
+              {state.agents.map((agent) => <Avatar key={agent.id} style={{ backgroundColor: agentRoleColor(agent.role) }}>{agent.label.slice(0, 1)}</Avatar>)}
+            </Avatar.Group>
+            <span className="headerMeta">{state.agents.length} 人在线</span>
+            <Button
+              className="headerTaskButton"
+              variant="text"
+              icon={<ChatBubbleHistoryIcon />}
+              disabled={!latestTaskMessage}
+              onClick={() => latestTaskMessage && setSelectedTaskMessageId(latestTaskMessage.id)}
+            >运行记录 {latestTaskMessage?.activity?.length ?? 0} 条</Button>
+            <Button variant="text" shape="square" icon={<MoreIcon />} aria-label="更多操作" />
           </div>
         </header>
 
@@ -1156,6 +1192,7 @@ export function App() {
                 agent={message.agentId ? agentsById.get(message.agentId) : undefined}
                 parentMessage={message.parentMessageId ? messagesById.get(message.parentMessageId) : undefined}
                 agentsById={agentsById}
+                onOpenTask={() => setSelectedTaskMessageId(message.id)}
               />
             ))
           )}
@@ -1169,7 +1206,7 @@ export function App() {
                 setIsNearBottom(true);
               }}
             >
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12V4m0 0L4 8m4-4l4 4" /></svg>
+              <ArrowDownIcon />
             </button>
           )}
         </div>
@@ -1283,7 +1320,7 @@ export function App() {
                   aria-expanded={showApprovalModeMenu}
                   title="设置这条消息及后续协作的审批方式"
                 >
-                  <ApprovalModeIcon mode={approvalMode} />
+                  <SecuredIcon className="approvalModeIcon" />
                   <span>{approvalMode === "full-access" ? "完全批准" : "向我审批"}</span>
                   <span className="approvalModeChevron" aria-hidden="true">⌄</span>
                 </button>
@@ -1314,19 +1351,22 @@ export function App() {
               </div>
             <div className="composerActions">
             {hasRunningOrQueued ? (
-              <button
+              <Button
                 type="button"
                 className="interruptBtn"
                 onClick={interruptChain}
                 disabled={isInterrupting}
                 title="停止后续自动协作"
+                variant="outline"
+                theme="danger"
+                icon={<StopCircleIcon />}
               >
                 {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
-              </button>
+              </Button>
             ) : null}
-            <button type="submit" disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
+            <Button type="submit" theme="primary" icon={<SendIcon />} disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
               {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
-            </button>
+            </Button>
             </div>
           </div>
           </div>
@@ -1378,6 +1418,14 @@ export function App() {
           onRefreshRuntimes={refreshRuntimeAvailability}
         />
       ) : null}
+      <TaskDetailDrawer
+        visible={Boolean(selectedTaskMessage)}
+        message={selectedTaskMessage}
+        parentMessage={selectedTaskMessage?.parentMessageId ? messagesById.get(selectedTaskMessage.parentMessageId) : undefined}
+        agent={selectedTaskMessage?.agentId ? agentsById.get(selectedTaskMessage.agentId) : undefined}
+        agents={state.agents}
+        onClose={() => setSelectedTaskMessageId(null)}
+      />
       {previewAttachment ? (
         <div className="imagePreviewOverlay" onClick={() => setPreviewAttachment(null)}>
           <div className="imagePreviewModal" onClick={(e) => e.stopPropagation()}>
@@ -1397,19 +1445,7 @@ export function App() {
 }
 
 function ApprovalModeIcon({ mode }: { mode: ApprovalMode }) {
-  if (mode === "full-access") {
-    return (
-      <svg className="approvalModeIcon" viewBox="0 0 18 18" aria-hidden="true">
-        <path d="M9 1.8 15 4v4.2c0 3.7-2.4 6.4-6 8-3.6-1.6-6-4.3-6-8V4l6-2.2Z" />
-        <path d="m6.4 9 1.7 1.7 3.6-3.8" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="approvalModeIcon" viewBox="0 0 18 18" aria-hidden="true">
-      <path d="M5.2 8.1V5.4a1 1 0 0 1 2 0v2.1-3a1 1 0 0 1 2 0v3-2.2a1 1 0 0 1 2 0v2.5-1.4a1 1 0 0 1 2 0v4.1c0 3.3-2 5.2-5 5.2-2.3 0-3.6-1.1-4.8-3.1L2 10.3a1.1 1.1 0 0 1 1.8-1.2l1.4 1.8V8.1Z" />
-    </svg>
-  );
+  return <SecuredIcon className={`approvalModeIcon ${mode === "full-access" ? "fullAccess" : "ask"}`} aria-hidden="true" />;
 }
 
 function PermissionApprovalPanel(props: {
@@ -1652,67 +1688,6 @@ function MentionMenu(props: {
   );
 }
 
-function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "settings" | "collapse" | "expand" | "edit" | "analytics" }) {
-  if (kind === "workspace") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.5 4.5h3l1.1 1.4h6.9v5.6a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 2.5 11.5v-7Z" />
-      </svg>
-    );
-  }
-  if (kind === "conversation") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 4.5A2 2 0 0 1 5 2.5h6A2 2 0 0 1 13 4.5v4A2 2 0 0 1 11 10.5H7L4 13v-2.6A2 2 0 0 1 3 8.5v-4Z" />
-      </svg>
-    );
-  }
-  if (kind === "agents") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M8 3.2a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Z" />
-        <path d="M3.8 13a4.2 4.2 0 0 1 8.4 0" />
-      </svg>
-    );
-  }
-  if (kind === "analytics") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.5 13.5h11" />
-        <path d="M4 11V8.5M8 11V4.5M12 11V6.5" />
-      </svg>
-    );
-  }
-  if (kind === "collapse") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M10 3 5 8l5 5" />
-      </svg>
-    );
-  }
-  if (kind === "expand") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M6 3l5 5-5 5" />
-      </svg>
-    );
-  }
-  if (kind === "edit") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 11.5V13h1.5l7-7L10 4.5l-7 7Z" />
-        <path d="M9.5 5 11 3.5 12.5 5 11 6.5" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z" />
-      <path d="M8 1.8v1.4M8 12.8v1.4M3.6 3.6l1 1M11.4 11.4l1 1M1.8 8h1.4M12.8 8h1.4M3.6 12.4l1-1M11.4 4.6l1-1" />
-    </svg>
-  );
-}
-
 function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStatus?: boolean; onClick: () => void; onConfig?: () => void }) {
   const showStatus = props.showLiveStatus !== false || props.agent.runtimeAvailable === false;
   const isRunning = props.showLiveStatus !== false && (props.agent.status === "running" || props.agent.status === "starting");
@@ -1742,10 +1717,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
               onClick={(e) => { e.stopPropagation(); props.onConfig!(); }}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); props.onConfig!(); } }}
             >
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11.5 1.5l3 3L5 14H2v-3z" />
-                <path d="M9.5 3.5l3 3" />
-              </svg>
+              <EditIcon />
             </span>
           )}
         </span>
@@ -1767,11 +1739,13 @@ function MessageRow({
   agent,
   parentMessage,
   agentsById,
+  onOpenTask,
 }: {
   message: ChatMessage;
   agent?: AgentState;
   parentMessage?: ChatMessage;
   agentsById: Map<AgentId, AgentState>;
+  onOpenTask: () => void;
 }) {
   const author = message.kind === "user" ? "你" : message.kind === "agent" ? agent?.label ?? message.agentId ?? "数字员工" : "系统";
   const isRunning = message.status === "running";
@@ -1867,7 +1841,7 @@ function MessageRow({
           </div>
         ) : null}
       </div>
-      {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} /> : null}
+      {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} onOpenDetails={onOpenTask} /> : null}
     </article>
   );
 }
@@ -1928,26 +1902,14 @@ function DurationDisplay({ startedAt, completedAt, isRunning }: { startedAt?: st
   return <time dateTime={startedAt}>{startLabel}</time>;
 }
 
-function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; status?: ChatMessage["status"] }) {
-  const [expanded, setExpanded] = useState(false);
-  const timelineRef = useRef<HTMLDivElement | null>(null);
+function ActivityList({ activity, status, onOpenDetails }: { activity: AgentActivityEvent[]; status?: ChatMessage["status"]; onOpenDetails: () => void }) {
   const toolCount = activity.filter((item) => item.type === "tool.started").length;
   const failedCount = activity.filter((item) => item.type === "tool.failed").length;
   const errorCount = activity.filter((item) => item.type === "error").length;
   const latest = activity[activity.length - 1];
-  useEffect(() => {
-    if (expanded) {
-      timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight });
-    }
-  }, [activity.length, expanded]);
-
-  function toggleExpanded() {
-    setExpanded((value) => !value);
-  }
-
   return (
-    <div className={`activityPanel ${expanded ? "expanded" : "collapsed"}`} aria-label="Agent activity">
-      <button className="activityHeader" type="button" onClick={toggleExpanded} aria-expanded={expanded}>
+    <div className="activityPanel collapsed" aria-label="Agent activity">
+      <button className="activityHeader" type="button" onClick={onOpenDetails} aria-label="打开任务详情">
         <span className={`activityIndicator ${status ?? "done"}`} aria-hidden="true" />
         <span className="activitySummary">
           <strong>运行记录</strong>
@@ -1957,17 +1919,8 @@ function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; st
           {errorCount > 0 ? <span className="activityErrorCount">{errorCount} 个错误</span> : null}
         </span>
         {latest ? <span className="activityLatest">{activityText(latest)}</span> : null}
-        <span className="activityChevron" aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+        <span className="activityOpenLabel">查看详情</span><ChevronRightIcon className="activityChevron" />
       </button>
-      {expanded ? <div className="activityTimeline" ref={timelineRef}>
-        {activity.map((item, index) => (
-          <div className={`activityItem ${item.type.replace(".", "-")}`} key={`${item.timestamp}_${index}`}>
-            <span className="activityDot" aria-hidden="true" />
-            <span className="activityText">{activityText(item)}</span>
-            <time>{formatTime(item.timestamp)}</time>
-          </div>
-        ))}
-      </div> : null}
     </div>
   );
 }
@@ -2810,6 +2763,15 @@ function connectionLabel(state: "connecting" | "live" | "offline"): string {
     return "离线";
   }
   return "连接中";
+}
+
+function agentRoleColor(role: AgentRole): string {
+  if (role === "architect") return "#0052d9";
+  if (role === "developer") return "#00a870";
+  if (role === "tester") return "#ed7b2f";
+  if (role === "coordinator") return "#8e56dd";
+  if (role === "pm") return "#d54941";
+  return "#6b7785";
 }
 
 const SIDEBAR_MIN_WIDTH = 280;
