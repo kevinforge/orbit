@@ -1161,16 +1161,6 @@ export function App() {
             {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
           </div>
           <div className="conversationHeaderRight">
-            <Button
-              className={`supervisionToggle ${supervisionEnabled ? "active" : ""}`}
-              variant="outline"
-              onClick={toggleSupervision}
-              loading={isTogglingSupervision}
-              disabled={!state.conversation.id || !hasEnabledAgent}
-            >
-              <span className="supervisionToggleDot" aria-hidden="true" />
-              协作监督 {supervisionEnabled ? "已开启" : "已关闭"}
-            </Button>
             <Avatar.Group size="28px" max={4}>
               {state.agents.map((agent) => <Avatar key={agent.id} style={{ backgroundColor: agentRoleColor(agent.role) }}>{agent.label.slice(0, 1)}</Avatar>)}
             </Avatar.Group>
@@ -1353,6 +1343,18 @@ export function App() {
               />
             ) : null}
             <div className="composerModeRow">
+              <Button
+                className={`supervisionToggle composerSupervisionToggle ${supervisionEnabled ? "active" : ""}`}
+                variant="text"
+                onClick={toggleSupervision}
+                loading={isTogglingSupervision}
+                disabled={!state.conversation.id || !hasEnabledAgent}
+                aria-pressed={supervisionEnabled}
+                title={supervisionEnabled ? "关闭当前会话的协作监督" : "开启当前会话的协作监督"}
+              >
+                <span className="supervisionToggleDot" aria-hidden="true" />
+                协作监督 {supervisionEnabled ? "已开启" : "已关闭"}
+              </Button>
               <div className="approvalModeControl">
                 <button
                   type="button"
