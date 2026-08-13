@@ -8,7 +8,7 @@ function build(agentId = "implementation", overrides: Partial<Parameters<typeof 
   return buildAgentContext({
     agentId,
     profiles: createDefaultAgentProfiles("D:/project"),
-    agentMessage: "@开发实现: complete the task",
+    agentMessage: "@蔡一平: complete the task",
     ...overrides,
   });
 }
@@ -17,14 +17,14 @@ test("context is wrapped and identifies the named employee", () => {
   const output = build();
   assert.ok(output.startsWith("<orbit-context>"));
   assert.ok(output.endsWith("</orbit-context>"));
-  assert.ok(output.includes("Current agent: 开发实现"));
+  assert.ok(output.includes("Current agent: 蔡一平"));
   assert.ok(!output.includes("Role:"));
 });
 
 test("available employees use display names as assignment markers", () => {
   const output = build();
-  assert.ok(output.includes("@方案设计: "));
-  assert.ok(output.includes("@开发实现: "));
+  assert.ok(output.includes("@甄架构: "));
+  assert.ok(output.includes("@蔡一平: "));
   assert.ok(!output.includes("@implementation:"));
 });
 

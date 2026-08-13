@@ -341,6 +341,8 @@ export type WorkspacePreset = {
   description: string;
   systemPrompt: string;
   rules: string[];
+  /** 关联的数字员工团队模板 id（对应 AGENT_TEAM_TEMPLATES）。设置后创建该模板工作区时会预置整个团队；未设置（如空白工作区）则不预置数字员工。 */
+  teamId?: string;
   recommended?: boolean;
 };
 

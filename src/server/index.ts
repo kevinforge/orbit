@@ -757,7 +757,8 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "Unknown team template." });
         return;
       }
-      allConfigs = template.members.map((member) => ({ ...member, enabled: true }));
+      // 数字员工尽量使用本地实际可用的不同运行时（按 AGENT_RUNTIME_PRIORITY 轮流分配）。
+      allConfigs = initialAgentConfigsForWorkspacePreset(template.id, getRuntimeAvailabilityArray()) ?? [];
       configStore.save(activeWorkspaceId, allConfigs);
       refreshEnabledAgents();
       sendJson(res, 200, allConfigs);
@@ -887,7 +888,12 @@ const server = http.createServer(async (req, res) => {
             systemPrompt: preset.systemPrompt,
             rules: preset.rules,
           });
-          configStore.save(ws.id, initialAgentConfigsForWorkspacePreset(preset.id, getRuntimeAvailabilityArray()));
+          // 预置数字员工团队：仅当模板关联了团队时写入；空白工作区不写 agents.json，
+          // 加载时回落到全禁用的默认配置，即"没有数字员工"。
+          const agentConfigs = initialAgentConfigsForWorkspacePreset(preset.id, getRuntimeAvailabilityArray());
+          if (agentConfigs) {
+            configStore.save(ws.id, agentConfigs);
+          }
         }
         sendJson(res, 200, ws);
       } catch (error) {

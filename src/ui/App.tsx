@@ -2,7 +2,7 @@ import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, us
 import { renderMarkdown } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
-import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
+import { matchPreset } from "../core/workspace-presets.ts";
 import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
@@ -272,7 +272,7 @@ export function App() {
     const agents = new Map(state.agents.map((agent) => [agent.id, agent]));
     agents.set("supervisor", {
       id: "supervisor",
-      label: "协作监督",
+      label: "监工",
       runtime: state.conversation.supervisionRuntime ?? "codebuddy",
       status: "idle",
     });
@@ -454,21 +454,37 @@ export function App() {
   }
 
   async function toggleSupervision() {
-    if (!state.conversation.id || isTogglingSupervision) return;
+    if (isTogglingSupervision) return;
     setIsTogglingSupervision(true);
     try {
       const mode = supervisionEnabled ? "off" : "on";
       const runtime = state.conversation.supervisionRuntime ?? preferredSupervisionRuntime(state.runtimeAvailability);
-      const response = await fetch(`/api/conversations/${state.conversation.id}/supervision`, {
+
+      // 首次对话还没有会话：先创建一个会话，再切换协作监督，保证开关在首条消息前即可使用
+      let conversationId = state.conversation.id;
+      if (!conversationId) {
+        if (!state.workspace.id) throw new Error("请先选择或创建工作区。");
+        const createResponse = await fetch(`/api/conversations?workspaceId=${encodeURIComponent(state.workspace.id)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const created = await createResponse.json() as { id?: string; message?: string };
+        if (!createResponse.ok || !created.id) throw new Error(created.message ?? "创建会话失败。");
+        conversationId = created.id;
+        refreshConversations();
+      }
+
+      const response = await fetch(`/api/conversations/${conversationId}/supervision`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode, runtime }),
       });
       const body = await response.json() as { conversation?: ConversationInfo; message?: string };
-      if (!response.ok || !body.conversation) throw new Error(body.message ?? "协作监督切换失败");
+      if (!response.ok || !body.conversation) throw new Error(body.message ?? "监督模式切换失败");
       setState((current) => ({ ...current, conversation: body.conversation! }));
     } catch (error) {
-      setState((current) => ({ ...current, messages: [...current.messages, createLocalSystemMessage(error instanceof Error ? error.message : "协作监督切换失败")] }));
+      setState((current) => ({ ...current, messages: [...current.messages, createLocalSystemMessage(error instanceof Error ? error.message : "监督模式切换失败")] }));
     } finally {
       setIsTogglingSupervision(false);
     }
@@ -1077,9 +1093,9 @@ export function App() {
           </div>
         </section>
 
-        <section className="navSection compactAgents" aria-label="数字员工">
+        <section className="navSection compactAgents" aria-label="数字员工团队">
           <div className="navSectionHeader">
-            <span><UsergroupIcon />数字员工</span>
+            <span><UsergroupIcon />数字员工团队</span>
             <Button size="small" variant="text" shape="square" icon={<AddIcon />} onClick={() => setShowAgentManager(true)} disabled={!hasWorkspace} title="添加或启用数字员工" />
           </div>
           <nav className="agentList" aria-label="选择数字员工">
@@ -1110,10 +1126,10 @@ export function App() {
             className={`sidebarUtilityBtn ${activeView === "analysis" ? "active" : ""}`}
             onClick={() => setActiveView("analysis")}
             disabled={!hasWorkspace}
-            title="协作洞察"
+            title="可观测"
           >
             <ChartIcon />
-            <span>协作洞察</span>
+            <span>可观测</span>
           </button>
           <button
             type="button"
@@ -1330,7 +1346,7 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : supervisionEnabled ? "直接输入消息，协作监督会自动协调数字员工" : hasEnabledAgent ? `@${agentsById.get(selectedAgent)?.label ?? selectedAgent}: 输入任务` : "先添加或启用数字员工"}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : supervisionEnabled ? "直接输入消息，监督模式会自动协调数字员工" : hasEnabledAgent ? `@${agentsById.get(selectedAgent)?.label ?? selectedAgent}: 输入任务` : "先添加或启用数字员工"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1349,12 +1365,12 @@ export function App() {
                 variant="text"
                 onClick={toggleSupervision}
                 loading={isTogglingSupervision}
-                disabled={!state.conversation.id || !hasEnabledAgent}
+                disabled={!hasEnabledAgent}
                 aria-pressed={supervisionEnabled}
-                title={supervisionEnabled ? "关闭当前会话的协作监督" : "开启当前会话的协作监督"}
+                title={supervisionEnabled ? "关闭当前会话的监督模式" : "开启当前会话的监督模式"}
               >
                 <span className="supervisionToggleDot" aria-hidden="true" />
-                协作监督 {supervisionEnabled ? "已开启" : "已关闭"}
+                监督模式 {supervisionEnabled ? "已开启" : "已关闭"}
               </Button>
               <div className="approvalModeControl">
                 <button
@@ -1434,17 +1450,16 @@ export function App() {
         <div className="modalOverlay" onClick={() => setPendingWorkspacePath(null)}>
           <div className="modalPanel presetPickerPanel" onClick={(e) => e.stopPropagation()}>
             <div className="modalHeader">
-              <h2>选择工作区模板</h2>
+              <h2>选择数字员工团队</h2>
               <button type="button" onClick={() => setPendingWorkspacePath(null)}>&times;</button>
             </div>
             <div className="settingsBody">
-              <span className="workspaceConfigHint">选择一个内置模板快速配置工作区，或使用空白工作区。</span>
+              <span className="workspaceConfigHint">选择团队模板将预置对应的数字员工；选择空白则不预置，创建后可自行添加。</span>
               <div className="presetPickerList">
                 {workspacePresets.map((preset) => (
                   <PresetCard
                     key={preset.id}
                     preset={preset}
-                    runtimeAvailability={state.runtimeAvailability}
                     onClick={() => confirmWorkspaceCreation(preset.id)}
                   />
                 ))}
@@ -1970,6 +1985,7 @@ function ActivityList({ activity, status, onOpenDetails }: { activity: AgentActi
 }
 
 const RUNTIMES: readonly AgentRuntimeKind[] = AGENT_RUNTIME_PRIORITY;
+
 // Global settings - only runtime-level config
 function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
   const [enableRunLogs, setEnableRunLogs] = useState(false);
@@ -2101,33 +2117,19 @@ function uniqueMissingRuntimes(agents: readonly Pick<AgentState, "runtime">[]): 
 }
 
 // A preset template card, shared by the workspace-creation picker and the workspace config panel.
-function PresetCard({ preset, selected, runtimeAvailability, onClick }: { preset: WorkspacePreset; selected?: boolean; runtimeAvailability?: AppState["runtimeAvailability"]; onClick: () => void }) {
+function PresetCard({ preset, selected, onClick }: { preset: WorkspacePreset; selected?: boolean; onClick: () => void }) {
   const classes = [
     "presetCard",
     selected ? "presetCardSelected" : "",
     preset.recommended ? "presetCardRecommended" : "",
   ].filter(Boolean).join(" ");
-  const runtimeSummary = runtimeAvailability && preset.id === PRESET_IDS.multiAgentCollaboration
-    ? summarizeRuntimeAvailability(runtimeAvailability)
-    : null;
   return (
     <button type="button" className={classes} aria-pressed={selected} onClick={onClick}>
       <span className="presetName">{preset.name}</span>
       <span className="presetDesc">{preset.description}</span>
-      {runtimeSummary ? <span className={`presetRuntimeHint ${runtimeSummary.kind}`}>{runtimeSummary.text}</span> : null}
       {preset.recommended ? <span className="presetBadge">推荐</span> : null}
     </button>
   );
-}
-
-function summarizeRuntimeAvailability(availability: AppState["runtimeAvailability"]): { kind: "ready" | "missing"; text: string } {
-  const available = RUNTIMES
-    .filter((runtime) => availability.some((item) => item.runtime === runtimeKindToCliKey(runtime) && item.available))
-    .map((runtime) => runtimeMeta(runtime).label);
-  if (available.length > 0) {
-    return { kind: "ready", text: `将默认使用：${available[0]}` };
-  }
-  return { kind: "missing", text: "未检测到运行时，创建后可按提示安装" };
 }
 
 // Workspace-level config - prompt and rules
@@ -2228,7 +2230,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
               {presets.length > 0 ? (
                 <div className="settingsSection">
                   <label className="settingsLabel">应用模板</label>
-                  <span className="workspaceConfigHint">选择内置模板一键填充提示词和规则，会覆盖当前内容。</span>
+                  <span className="workspaceConfigHint">选择模板一键填充提示词和规则（不改变已配置的数字员工），会覆盖当前内容。</span>
                   <div className="presetSelector">
                     {presets.map((preset) => (
                       <PresetCard key={preset.id} preset={preset} selected={activePresetId === preset.id} onClick={() => applyPreset(preset.id)} />
@@ -2480,14 +2482,14 @@ function AgentManagerPanel({
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader">
-          <h2>数字员工</h2>
+          <h2>数字员工团队</h2>
           <button type="button" onClick={onClose}>&times;</button>
         </div>
         {loading ? <p className="settingsLoading">加载中...</p> : (
           <div className="settingsBody">
             <div className="agentManagerIntro">
-              <strong>默认数字员工模板</strong>
-              <span>四个内置模板默认不启用。产品经理、架构师、开发、测试负责规划与实现；会话监督通过当前会话的“协作监督”开关启用，不需要配置为数字员工。</span>
+              <strong>数字员工团队模板</strong>
+              <span>内置团队模板包含一组预置的数字员工，点击“应用”会全部启用。新建工作区时选择对应模板也会自动预置该团队。</span>
             </div>
             {teamTemplates.length > 0 ? (
               <div className="agentTeamTemplates">

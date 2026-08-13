@@ -942,9 +942,9 @@ test("custom display names suppress supervisor follow-up assignments", async () 
   });
 
   const implementation = makePlainAgentProfile("implementation");
-  implementation.name = "开发实现";
+  implementation.name = "蔡一平";
   const verification = makePlainAgentProfile("verification");
-  verification.name = "质量验证";
+  verification.name = "田小坑";
   const profiles = [makeSupervisorProfile("supervisor"), implementation, verification];
   const service = new ChannelWatchService(
     "conv-1",
@@ -958,7 +958,7 @@ test("custom display names suppress supervisor follow-up assignments", async () 
   const implementationReply = messages.add({
     kind: "agent",
     agentId: "implementation",
-    content: "已完成基础实现，@质量验证: 请继续检查边界条件。",
+    content: "已完成基础实现，@田小坑: 请继续检查边界条件。",
     status: "done",
     runId: "run_custom_name",
     runStatus: "completed",

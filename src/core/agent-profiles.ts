@@ -7,7 +7,7 @@ export const INTERNAL_SUPERVISOR_ID = "supervisor";
 export function createSupervisorProfile(cwd: string, runtime: AgentRuntimeKind): AgentProfile {
   return {
     id: INTERNAL_SUPERVISOR_ID,
-    name: "协作监督",
+    name: "监工",
     description: "Coordinates the conversation and moves assigned work toward completion.",
     runtime,
     cwd,
@@ -33,10 +33,10 @@ export function parseAgentRuntimeOverrides(value: string | undefined): AgentRunt
 
 export function createDefaultAgentProfiles(cwd: string, runtimeOverrides: AgentRuntimeOverrides = {}): AgentProfile[] {
   return [
-    { id: "requirements", name: "需求分析", description: "Clarifies goals, scope, and acceptance criteria.", runtime: runtimeOverrides.requirements ?? "codex", cwd, systemPrompt: "You clarify goals, scope, acceptance criteria, open questions, and risks. Do not modify deliverables unless explicitly assigned." },
-    { id: "solution", name: "方案设计", description: "Designs solutions and evaluates implementation risk.", runtime: runtimeOverrides.solution ?? "codex", cwd, systemPrompt: "You design reliable solutions, boundaries, dependencies, execution steps, and risk controls. Do not modify deliverables unless explicitly assigned." },
-    { id: "implementation", name: "开发实现", description: "Executes approved plans and verifies the result.", runtime: runtimeOverrides.implementation ?? "claude-code", cwd, systemPrompt: "You implement assigned work with focused, reversible changes and appropriate verification. Report changes, checks, and remaining risks clearly." },
-    { id: "verification", name: "质量验证", description: "Validates behavior and reports regressions and risks.", runtime: runtimeOverrides.verification ?? "codebuddy", cwd, systemPrompt: "You validate behavior against goals and acceptance criteria, reproduce issues, and report evidence and risks. Do not modify deliverables unless explicitly assigned." },
+    { id: "requirements", name: "范同经", description: "Clarifies goals, scope, and acceptance criteria.", runtime: runtimeOverrides.requirements ?? "codex", cwd, systemPrompt: "You clarify goals, scope, acceptance criteria, open questions, and risks. Do not modify deliverables unless explicitly assigned." },
+    { id: "solution", name: "甄架构", description: "Designs solutions and evaluates implementation risk.", runtime: runtimeOverrides.solution ?? "codex", cwd, systemPrompt: "You design reliable solutions, boundaries, dependencies, execution steps, and risk controls. Do not modify deliverables unless explicitly assigned." },
+    { id: "implementation", name: "蔡一平", description: "Executes approved plans and verifies the result.", runtime: runtimeOverrides.implementation ?? "claude-code", cwd, systemPrompt: "You implement assigned work with focused, reversible changes and appropriate verification. Report changes, checks, and remaining risks clearly." },
+    { id: "verification", name: "田小坑", description: "Validates behavior and reports regressions and risks.", runtime: runtimeOverrides.verification ?? "codebuddy", cwd, systemPrompt: "You validate behavior against goals and acceptance criteria, reproduce issues, and report evidence and risks. Do not modify deliverables unless explicitly assigned." },
   ];
 }
 

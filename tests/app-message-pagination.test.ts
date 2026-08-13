@@ -51,13 +51,13 @@ test("older pages ignore stale conversations and deduplicate current messages", 
 });
 
 const agents: AgentState[] = [
-  { id: "implementation", label: "开发实现", runtime: "claude-code", status: "running" },
-  { id: "verification", label: "质量验证", runtime: "codebuddy", status: "running" },
+  { id: "implementation", label: "蔡一平", runtime: "claude-code", status: "running" },
+  { id: "verification", label: "田小坑", runtime: "codebuddy", status: "running" },
 ];
 
 test("running summaries use employee display names once in summary order", () => {
   const summaries: RunningSummary[] = [{ workspaceId: "ws1", conversationId: "conv1", runningAgentIds: ["verification", "implementation", "verification"] }];
-  assert.equal(getConversationRunningLabel(summaries, agents, "ws1", "conv1"), "数字员工正在工作：质量验证、开发实现");
+  assert.equal(getConversationRunningLabel(summaries, agents, "ws1", "conv1"), "数字员工正在工作：田小坑、蔡一平");
 });
 
 test("running summary falls back to unknown ids and is absent for another conversation", () => {
@@ -72,8 +72,8 @@ test("running summary falls back to unknown ids and is absent for another conver
 });
 
 test("handoff summaries use display names", () => {
-  const source: ChatMessage = { id: "msg_000001", kind: "agent", agentId: "implementation", content: "@质量验证: review this", createdAt: "2026-01-01T00:00:01.000Z" };
+  const source: ChatMessage = { id: "msg_000001", kind: "agent", agentId: "implementation", content: "@田小坑: review this", createdAt: "2026-01-01T00:00:01.000Z" };
   const agentMessage: ChatMessage = { id: "msg_000002", kind: "agent", agentId: "implementation", content: "done", createdAt: source.createdAt, parentMessageId: source.id };
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-  assert.ok(getAgentHandoffSummary(agentMessage, source, agentsById)?.includes("开发实现"));
+  assert.ok(getAgentHandoffSummary(agentMessage, source, agentsById)?.includes("蔡一平"));
 });

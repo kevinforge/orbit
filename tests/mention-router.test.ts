@@ -5,12 +5,12 @@ import { routeMention } from "../src/core/mention-router.ts";
 import type { AgentProfile } from "../src/shared/types.ts";
 
 const agents: readonly AgentProfile[] = [
-  { id: "agent1", name: "方案设计", runtime: "codex", cwd: "/tmp", systemPrompt: "design" },
-  { id: "agent2", name: "开发实现", runtime: "claude-code", cwd: "/tmp", systemPrompt: "build" },
+  { id: "agent1", name: "甄架构", runtime: "codex", cwd: "/tmp", systemPrompt: "design" },
+  { id: "agent2", name: "蔡一平", runtime: "claude-code", cwd: "/tmp", systemPrompt: "build" },
 ];
 
 test("routes using the custom display name", () => {
-  const result = routeMention("@方案设计: summarize this project", agents);
+  const result = routeMention("@甄架构: summarize this project", agents);
   assert.equal(result.kind, "assignments");
   if (result.kind === "assignments") assert.deepEqual(result.agentIds, ["agent1"]);
 });
@@ -32,13 +32,13 @@ test("all expands to all available employees and excludes the sender", () => {
 });
 
 test("unknown names are ignored while known names still route", () => {
-  const result = routeMention("@unknown: ignore this @开发实现: do the work", agents);
+  const result = routeMention("@unknown: ignore this @蔡一平: do the work", agents);
   assert.equal(result.kind, "assignments");
   if (result.kind === "assignments") assert.deepEqual(result.agentIds, ["agent2"]);
 });
 
 test("empty assignments are blocked", () => {
-  const result = routeMention("@方案设计:", agents);
+  const result = routeMention("@甄架构:", agents);
   assert.equal(result.kind, "empty_assignment");
   if (result.kind === "empty_assignment") assert.equal(result.agentId, "agent1");
 });

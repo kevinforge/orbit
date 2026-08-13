@@ -8,10 +8,10 @@ Orbit is a local-first workspace for coordinating CLI-backed digital employees.
 The sidebar shows each employee's configurable display name. The built-in
 software development team contains four employees:
 
-- `@需求分析:` clarifies goals, scope, and acceptance criteria.
-- `@方案设计:` designs solutions and evaluates implementation risk.
-- `@开发实现:` edits files, runs commands, and verifies changes.
-- `@质量验证:` validates behavior and reports regressions.
+- `@范同经:` clarifies goals, scope, and acceptance criteria.
+- `@甄架构:` designs solutions and evaluates implementation risk.
+- `@蔡一平:` edits files, runs commands, and verifies changes.
+- `@田小坑:` validates behavior and reports regressions.
 
 Collaboration supervision is a per-conversation mode. It adds an internal
 coordinator backed by the selected runtime and is not configured as a fifth
@@ -70,13 +70,13 @@ used only for persistence and runtime bookkeeping.
 Type an assignment with the exact display name shown in the sidebar:
 
 ```text
-@方案设计: Please inspect this project structure and propose a small implementation plan.
+@甄架构: Please inspect this project structure and propose a small implementation plan.
 ```
 
 To send independent work in parallel:
 
 ```text
-@开发实现: Implement the fix. @质量验证: Prepare the regression checklist.
+@蔡一平: Implement the fix. @田小坑: Prepare the regression checklist.
 ```
 
 Plain mentions without a colon are references and do not start work. Use

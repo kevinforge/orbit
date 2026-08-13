@@ -61,17 +61,17 @@ Digital employees are configured via `AgentConfigStore` and persisted per-worksp
 
 | Routing marker | Display name | Default runtime |
 | --- | --- | --- |
-| `@需求分�?` | 需求分�?| `codex` |
-| `@方案设计:` | 方案设计 | `codex` |
-| `@开发实�?` | 开发实�?| `claude-code` |
-| `@质量验证:` | 质量验证 | `codebuddy` |
+| `@范同经:` | 范同经 | `codex` |
+| `@甄架构:` | 甄架构 | `codex` |
+| `@蔡一平:` | 蔡一平 | `claude-code` |
+| `@田小坑:` | 田小坑 | `codebuddy` |
 
 These defaults can be modified, disabled, or removed through the settings UI. Custom employees can be added with any of the supported runtimes and their own system prompt. Only enabled employees participate in routing.
 
 ### Two-Layer Model
 
 - **`AgentConfig`** (`src/shared/types.ts`): Persistence and UI model containing an internal id, display name, description, runtime, systemPrompt, enabled state, and optional triggers.
-- **`AgentProfile`** (`src/shared/types.ts`): Runtime model used by `AgentRegistry` and `AgentSession` �?includes the resolved workspace cwd.
+- **`AgentProfile`** (`src/shared/types.ts`): Runtime model used by `AgentRegistry` and `AgentSession` �?includes the resolved workspace cwd.
 
 `configsToProfiles()` in `agent-profiles.ts` converts enabled `AgentConfig` entries to `AgentProfile` instances. The system prompt describes each employee's responsibilities; there is no role field or per-employee permission matrix.
 
@@ -115,8 +115,8 @@ Agent-to-agent routing chains are capped at a fixed depth of 10. Each agent repl
 
 Each workspace can have workspace-level settings (`WorkspaceConfig`) that apply to all agent runs in all conversations within that workspace:
 
-- `systemPrompt` �?An employee instruction injected into every agent run, after Orbit's fixed rules and before channel history.
-- `rules` �?A list of rules rendered as bullet points in the agent context.
+- `systemPrompt` �?An employee instruction injected into every agent run, after Orbit's fixed rules and before channel history.
+- `rules` �?A list of rules rendered as bullet points in the agent context.
 
 Stored at `~/.orbit/workspaces/<workspaceId>/config.json`. Can be updated at runtime via `PUT /api/workspace-config`.
 
@@ -216,7 +216,7 @@ All three runtimes use ACP v1 over newline-delimited JSON-RPC on stdio. Runtime 
 
 ACP message chunks are grouped by assistant message ID. Orbit keeps visible progress in runtime output, ignores hidden thought chunks, and stores only the explicit final phase or the last main assistant message as the chat result.
 
-Each ACP agent is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for “ask�?and `agent-full-access` for “full access�? Orbit advertises ACP elicitation support for form and URL modes. Claude's `AskUserQuestion` is therefore rendered as a transient Orbit form. URL requests show the full external URL and require explicit user consent before returning `accept`. Unsupported custom modes or schema fields are cancelled instead of being guessed at.
+Each ACP agent is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for “ask�?and `agent-full-access` for “full access�? Orbit advertises ACP elicitation support for form and URL modes. Claude's `AskUserQuestion` is therefore rendered as a transient Orbit form. URL requests show the full external URL and require explicit user consent before returning `accept`. Unsupported custom modes or schema fields are cancelled instead of being guessed at.
 
 The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request. Elicitation uses separate `elicitation.requested` and `elicitation.resolved` events and `/api/elicitations/resolve`, so user input is not treated as a security approval.
 

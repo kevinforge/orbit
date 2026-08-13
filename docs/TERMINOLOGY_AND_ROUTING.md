@@ -39,10 +39,10 @@ the marker and in chat history.
 
 | Marker | Typical use |
 | --- | --- |
-| `@需求分析:` | Clarify requirements, scope, acceptance criteria, and product tradeoffs. |
-| `@方案设计:` | Inspect code, design implementation boundaries, and review technical risk. |
-| `@开发实现:` | Edit files, run commands, implement changes, and verify locally. |
-| `@质量验证:` | Validate behavior, reproduce bugs, and report regressions. |
+| `@范同经:` | Clarify requirements, scope, acceptance criteria, and product tradeoffs. |
+| `@甄架构:` | Inspect code, design implementation boundaries, and review technical risk. |
+| `@蔡一平:` | Edit files, run commands, implement changes, and verify locally. |
+| `@田小坑:` | Validate behavior, reproduce bugs, and report regressions. |
 | `@all:` | Send the same task to every enabled digital employee except the sender. |
 
 Custom digital employees use their configured display name. If you rename an
@@ -59,9 +59,9 @@ used as public assignment markers.
   employee receives the full message as context.
 - Unknown `@display-name:` markers are ignored. They do not create work and do
   not block known assignments in the same message.
-- An empty assignment such as `@开发实现:` with no task text is blocked.
+- An empty assignment such as `@蔡一平:` with no task text is blocked.
 - A digital employee's self-assignment is ignored. For example, a reply from
-  `开发实现` containing only `@开发实现:` does not schedule another run.
+  `蔡一平` containing only `@蔡一平:` does not schedule another run.
 - Agent-to-agent handoff chains are capped at routing depth 10. When the chain
   would exceed that limit, Orbit posts a system message and waits for a manual
   next step.
@@ -71,25 +71,25 @@ used as public assignment markers.
 Assign one task:
 
 ```text
-@开发实现: Add validation for the settings form, then run the relevant tests.
+@蔡一平: Add validation for the settings form, then run the relevant tests.
 ```
 
 Ask for planning before implementation:
 
 ```text
-@方案设计: Review the login flow and propose a small implementation plan.
+@甄架构: Review the login flow and propose a small implementation plan.
 ```
 
 Assign independent work in parallel:
 
 ```text
-@开发实现: Implement the fix. @质量验证: Prepare the regression checklist.
+@蔡一平: Implement the fix. @田小坑: Prepare the regression checklist.
 ```
 
 Mention another digital employee without assigning work:
 
 ```text
-The previous idea from @方案设计 makes sense to me.
+The previous idea from @甄架构 makes sense to me.
 ```
 
 Ask all enabled digital employees to inspect the same context:
@@ -105,17 +105,17 @@ markers. A useful handoff should include enough context for the next digital
 employee to act without guessing:
 
 ```text
-@质量验证: The implementation employee changed the attachment cleanup path. Please run the
+@田小坑: The implementation employee changed the attachment cleanup path. Please run the
 regression checklist for draft deletion and conversation deletion.
 ```
 
 Do not use a plain mention when you want work to start:
 
 ```text
-Ready for @质量验证 to check this.
+Ready for @田小坑 to check this.
 ```
 
-That sentence is only a reference. Use `@质量验证:` when that employee should run.
+That sentence is only a reference. Use `@田小坑:` when that employee should run.
 
 ## Troubleshooting Routing
 

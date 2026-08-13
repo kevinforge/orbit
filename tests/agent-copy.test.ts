@@ -19,7 +19,7 @@ function copyAgentConfig(source: AgentConfig, existingConfigs: AgentConfig[]): A
 
 const source: AgentConfig = {
   id: "implementation",
-  name: "开发实现",
+  name: "蔡一平",
   runtime: "claude-code",
   systemPrompt: "You implement work.",
   enabled: true,
@@ -33,7 +33,7 @@ test("generates an unused copy id", () => {
 
 test("copies names and fields without role or ui metadata", () => {
   const copy = copyAgentConfig(source, [source]);
-  assert.equal(copy.name, "开发实现 (副本)");
+  assert.equal(copy.name, "蔡一平 (副本)");
   assert.equal(copy.enabled, false);
   assert.equal(copy.description, source.description);
   assert.equal("role" in copy, false);
