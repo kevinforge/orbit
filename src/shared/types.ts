@@ -4,6 +4,8 @@ export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general" 
 
 export type ApprovalMode = "ask" | "full-access";
 
+export type SupervisionMode = "off" | "on";
+
 export type PermissionDecision = "allow" | "reject";
 
 export type AgentPermissionRequest = {
@@ -117,6 +119,7 @@ export type AgentProfile = {
   cwd: string;
   systemPrompt: string;
   triggers?: ChannelWatchTriggers;
+  internal?: boolean;
 };
 
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
@@ -318,6 +321,8 @@ export type Workspace = WorkspaceInfo & {
 export type ConversationInfo = {
   id: string;
   name: string;
+  supervisionMode?: SupervisionMode;
+  supervisionRuntime?: AgentRuntimeKind;
 };
 
 export type Conversation = ConversationInfo & {

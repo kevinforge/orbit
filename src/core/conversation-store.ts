@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
-import type { Conversation } from "../shared/types.ts";
+import type { AgentRuntimeKind, Conversation, SupervisionMode } from "../shared/types.ts";
 
 type ConversationData = {
   conversations: Conversation[];
@@ -37,13 +37,18 @@ export class ConversationStore {
       name,
       createdAt: now,
       lastOpenedAt: now,
+      supervisionMode: "off",
     };
     data.conversations.push(conversation);
     this.saveData(workspaceId, data);
     return conversation;
   }
 
-  update(workspaceId: string, conversationId: string, patch: { name?: string }): Conversation {
+  update(workspaceId: string, conversationId: string, patch: {
+    name?: string;
+    supervisionMode?: SupervisionMode;
+    supervisionRuntime?: AgentRuntimeKind | null;
+  }): Conversation {
     const data = this.loadData(workspaceId);
     const index = data.conversations.findIndex((c) => c.id === conversationId);
     if (index === -1) {
@@ -52,6 +57,10 @@ export class ConversationStore {
     data.conversations[index] = {
       ...data.conversations[index]!,
       ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.supervisionMode !== undefined ? { supervisionMode: patch.supervisionMode } : {}),
+      ...(patch.supervisionRuntime !== undefined
+        ? patch.supervisionRuntime === null ? { supervisionRuntime: undefined } : { supervisionRuntime: patch.supervisionRuntime }
+        : {}),
     };
     this.saveData(workspaceId, data);
     return data.conversations[index]!;
@@ -115,7 +124,15 @@ export class ConversationStore {
   private loadData(workspaceId: string): ConversationData {
     try {
       const content = fs.readFileSync(this.filePath(workspaceId), "utf8");
-      return JSON.parse(content) as ConversationData;
+      const parsed = JSON.parse(content) as ConversationData;
+      return {
+        conversations: Array.isArray(parsed.conversations)
+          ? parsed.conversations.map((conversation) => ({
+              ...conversation,
+              supervisionMode: conversation.supervisionMode === "on" ? "on" : "off",
+            }))
+          : [],
+      };
     } catch {
       return { conversations: [] };
     }

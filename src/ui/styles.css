@@ -3664,39 +3664,6 @@ button:active:not(:disabled) {
   background: var(--accent-subtle);
 }
 
-.supervisorBanner {
-  margin: 8px 0 12px;
-  padding: 12px 14px;
-  border-left: 3px solid var(--accent-border);
-  background: var(--accent-subtle);
-  border-radius: var(--radius-md);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--accent);
-}
-
-.supervisorBanner p {
-  margin: 0 0 6px;
-}
-
-.supervisorBanner p:last-child {
-  margin-bottom: 0;
-}
-
-.supervisorBanner ul {
-  margin: 4px 0 6px;
-  padding-left: 16px;
-  list-style: none;
-}
-
-.supervisorBanner ul li {
-  margin-bottom: 3px;
-}
-
-.supervisorBanner strong {
-  color: var(--accent-hover);
-}
-
 .configCardActions {
   display: flex;
   align-items: center;
@@ -4377,6 +4344,36 @@ button:active:not(:disabled) {
 
 .conversationHeaderRight {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.supervisionToggle.t-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-color: var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.supervisionToggle.t-button.active {
+  border-color: rgba(0, 168, 112, 0.3);
+  background: rgba(0, 168, 112, 0.08);
+  color: #087f5b;
+}
+
+.supervisionToggleDot {
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.supervisionToggle.active .supervisionToggleDot {
+  background: #00a870;
+  box-shadow: 0 0 0 3px rgba(0, 168, 112, 0.12);
 }
 
 .workspaceTitle {

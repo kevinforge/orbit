@@ -3,7 +3,7 @@ import { renderMarkdown } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
 import {
@@ -28,7 +28,7 @@ const { Avatar, Button, Tooltip } = TDesign;
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
-  conversation: { id: "", name: "" },
+  conversation: { id: "", name: "", supervisionMode: "off" },
   agents: [],
   messages: [],
   messageHistory: { hasOlderMessages: false, olderCursor: null },
@@ -119,6 +119,7 @@ export function App() {
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const [selectedTaskMessageId, setSelectedTaskMessageId] = useState<string | null>(null);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
+  const [isTogglingSupervision, setIsTogglingSupervision] = useState(false);
   const isNearBottomRef = useRef(true);
 
   useEffect(() => {
@@ -267,7 +268,17 @@ export function App() {
     refreshConversations();
   }, [workspaces, state.workspace.id]);
 
-  const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
+  const agentsById = useMemo(() => {
+    const agents = new Map(state.agents.map((agent) => [agent.id, agent]));
+    agents.set("supervisor", {
+      id: "supervisor",
+      label: "协作监督",
+      runtime: state.conversation.supervisionRuntime ?? "codebuddy",
+      role: "coordinator",
+      status: "idle",
+    });
+    return agents;
+  }, [state.agents, state.conversation.supervisionRuntime]);
   const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
   const selectedTaskMessage = selectedTaskMessageId ? messagesById.get(selectedTaskMessageId) ?? null : null;
   const latestTaskMessage = useMemo(
@@ -276,7 +287,7 @@ export function App() {
   );
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
-  const hasCoordinator = useMemo(() => state.agents.some((agent) => agent.role === "coordinator" && hasActiveChannelWatchTriggers(agent.triggers)), [state.agents]);
+  const supervisionEnabled = state.conversation.supervisionMode === "on";
   const scrollKey = useMemo(
     () =>
       state.messages
@@ -440,6 +451,27 @@ export function App() {
       }));
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function toggleSupervision() {
+    if (!state.conversation.id || isTogglingSupervision) return;
+    setIsTogglingSupervision(true);
+    try {
+      const mode = supervisionEnabled ? "off" : "on";
+      const runtime = state.conversation.supervisionRuntime ?? preferredSupervisionRuntime(state.runtimeAvailability);
+      const response = await fetch(`/api/conversations/${state.conversation.id}/supervision`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, runtime }),
+      });
+      const body = await response.json() as { conversation?: ConversationInfo; message?: string };
+      if (!response.ok || !body.conversation) throw new Error(body.message ?? "协作监督切换失败");
+      setState((current) => ({ ...current, conversation: body.conversation! }));
+    } catch (error) {
+      setState((current) => ({ ...current, messages: [...current.messages, createLocalSystemMessage(error instanceof Error ? error.message : "协作监督切换失败")] }));
+    } finally {
+      setIsTogglingSupervision(false);
     }
   }
 
@@ -1129,6 +1161,16 @@ export function App() {
             {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
           </div>
           <div className="conversationHeaderRight">
+            <Button
+              className={`supervisionToggle ${supervisionEnabled ? "active" : ""}`}
+              variant="outline"
+              onClick={toggleSupervision}
+              loading={isTogglingSupervision}
+              disabled={!state.conversation.id || !hasEnabledAgent}
+            >
+              <span className="supervisionToggleDot" aria-hidden="true" />
+              协作监督 {supervisionEnabled ? "已开启" : "已关闭"}
+            </Button>
             <Avatar.Group size="28px" max={4}>
               {state.agents.map((agent) => <Avatar key={agent.id} style={{ backgroundColor: agentRoleColor(agent.role) }}>{agent.label.slice(0, 1)}</Avatar>)}
             </Avatar.Group>
@@ -1297,7 +1339,7 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @developer: 指派具体数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : supervisionEnabled ? "直接输入消息，协作监督会自动协调数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1926,7 +1968,7 @@ function ActivityList({ activity, status, onOpenDetails }: { activity: AgentActi
 }
 
 const RUNTIMES: readonly AgentRuntimeKind[] = AGENT_RUNTIME_PRIORITY;
-const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
+const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
 // Global settings - only runtime-level config
 function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
   const [enableRunLogs, setEnableRunLogs] = useState(false);
@@ -2418,7 +2460,7 @@ function AgentManagerPanel({
           <div className="settingsBody">
             <div className="agentManagerIntro">
               <strong>默认数字员工模板</strong>
-              <span>五个内置模板默认不启用。产品经理（pm）、架构师（architect）、开发（developer）、测试（tester）负责规划与实现，监督者（supervisor）负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
+              <span>四个内置模板默认不启用。产品经理、架构师、开发、测试负责规划与实现；会话监督通过当前会话的“协作监督”开关启用，不需要配置为数字员工。</span>
             </div>
             <div className="runtimeProbeRow">
               <span>安装或更新命令行工具后，可以重新检测运行环境。</span>
@@ -2440,7 +2482,6 @@ function AgentManagerPanel({
                       <span className="configCardName">{config.name || config.id}</span>
                       <span className="configCardPill configCardRole">{config.role}</span>
                       <span className="configCardPill configCardRuntime">{config.runtime}</span>
-                      {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
                     </div>
                     <div className="configCardActions">
                       <button type="button" className="copyBtn" onClick={(e) => { e.stopPropagation(); copyConfig(i); }} title="复制">📋</button>
@@ -2468,7 +2509,7 @@ function AgentManagerPanel({
                           <span className="fieldHint" title="数字员工能力的简短描述。其他数字员工发现可协作成员时会看到此内容。">?</span>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">角色 <span className="fieldHint" title="决定数字员工的默认职责和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
+                          <span className="pillLabel">角色 <span className="fieldHint" title="决定数字员工的默认职责和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义。">?</span></span>
                           <div className="pillOptions">
                             {ROLES.map((r) => (
                               <button
@@ -2527,14 +2568,6 @@ function AgentManagerPanel({
                             );
                           })()}
                         </div>
-                        {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? (
-                          <SupervisorBanner
-                            maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5}
-                            hasUnassigned={config.triggers?.onUnassignedMessage === true}
-                            hasBlocked={config.triggers?.onAgentBlocked === true}
-                            hasRunFailed={config.triggers?.onRunFailed === true}
-                          />
-                        ) : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -2553,27 +2586,6 @@ function AgentManagerPanel({
           <button type="button" onClick={save} disabled={saving}>{saving ? "保存中..." : "保存"}</button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked, hasRunFailed }: { maxTriggers: number; hasUnassigned: boolean; hasBlocked: boolean; hasRunFailed: boolean }) {
-  return (
-    <div className="supervisorBanner">
-      <p><span aria-hidden="true">🔍</span> <strong>会话监督已启用</strong></p>
-      <p>此数字员工会在以下情况自动介入：</p>
-      <ul>
-        {hasUnassigned ? (
-          <li><span aria-hidden="true">⚡</span> <strong>消息未分配</strong> — 消息中没有 @agent: 标记时，自动分析需求并分配任务</li>
-        ) : null}
-        {hasBlocked ? (
-          <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他数字员工的消息被路由拒绝时，介入兜底处理</li>
-        ) : null}
-        {hasRunFailed ? (
-          <li><span aria-hidden="true">⚡</span> <strong>运行失败</strong> — 数字员工运行出错时，介入判断下一步处理方式</li>
-        ) : null}
-      </ul>
-      <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭启用开关可暂停监督。</p>
     </div>
   );
 }
@@ -2604,6 +2616,11 @@ function MarkdownContent({ content }: { content: string }) {
 
 function PlainText({ content }: { content: string }) {
   return <div className="plainText">{content}</div>;
+}
+
+function preferredSupervisionRuntime(availability: AppState["runtimeAvailability"]): AgentRuntimeKind | undefined {
+  const available = new Set(availability.filter((item) => item.available).map((item) => item.runtime));
+  return AGENT_RUNTIME_PRIORITY.find((runtime) => available.has(runtimeKindToCliKey(runtime)));
 }
 
 function applyEvent(state: AppState, event: RuntimeEvent): AppState {

@@ -10,14 +10,14 @@ function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-test-config-"));
 }
 
-test("DEFAULT_AGENT_CONFIGS seeds five disabled built-in templates", () => {
-  assert.equal(DEFAULT_AGENT_CONFIGS.length, 5);
+test("DEFAULT_AGENT_CONFIGS seeds four disabled built-in templates", () => {
+  assert.equal(DEFAULT_AGENT_CONFIGS.length, 4);
   const ids = DEFAULT_AGENT_CONFIGS.map((c) => c.id);
   assert.ok(ids.includes("pm"));
   assert.ok(ids.includes("architect"));
   assert.ok(ids.includes("developer"));
   assert.ok(ids.includes("tester"));
-  assert.ok(ids.includes("supervisor"));
+  assert.ok(!ids.includes("supervisor"));
   for (const config of DEFAULT_AGENT_CONFIGS) {
     assert.equal(config.enabled, false, `${config.id} should be disabled by default`);
     assert.ok(config.systemPrompt.length > 0, `${config.id} should have a systemPrompt`);
@@ -32,7 +32,6 @@ test("DEFAULT_AGENT_CONFIGS use Chinese built-in display names with stable ids",
       architect: "架构师（architect）",
       developer: "开发（developer）",
       tester: "测试（tester）",
-      supervisor: "监督者（supervisor）",
     },
   );
 });
@@ -42,7 +41,7 @@ test("load returns seed configs when no file exists", () => {
   try {
     const store = new AgentConfigStore(dir);
     const configs = store.load("ws1");
-    assert.equal(configs.length, 5);
+    assert.equal(configs.length, 4);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -84,7 +83,7 @@ test("reset restores seed configs", () => {
     const store = new AgentConfigStore(dir);
     store.save("ws1", [{ id: "x", name: "X", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true }]);
     const reset = store.reset("ws1");
-    assert.equal(reset.length, 5);
+    assert.equal(reset.length, 4);
     assert.equal(reset[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -112,7 +111,7 @@ test("load handles corrupted file gracefully", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, "not valid json{{{");
     const configs = store.load("ws1");
-    assert.equal(configs.length, 5);
+    assert.equal(configs.length, 4);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -127,7 +126,7 @@ test("load returns defaults for valid JSON with invalid runtime", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "not-a-runtime", systemPrompt: "x", enabled: true }]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 5);
+    assert.equal(configs.length, 4);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -145,7 +144,7 @@ test("load returns defaults for valid JSON with duplicate ids", () => {
       { id: "dup", name: "B", role: "general", runtime: "codex", systemPrompt: "y", enabled: true },
     ]));
     const configs = store.load("ws1");
-    assert.equal(configs.length, 5);
+    assert.equal(configs.length, 4);
     assert.equal(configs[0].id, "pm");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -160,8 +159,8 @@ test("load accepts valid JSON with no enabled agents", () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: false }]));
     const configs = store.load("ws1");
-    // auto-migration adds 5 missing default templates → 1 + 5 = 6
-    assert.equal(configs.length, 6);
+    // auto-migration adds 4 missing default templates → 1 + 4 = 5
+    assert.equal(configs.length, 5);
     assert.equal(configs[0].id, "a");
     assert.equal(configs[0].enabled, false);
   } finally {
@@ -305,8 +304,8 @@ test("load migrates old configs missing permissionProfile to role defaults", () 
       { id: "old-dev", name: "Old Dev", description: "", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
     ]));
     const loaded = store.load("ws1");
-    // auto-migration adds 5 missing default templates → 1 + 5 = 6
-    assert.equal(loaded.length, 6);
+    // auto-migration adds 4 missing default templates → 1 + 4 = 5
+    assert.equal(loaded.length, 5);
     assert.equal("permissionProfile" in loaded[0], false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -342,31 +341,6 @@ test("load removes legacy permission settings", () => {
   }
 });
 
-test("load migrates existing default supervisor to handle failed agent runs", () => {
-  const dir = tempDir();
-  try {
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const oldDefaults = structuredClone(DEFAULT_AGENT_CONFIGS).map((config) => (
-      config.id === "supervisor"
-        ? { ...config, triggers: { onUnassignedMessage: true, onAgentBlocked: true } }
-        : config
-    ));
-    fs.writeFileSync(filePath, JSON.stringify({ configs: oldDefaults, _meta: { migrationVersion: 1 } }, null, 2));
-
-    const store = new AgentConfigStore(dir);
-    const loaded = store.load("ws1");
-    const supervisor = loaded.find((config) => config.id === "supervisor");
-
-    assert.equal(supervisor?.triggers?.onRunFailed, true);
-    const persisted = JSON.parse(fs.readFileSync(filePath, "utf8")) as { configs: AgentConfig[] };
-    const persistedSupervisor = persisted.configs.find((config) => config.id === "supervisor");
-    assert.equal(persistedSupervisor?.triggers?.onRunFailed, true);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("load migrates legacy default agent names to Chinese names with ids while preserving custom names", () => {
   const dir = tempDir();
   try {
@@ -377,7 +351,6 @@ test("load migrates legacy default agent names to Chinese names with ids while p
       { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "architect")!), name: "Architect" },
       { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "developer")!), name: "Developer" },
       { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "tester")!), name: "Tester" },
-      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "supervisor")!), name: "Supervisor" },
       { id: "custom", name: "My Developer", role: "developer", runtime: "claude-code", systemPrompt: "custom", enabled: true },
     ];
     fs.writeFileSync(filePath, JSON.stringify({ configs: legacyDefaults, _meta: { migrationVersion: 2 } }, null, 2));
@@ -389,7 +362,6 @@ test("load migrates legacy default agent names to Chinese names with ids while p
     assert.equal(loaded.find((config) => config.id === "architect")?.name, "架构师（architect）");
     assert.equal(loaded.find((config) => config.id === "developer")?.name, "开发（developer）");
     assert.equal(loaded.find((config) => config.id === "tester")?.name, "测试（tester）");
-    assert.equal(loaded.find((config) => config.id === "supervisor")?.name, "监督者（supervisor）");
     assert.equal(loaded.find((config) => config.id === "custom")?.name, "My Developer");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -414,42 +386,6 @@ test("reset outputs configs without permission settings", () => {
 test("validate accepts configs without permission settings", () => {
   const configs: AgentConfig[] = [
     { id: "old", name: "Old", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-test("supervisor uses the coordinator role", () => {
-  const supervisor = DEFAULT_AGENT_CONFIGS.find((c) => c.id === "supervisor");
-  assert.ok(supervisor, "supervisor should exist in defaults");
-  assert.equal(supervisor!.role, "coordinator");
-});
-
-test("supervisor systemPrompt forbids reading files and using tools", () => {
-  const supervisor = DEFAULT_AGENT_CONFIGS.find((c) => c.id === "supervisor");
-  assert.ok(supervisor);
-  const prompt = supervisor!.systemPrompt;
-  assert.ok(prompt.includes("NEVER read files"), "should forbid reading files");
-  assert.ok(prompt.includes("NEVER"), "should use strong CANNOT language");
-  assert.ok(prompt.includes("coordinator ONLY"), "should emphasize coordinator role");
-  assert.ok(prompt.includes("conversation history"), "should reference conversation history as only source");
-});
-
-test("coordinator is a valid role accepted by validation", () => {
-  const configs: AgentConfig[] = [
-    { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
-    },
-    { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-test("coordinator role is valid", () => {
-  const configs: AgentConfig[] = [
-    { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "You monitor.", enabled: true,
-    },
-    { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);
@@ -520,7 +456,7 @@ test("rejects triggers with non-boolean onRunFailed", () => {
 test("accepts valid triggers with both flags set", () => {
   const configs: AgentConfig[] = [
     {
-      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      id: "a", name: "A", role: "general", runtime: "claude-code",
       systemPrompt: "do stuff", enabled: true,
       triggers: { onUnassignedMessage: true, onAgentBlocked: false },
     },
@@ -545,7 +481,7 @@ test("accepts triggers with undefined values (omitted flags)", () => {
 test("rejects triggers.maxTriggersPerConversation when non-number", () => {
   const configs: AgentConfig[] = [
     {
-      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      id: "a", name: "A", role: "general", runtime: "claude-code",
       systemPrompt: "do stuff", enabled: true,
       triggers: { maxTriggersPerConversation: "five" as unknown as number },
     },
@@ -557,7 +493,7 @@ test("rejects triggers.maxTriggersPerConversation when non-number", () => {
 test("rejects triggers.maxTriggersPerConversation when out of range", () => {
   const configs: AgentConfig[] = [
     {
-      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      id: "a", name: "A", role: "general", runtime: "claude-code",
       systemPrompt: "do stuff", enabled: true,
       triggers: { maxTriggersPerConversation: 200 },
     },
@@ -593,98 +529,11 @@ test("rejects triggers.debounceMs when out of range", () => {
 test("accepts triggers with valid maxTriggersPerConversation and debounceMs", () => {
   const configs: AgentConfig[] = [
     {
-      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
+      id: "a", name: "A", role: "general", runtime: "claude-code",
       systemPrompt: "do stuff", enabled: true,
       triggers: { maxTriggersPerConversation: 10, debounceMs: 5000 },
     },
     { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-// --- Cross-validation tests ---
-
-test("rejects supervisor enabled with no other agents enabled", () => {
-  const configs: AgentConfig[] = [
-    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true },
-    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: false },
-  ];
-  const errors = validateAgentConfigs(configs);
-  // Issue #91: Error message uses "Coordinator" instead of "Supervisor"
-  assert.ok(errors.some((e) => e.includes("Coordinator cannot be enabled")), `Expected coordinator cross-validation error, got: ${JSON.stringify(errors)}`);
-});
-
-test("accepts supervisor enabled when at least one other agent is enabled", () => {
-  const configs: AgentConfig[] = [
-    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true },
-    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-test("rejects supervisor enabled alone (single config)", () => {
-  const configs: AgentConfig[] = [
-    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  // Issue #91: Error message uses "Coordinator" instead of "Supervisor"
-  assert.ok(errors.some((e) => e.includes("Coordinator cannot be enabled")), `Expected coordinator-alone error, got: ${JSON.stringify(errors)}`);
-});
-
-test("accepts supervisor disabled when alone", () => {
-  const configs: AgentConfig[] = [
-    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: false },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-// --- Single supervisor enforcement ---
-
-test("rejects multiple agents with active channel watch triggers", () => {
-  const configs: AgentConfig[] = [
-    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true,
-      triggers: { onUnassignedMessage: true },
-    },
-    { id: "watcher", name: "Watcher", role: "coordinator", runtime: "claude-code", systemPrompt: "watch", enabled: true,
-      triggers: { onAgentBlocked: true },
-    },
-    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("Only one supervisor")), `Expected single-supervisor error, got: ${JSON.stringify(errors)}`);
-});
-
-test("accepts at most one agent with active triggers", () => {
-  const configs: AgentConfig[] = [
-    { id: "supervisor", name: "Supervisor", role: "coordinator", runtime: "claude-code", systemPrompt: "supervise", enabled: true,
-      triggers: { onUnassignedMessage: true, onAgentBlocked: true },
-    },
-    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-test("rejects non-coordinator agent with active triggers", () => {
-  const configs: AgentConfig[] = [
-    { id: "watcher", name: "Watcher", role: "general", runtime: "claude-code", systemPrompt: "watch", enabled: true,
-      triggers: { onUnassignedMessage: true },
-    },
-    { id: "dev", name: "Dev", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("role is") && e.includes("coordinator")), `Expected non-coordinator triggers error, got: ${JSON.stringify(errors)}`);
-});
-
-test("accepts non-coordinator with inactive triggers (both false)", () => {
-  const configs: AgentConfig[] = [
-    { id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "do stuff", enabled: true,
-      triggers: { onUnassignedMessage: false, onAgentBlocked: false },
-    },
-    { id: "b", name: "B", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
   ];
   const errors = validateAgentConfigs(configs);
   assert.deepEqual(errors, []);

@@ -2,6 +2,29 @@ import type { AgentConfig, AgentId, AgentProfile, AgentRuntimeKind } from "../sh
 
 export type AgentRuntimeOverrides = Partial<Record<AgentId, AgentRuntimeKind>>;
 
+export const INTERNAL_SUPERVISOR_ID = "supervisor";
+
+export function createSupervisorProfile(cwd: string, runtime: AgentRuntimeKind): AgentProfile {
+  return {
+    id: INTERNAL_SUPERVISOR_ID,
+    name: "协作监督",
+    description: "Coordinates the conversation and moves assigned work toward completion.",
+    role: "coordinator",
+    runtime,
+    cwd,
+    internal: true,
+    systemPrompt:
+      "You are Orbit's built-in collaboration supervisor. Monitor the conversation and coordinate enabled digital employees toward task completion. " +
+      "You may only use the conversation history. Never read files, search code, run commands, modify files, or access external resources. " +
+      "Delegate through @agent: markers and conclude to the user with @user:.",
+    triggers: {
+      onUnassignedMessage: true,
+      onAgentBlocked: true,
+      onRunFailed: true,
+    },
+  };
+}
+
 const CONFIGURABLE_RUNTIME_KINDS = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
 
 export function parseAgentRuntimeOverrides(value: string | undefined): AgentRuntimeOverrides {
@@ -78,6 +101,5 @@ export function configsToProfiles(configs: readonly AgentConfig[], cwd: string):
     runtime: config.runtime,
     cwd,
     systemPrompt: config.systemPrompt,
-    triggers: config.triggers,
   }));
 }

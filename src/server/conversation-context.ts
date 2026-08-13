@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { AgentRegistry } from "../core/agent-registry.ts";
 import { buildAgentContext } from "../core/agent-context-builder.ts";
-import { buildHistoryForAgent } from "../core/agent-history-builder.ts";
+import { buildHistoryForAgent, SUPERVISOR_HISTORY_TURNS } from "../core/agent-history-builder.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { MessageStore } from "../core/message-store.ts";
 import { RunManager } from "../core/run-manager.ts";
@@ -12,7 +12,6 @@ import { WorkspaceStore } from "../core/workspace-store.ts";
 import { MessageRouter } from "../core/message-router.ts";
 import { ChannelWatchService } from "../core/channel-watch.ts";
 import {
-  hasActiveChannelWatchTriggers,
   type ElicitationResponse,
   type AgentId,
   type AgentProfile,
@@ -21,8 +20,11 @@ import {
   type PendingPermission,
   type PermissionDecision,
   type WorkspaceRuntimeConfig,
+  type AgentRuntimeKind,
+  type ConversationInfo,
 } from "../shared/types.ts";
 import { DEFAULT_WORKSPACE_CONFIG, DEFAULT_GLOBAL_CONFIG } from "../shared/types.ts";
+import { createSupervisorProfile, INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 
 const MAX_ROUTE_DEPTH = 10;
 
@@ -35,6 +37,8 @@ export type ConversationContextOptions = {
   workspaceStore: WorkspaceStore;
   workspaceConfig?: WorkspaceRuntimeConfig;
   globalConfig?: GlobalRuntimeConfig;
+  supervisionMode?: ConversationInfo["supervisionMode"];
+  supervisionRuntime?: AgentRuntimeKind;
 };
 
 export class ConversationContext {
@@ -48,6 +52,8 @@ export class ConversationContext {
   private _profiles: readonly AgentProfile[];
   private _workspaceConfig: WorkspaceRuntimeConfig;
   private _globalConfig: GlobalRuntimeConfig;
+  private _supervisionMode: ConversationInfo["supervisionMode"];
+  private _supervisionRuntime?: AgentRuntimeKind;
   private readonly eventBus: EventBus;
   private readonly unsubscribe: () => void;
 
@@ -57,7 +63,9 @@ export class ConversationContext {
     // can update it at runtime without recreating the context.
     this._workspaceConfig = options.workspaceConfig ?? structuredClone(DEFAULT_WORKSPACE_CONFIG);
     this._globalConfig = options.globalConfig ?? structuredClone(DEFAULT_GLOBAL_CONFIG);
-    this._profiles = profiles;
+    this._supervisionMode = options.supervisionMode ?? "off";
+    this._supervisionRuntime = options.supervisionRuntime;
+    this._profiles = profiles.filter((profile) => !profile.internal);
     this.eventBus = eventBus;
 
     const messagesPath = path.join(
@@ -88,7 +96,8 @@ export class ConversationContext {
       }
     });
 
-    this.agents = new AgentRegistry(profiles, eventBus, sessionStore, conversationId);
+    const activeProfiles = this.buildActiveProfiles(this._profiles);
+    this.agents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId);
     this.agents.startAll();
 
     const agentIds = this.agents.ids();
@@ -100,10 +109,13 @@ export class ConversationContext {
       messages: this.messages,
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
-        const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
+        const history = buildHistoryForAgent(agentId, self.messages.list(), {
+          excludeMessageId: sourceMessageId,
+          ...(agentId === INTERNAL_SUPERVISOR_ID ? { maxTurns: SUPERVISOR_HISTORY_TURNS } : {}),
+        });
         return buildAgentContext({
           agentId,
-          profiles,
+          profiles: agentId === INTERNAL_SUPERVISOR_ID ? self.channelProfiles() : self._profiles,
           agentMessage: prompt,
           history,
           workspaceConfig: self._workspaceConfig,
@@ -112,32 +124,10 @@ export class ConversationContext {
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
       },
-      getAgentLabel: (agentId: AgentId) => profiles.find((profile) => profile.id === agentId)?.name ?? agentId,
+      getAgentLabel: (agentId: AgentId) => self.channelProfiles().find((profile) => profile.id === agentId)?.name ?? agentId,
     });
 
-    const hasActiveSupervisor = profiles.some(
-      (p) => p.role === "coordinator" && hasActiveChannelWatchTriggers(p.triggers),
-    );
-
-    this.messageRouter = new MessageRouter({
-      availableAgents: agentIds,
-      maxRouteDepth: MAX_ROUTE_DEPTH,
-      hasActiveSupervisor,
-      createSystemMessage: (content, parentMessageId) => {
-        const msg = self.messages.add({ kind: "system", content, status: "done", parentMessageId });
-        eventBus.publish({ type: "message.created", conversationId, message: msg });
-        return msg;
-      },
-      startAgentRun: (agentId, prompt, sourceMessage) => {
-        self.runManager.enqueue(agentId, prompt, sourceMessage);
-      },
-      markMessageRouted: (messageId, routeState) => {
-        const updated = self.messages.markRouteState(messageId, routeState);
-        if (updated) {
-          eventBus.publish({ type: "message.updated", conversationId, message: updated });
-        }
-      },
-    });
+    this.messageRouter = this.createMessageRouter(activeProfiles);
 
     this.channelWatch = new ChannelWatchService(
       conversationId,
@@ -145,12 +135,12 @@ export class ConversationContext {
       this.runManager,
       this.messages,
       eventBus,
-      profiles,
+      this.channelProfiles(),
     );
   }
 
   hasRunningAgent(): boolean {
-    return this.agents.states().some((s) => s.status === "running");
+    return this.agents.hasRunningAgent();
   }
 
   hasRunningOrQueued(): boolean {
@@ -183,10 +173,11 @@ export class ConversationContext {
     this.runManager.dispose();
 
     const { workspaceId, conversationId, eventBus, sessionStore } = this.options;
-    const newAgents = new AgentRegistry(profiles, eventBus, sessionStore, conversationId);
+    const activeProfiles = this.buildActiveProfiles(profiles);
+    const newAgents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId);
     newAgents.startAll();
 
-    this._profiles = profiles;
+    this._profiles = profiles.filter((profile) => !profile.internal);
 
     const agentIds = newAgents.ids();
 
@@ -198,10 +189,13 @@ export class ConversationContext {
       messages: this.messages,
       eventBus,
       buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
-        const history = buildHistoryForAgent(agentId, self.messages.list(), { excludeMessageId: sourceMessageId });
+        const history = buildHistoryForAgent(agentId, self.messages.list(), {
+          excludeMessageId: sourceMessageId,
+          ...(agentId === INTERNAL_SUPERVISOR_ID ? { maxTurns: SUPERVISOR_HISTORY_TURNS } : {}),
+        });
         return buildAgentContext({
           agentId,
-          profiles,
+          profiles: agentId === INTERNAL_SUPERVISOR_ID ? self.channelProfiles() : self._profiles,
           agentMessage: prompt,
           history,
           workspaceConfig: self._workspaceConfig,
@@ -210,32 +204,10 @@ export class ConversationContext {
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
       },
-      getAgentLabel: (agentId: AgentId) => profiles.find((profile) => profile.id === agentId)?.name ?? agentId,
+      getAgentLabel: (agentId: AgentId) => activeProfiles.find((profile) => profile.id === agentId)?.name ?? agentId,
     });
 
-    const newHasSupervisor = profiles.some(
-      (p) => p.role === "coordinator" && hasActiveChannelWatchTriggers(p.triggers),
-    );
-
-    const newMessageRouter = new MessageRouter({
-      availableAgents: agentIds,
-      maxRouteDepth: MAX_ROUTE_DEPTH,
-      hasActiveSupervisor: newHasSupervisor,
-      createSystemMessage: (content, parentMessageId) => {
-        const msg = self.messages.add({ kind: "system", content, status: "done", parentMessageId });
-        eventBus.publish({ type: "message.created", conversationId, message: msg });
-        return msg;
-      },
-      startAgentRun: (agentId, prompt, sourceMessage) => {
-        newRunManager.enqueue(agentId, prompt, sourceMessage);
-      },
-      markMessageRouted: (messageId, routeState) => {
-        const updated = self.messages.markRouteState(messageId, routeState);
-        if (updated) {
-          eventBus.publish({ type: "message.updated", conversationId, message: updated });
-        }
-      },
-    });
+    const newMessageRouter = this.createMessageRouter(activeProfiles, newRunManager);
 
     const newChannelWatch = new ChannelWatchService(
       conversationId,
@@ -243,7 +215,7 @@ export class ConversationContext {
       newRunManager,
       this.messages,
       eventBus,
-      profiles,
+      this.channelProfiles(activeProfiles),
     );
 
     // Replace mutable fields via Object.assign (intentional hot-swap)
@@ -252,6 +224,81 @@ export class ConversationContext {
       runManager: newRunManager,
       messageRouter: newMessageRouter,
       channelWatch: newChannelWatch,
+    });
+  }
+
+  supervisionMode(): ConversationInfo["supervisionMode"] {
+    return this._supervisionMode;
+  }
+
+  supervisionRuntime(): AgentRuntimeKind | undefined {
+    return this._supervisionRuntime;
+  }
+
+  setSupervisionMode(mode: ConversationInfo["supervisionMode"], runtime?: AgentRuntimeKind): void {
+    if (mode === "on") {
+      const selectedRuntime = runtime ?? this._supervisionRuntime;
+      if (!selectedRuntime) throw new Error("A runtime is required to enable collaboration supervision.");
+      if (!this.agents.has(INTERNAL_SUPERVISOR_ID)) {
+        this.agents.add(createSupervisorProfile(this.cwd(), selectedRuntime));
+      }
+      this._supervisionRuntime = selectedRuntime;
+    }
+    this._supervisionMode = mode;
+    this.rebuildCoordinationLayer();
+  }
+
+  private cwd(): string {
+    return this._profiles.find((profile) => !profile.internal)?.cwd ?? process.cwd();
+  }
+
+  private buildActiveProfiles(profiles: readonly AgentProfile[]): AgentProfile[] {
+    const normalProfiles = profiles.filter((profile) => !profile.internal);
+    if (this._supervisionMode !== "on" || !this._supervisionRuntime) return [...normalProfiles];
+    return [...normalProfiles, createSupervisorProfile(this.cwdFrom(profiles), this._supervisionRuntime)];
+  }
+
+  private cwdFrom(profiles: readonly AgentProfile[]): string {
+    return profiles.find((profile) => !profile.internal)?.cwd ?? process.cwd();
+  }
+
+  private channelProfiles(profiles = this._profiles): AgentProfile[] {
+    if (this._supervisionMode !== "on" || !this._supervisionRuntime) return [...profiles];
+    return profiles.some((profile) => profile.id === INTERNAL_SUPERVISOR_ID)
+      ? [...profiles]
+      : [...profiles, createSupervisorProfile(this.cwdFrom(profiles), this._supervisionRuntime)];
+  }
+
+  private rebuildCoordinationLayer(): void {
+    this.channelWatch.dispose();
+    const profiles = this.channelProfiles();
+    this.messageRouter = this.createMessageRouter(profiles);
+    this.channelWatch = new ChannelWatchService(
+      this.options.conversationId,
+      this.agents,
+      this.runManager,
+      this.messages,
+      this.eventBus,
+      profiles,
+    );
+  }
+
+  private createMessageRouter(_profiles: readonly AgentProfile[], runManager = this.runManager): MessageRouter {
+    const self = this;
+    return new MessageRouter({
+      availableAgents: this.agents.ids(),
+      maxRouteDepth: MAX_ROUTE_DEPTH,
+      hasActiveSupervisor: this._supervisionMode === "on",
+      createSystemMessage: (content, parentMessageId) => {
+        const msg = self.messages.add({ kind: "system", content, status: "done", parentMessageId });
+        self.eventBus.publish({ type: "message.created", conversationId: self.options.conversationId, message: msg });
+        return msg;
+      },
+      startAgentRun: (agentId, prompt, sourceMessage) => runManager.enqueue(agentId, prompt, sourceMessage),
+      markMessageRouted: (messageId, routeState) => {
+        const updated = self.messages.markRouteState(messageId, routeState);
+        if (updated) self.eventBus.publish({ type: "message.updated", conversationId: self.options.conversationId, message: updated });
+      },
     });
   }
 

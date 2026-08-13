@@ -4,13 +4,33 @@ import type { AgentHistoryEntry } from "./agent-context-builder.ts";
 const MAX_HISTORY_CHARS = 12000;
 const RECENT_UNTRUNCATED_COUNT = 6;
 const OLDER_ENTRY_MAX_CHARS = 500;
+const SUPERVISOR_HISTORY_TURNS = 8;
 
-export { MAX_HISTORY_CHARS, OLDER_ENTRY_MAX_CHARS, RECENT_UNTRUNCATED_COUNT };
+export { MAX_HISTORY_CHARS, OLDER_ENTRY_MAX_CHARS, RECENT_UNTRUNCATED_COUNT, SUPERVISOR_HISTORY_TURNS };
 
 export type BuildHistoryOptions = {
   /** Exclude this specific message (typically the current run's source message) */
   excludeMessageId?: string;
+  /** Keep the latest N user-originated turns, including their agent replies. */
+  maxTurns?: number;
 };
+
+function keepRecentTurns(messages: ChatMessage[], maxTurns: number | undefined): ChatMessage[] {
+  if (!maxTurns || maxTurns < 1) return messages;
+
+  let userTurns = 0;
+  let start = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.kind === "user") {
+      userTurns += 1;
+      if (userTurns >= maxTurns) {
+        start = index;
+        break;
+      }
+    }
+  }
+  return messages.slice(start);
+}
 
 export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[], options?: BuildHistoryOptions): AgentHistoryEntry[] {
   let cutoffIndex = -1;
@@ -34,12 +54,14 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
     eligible.push(msg);
   }
 
+  const boundedEligible = keepRecentTurns(eligible, options?.maxTurns);
+
   // Split into older and recent groups.
   // Recent = last N entries, kept untruncated, processed FIRST for budget priority.
   // Older = everything before, truncated with marker, fills remaining budget.
-  const recentStart = Math.max(0, eligible.length - RECENT_UNTRUNCATED_COUNT);
-  const older = eligible.slice(0, recentStart);
-  const recent = eligible.slice(recentStart);
+  const recentStart = Math.max(0, boundedEligible.length - RECENT_UNTRUNCATED_COUNT);
+  const older = boundedEligible.slice(0, recentStart);
+  const recent = boundedEligible.slice(recentStart);
 
   // Phase 1: Reserve budget for recent entries (newest → oldest within recent)
   // These are the most critical — user assignments, latest agent feedback.

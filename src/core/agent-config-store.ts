@@ -1,22 +1,21 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { hasActiveChannelWatchTriggers, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind } from "../shared/types.ts";
+import { type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind } from "../shared/types.ts";
 
 export type { AgentConfig };
 
-const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general", "coordinator"]);
+const VALID_ROLES = new Set<AgentRole>(["pm", "architect", "developer", "tester", "general"]);
 const VALID_RUNTIMES = new Set<AgentRuntimeKind>(["claude-code", "codex", "codebuddy"]);
-const RESERVED_IDS = new Set(["all"]);
+const RESERVED_IDS = new Set(["all", "supervisor"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const CURRENT_MIGRATION_VERSION = 4;
+const CURRENT_MIGRATION_VERSION = 5;
 
 const DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string> = {
   pm: "产品经理（pm）",
   architect: "架构师（architect）",
   developer: "开发（developer）",
   tester: "测试（tester）",
-  supervisor: "监督者（supervisor）",
 };
 
 const LEGACY_DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string> = {
@@ -24,7 +23,6 @@ const LEGACY_DEFAULT_AGENT_DISPLAY_NAMES: Record<string, string> = {
   architect: "Architect",
   developer: "Developer",
   tester: "Tester",
-  supervisor: "Supervisor",
 };
 
 export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
@@ -78,36 +76,6 @@ export const DEFAULT_AGENT_CONFIGS: AgentConfig[] = [
     systemPrompt:
       "You are Orbit's tester. Validate behavior, run tests, inspect regressions, and report risks. Do not modify production code unless explicitly assigned.",
     enabled: false,
-  },
-  {
-    id: "supervisor",
-    name: DEFAULT_AGENT_DISPLAY_NAMES.supervisor,
-    description: "Monitors conversation progress and coordinates agents toward task completion.",
-    role: "coordinator",
-    runtime: "claude-code",
-    systemPrompt:
-      "You are Orbit's conversation supervisor. Your role is to monitor conversation " +
-      "progress and coordinate agents toward task completion.\n\n" +
-      "**CRITICAL CONSTRAINT: You are a coordinator ONLY — like a project foreman. " +
-      "You must NEVER read files, search code, analyze the codebase, run commands, " +
-      "or use ANY tool.** Your only source of information is the conversation history " +
-      "messages from the user and other agents. Your only actions are delegating work " +
-      "via @agent: markers and concluding to the user via @user: markers.\n\n" +
-      "**Forbidden actions:** Read, Glob, Grep, Bash, Edit, Write, NotebookEdit, " +
-      "WebSearch, WebFetch, Skill, Agent, Task — if you can see it in your tool list, " +
-      "you must NOT use it.\n\n" +
-      "When triggered, evaluate ONLY the conversation history and follow this protocol:\n" +
-      "- If work is needed → @agent: assign tasks to specific agents\n" +
-      "- If blocked → explain to the user what's missing\n" +
-      "- If complete → @user: produce a final summary of accomplishments\n\n" +
-      "Before assigning: check conversation history to avoid duplicating work " +
-      "already in progress. Each message MUST have either @agent: or @user:.",
-    enabled: false,
-    triggers: {
-      onUnassignedMessage: true,
-      onAgentBlocked: true,
-      onRunFailed: true, // Issue #82: Trigger supervisor when an agent run fails
-    },
   },
 ];
 
@@ -187,51 +155,6 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
     }
   }
 
-  // Cross-validation: only coordinator-role agents may have active channel-watch triggers
-  const agentsWithActiveTriggers: AgentConfig[] = [];
-  for (const c of configs) {
-    if (c && hasActiveChannelWatchTriggers(c.triggers)) {
-      agentsWithActiveTriggers.push(c);
-      if (c.role !== "coordinator") {
-        errors.push(
-          `Agent "${c.id}" has active channel watch triggers but its role is "${c.role}". ` +
-            "Only coordinator-role agents can act as supervisor. Change the role to coordinator or disable the triggers.",
-        );
-      }
-    }
-  }
-
-  // Cross-validation: at most one supervisor (agent with active triggers) per conversation
-  if (agentsWithActiveTriggers.length > 1) {
-    errors.push(
-      `Only one supervisor is allowed per conversation, but ${agentsWithActiveTriggers.length} agents have active channel watch triggers: ` +
-        `${agentsWithActiveTriggers.map((c) => c.id).join(", ")}. ` +
-        "Disable triggers on all but one agent.",
-    );
-  }
-
-  // Issue #91: Cross-validation: only one coordinator-role agent is allowed
-  const coordinators = configs.filter((c) => c && c.role === "coordinator");
-  if (coordinators.length > 1) {
-    errors.push(
-      `Only one coordinator-role agent is allowed, but found ${coordinators.length}: ` +
-        `${coordinators.map((c) => c.id).join(", ")}. ` +
-        "Keep only one coordinator (supervisor) agent.",
-    );
-  }
-
-  // Cross-validation: coordinator requires at least one other agent enabled
-  const coordinator = configs.find((c) => c && c.role === "coordinator" && c.enabled);
-  if (coordinator) {
-    const othersEnabled = configs.some((c) => c && c.role !== "coordinator" && c.enabled);
-    if (!othersEnabled) {
-      errors.push(
-        "Coordinator cannot be enabled when no other agents are enabled. " +
-          "Enable at least one working agent (pm, architect, developer, tester) first.",
-      );
-    }
-  }
-
   return errors;
 }
 
@@ -265,6 +188,11 @@ export class AgentConfigStore {
         return structuredClone(DEFAULT_AGENT_CONFIGS);
       }
       let migrated = false;
+      const supervisorIndex = configs.findIndex((config) => config.id === "supervisor");
+      if (supervisorIndex !== -1) {
+        configs.splice(supervisorIndex, 1);
+        migrated = true;
+      }
       for (const config of configs) {
         if ("permissionProfile" in config) {
           delete (config as AgentConfig & { permissionProfile?: unknown }).permissionProfile;
@@ -282,17 +210,6 @@ export class AgentConfigStore {
         for (const def of DEFAULT_AGENT_CONFIGS) {
           if (!savedIds.has(def.id)) {
             configs.push(structuredClone(def));
-            migrated = true;
-          }
-        }
-        for (const config of configs) {
-          if (
-            config.id === "supervisor" &&
-            config.role === "coordinator" &&
-            config.triggers &&
-            config.triggers.onRunFailed === undefined
-          ) {
-            config.triggers.onRunFailed = true;
             migrated = true;
           }
         }

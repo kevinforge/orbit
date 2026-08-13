@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildHistoryForAgent, MAX_HISTORY_CHARS, RECENT_UNTRUNCATED_COUNT } from "../src/core/agent-history-builder.ts";
+import { buildHistoryForAgent, MAX_HISTORY_CHARS, RECENT_UNTRUNCATED_COUNT, SUPERVISOR_HISTORY_TURNS } from "../src/core/agent-history-builder.ts";
 import type { ChatMessage } from "../src/shared/types.ts";
 
 function msg(overrides: Partial<ChatMessage> & { kind: ChatMessage["kind"]; content: string }): ChatMessage {
@@ -218,6 +218,21 @@ test("budget is respected: total chars do not exceed MAX_HISTORY_CHARS", () => {
   const history = buildHistoryForAgent("developer", messages);
   const totalChars = history.reduce((sum, e) => sum + e.content.length, 0);
   assert.ok(totalChars <= MAX_HISTORY_CHARS, `total ${totalChars} exceeds budget ${MAX_HISTORY_CHARS}`);
+});
+
+test("maxTurns keeps the latest user turns together with their agent replies", () => {
+  const messages: ChatMessage[] = [
+    msg({ kind: "user", content: "turn 1" }),
+    msg({ kind: "agent", agentId: "architect", content: "reply 1", status: "done" }),
+    msg({ kind: "user", content: "turn 2" }),
+    msg({ kind: "agent", agentId: "developer", content: "reply 2", status: "done" }),
+    msg({ kind: "user", content: "turn 3" }),
+    msg({ kind: "agent", agentId: "tester", content: "reply 3", status: "done" }),
+  ];
+
+  const history = buildHistoryForAgent("supervisor", messages, { maxTurns: 2 });
+  assert.deepEqual(history.map((entry) => entry.content), ["turn 2", "reply 2", "turn 3", "reply 3"]);
+  assert.ok(SUPERVISOR_HISTORY_TURNS > 1);
 });
 
 test("truncation marker includes original message length", () => {

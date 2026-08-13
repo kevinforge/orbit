@@ -20,6 +20,21 @@ test("create returns a conversation with generated id and timestamps", () => {
   assert.equal(conv.name, "My Conversation");
   assert.ok(conv.createdAt);
   assert.ok(conv.lastOpenedAt);
+  assert.equal(conv.supervisionMode, "off");
+});
+
+test("supervision mode and runtime persist across repeated toggles", () => {
+  const dir = tmpDir();
+  const store = new ConversationStore(dir);
+  const conv = store.create("ws1", "Supervised work");
+
+  store.update("ws1", conv.id, { supervisionMode: "on", supervisionRuntime: "codebuddy" });
+  store.update("ws1", conv.id, { supervisionMode: "off" });
+  store.update("ws1", conv.id, { supervisionMode: "on" });
+
+  const reloaded = new ConversationStore(dir).get("ws1", conv.id)!;
+  assert.equal(reloaded.supervisionMode, "on");
+  assert.equal(reloaded.supervisionRuntime, "codebuddy");
 });
 
 test("list returns conversations for a workspace sorted by lastOpenedAt descending", () => {

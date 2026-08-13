@@ -15,33 +15,33 @@ const DEFAULT_RUNTIMES = new Map<AgentRuntime["kind"], AgentRuntime>([
 
 export class AgentRegistry {
   private readonly sessions = new Map<AgentId, AgentSession>();
+  private profilesById: AgentProfile[];
 
   constructor(
-    private readonly profiles: readonly AgentProfile[],
-    eventBus: EventBus,
-    sessionStore: SessionStore,
-    conversationId: string,
-    runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_RUNTIMES,
+    profiles: readonly AgentProfile[],
+    private readonly eventBus: EventBus,
+    private readonly sessionStore: SessionStore,
+    private readonly conversationId: string,
+    private readonly runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_RUNTIMES,
   ) {
+    this.profilesById = [...profiles];
     for (const profile of profiles) {
-      const runtime = runtimes.get(profile.runtime);
-      if (!runtime) {
-        throw new Error(`No runtime configured for ${profile.runtime}`);
-      }
-
-      this.sessions.set(
-        profile.id,
-        new AgentSession({
-          id: profile.id,
-          label: profile.name,
-          cwd: profile.cwd,
-          runtime,
-          eventBus,
-          sessionStore,
-          conversationId,
-        }),
-      );
+      this.createSession(profile);
     }
+  }
+
+  private createSession(profile: AgentProfile): void {
+    const runtime = this.runtimes.get(profile.runtime);
+    if (!runtime) throw new Error(`No runtime configured for ${profile.runtime}`);
+    this.sessions.set(profile.id, new AgentSession({
+      id: profile.id,
+      label: profile.name,
+      cwd: profile.cwd,
+      runtime,
+      eventBus: this.eventBus,
+      sessionStore: this.sessionStore,
+      conversationId: this.conversationId,
+    }));
   }
 
   startAll(): void {
@@ -63,11 +63,19 @@ export class AgentRegistry {
   }
 
   ids(): AgentId[] {
-    return this.profiles.map((profile) => profile.id);
+    return this.profilesById.filter((profile) => !profile.internal).map((profile) => profile.id);
+  }
+
+  allIds(): AgentId[] {
+    return this.profilesById.map((profile) => profile.id);
+  }
+
+  hasRunningAgent(): boolean {
+    return [...this.sessions.values()].some((session) => session.getStatus() === "running");
   }
 
   states(): AgentState[] {
-    return this.profiles.map((profile, index) => ({
+    return this.profilesById.filter((profile) => !profile.internal).map((profile, index) => ({
       id: profile.id,
       label: profile.name,
       runtime: profile.runtime,
@@ -76,6 +84,21 @@ export class AgentRegistry {
       status: this.get(profile.id).getStatus(),
       selected: index === 0,
     }));
+  }
+
+  add(profile: AgentProfile): void {
+    if (this.sessions.has(profile.id)) return;
+    this.profilesById.push(profile);
+    this.createSession(profile);
+    this.sessions.get(profile.id)?.start();
+  }
+
+  remove(agentId: AgentId): void {
+    const session = this.sessions.get(agentId);
+    if (!session) return;
+    session.stop();
+    this.sessions.delete(agentId);
+    this.profilesById = this.profilesById.filter((profile) => profile.id !== agentId);
   }
 
   pendingPermissions(): PendingPermission[] {

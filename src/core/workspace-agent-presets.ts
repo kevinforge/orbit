@@ -3,7 +3,7 @@ import { DEFAULT_AGENT_CONFIGS } from "./agent-config-store.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey } from "./runtime-meta.ts";
 import { PRESET_IDS } from "./workspace-presets.ts";
 
-const MULTI_AGENT_ENABLED_IDS = new Set(["architect", "developer", "tester", "supervisor"]);
+const MULTI_AGENT_ENABLED_IDS = new Set(["architect", "developer", "tester"]);
 const FALLBACK_RUNTIME: AgentRuntimeKind = "claude-code";
 
 export function preferredRuntimeFromAvailability(availability: readonly RuntimeAvailability[]): AgentRuntimeKind {

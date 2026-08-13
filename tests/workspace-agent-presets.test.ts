@@ -14,11 +14,11 @@ function runtime(runtime: string, available: boolean): RuntimeAvailability {
   };
 }
 
-test("multi-agent collaboration preset enables architect developer tester and supervisor", () => {
+test("multi-agent collaboration preset enables configurable architect developer and tester", () => {
   const configs = initialAgentConfigsForWorkspacePreset(PRESET_IDS.multiAgentCollaboration, [runtime("codex-acp", true)]);
   const enabledIds = configs.filter((config) => config.enabled).map((config) => config.id).sort();
 
-  assert.deepEqual(enabledIds, ["architect", "developer", "supervisor", "tester"]);
+  assert.deepEqual(enabledIds, ["architect", "developer", "tester"]);
 });
 
 test("multi-agent collaboration preset assigns the preferred available runtime to enabled defaults", () => {
