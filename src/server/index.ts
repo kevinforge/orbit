@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { configsToProfiles } from "../core/agent-profiles.ts";
-import { AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
+import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
 import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { WorkspaceConfigStore } from "../core/workspace-config-store.ts";
@@ -424,7 +424,6 @@ function currentAgentStates() {
       id: config.id,
       label: config.name,
       runtime: config.runtime,
-      role: config.role,
       status: "idle" as const,
       selected: index === 0,
       runtimeAvailable: runtimeAvailable(config.runtime),
@@ -716,6 +715,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/agent-teams") {
+      sendJson(res, 200, AGENT_TEAM_TEMPLATES);
+      return;
+    }
+
     if (req.method === "PUT" && url.pathname === "/api/agents") {
       await handlePutAgents(req, res);
       return;
@@ -732,6 +736,29 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       allConfigs = configStore.reset(activeWorkspaceId);
+      refreshEnabledAgents();
+      sendJson(res, 200, allConfigs);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/agents/apply-team") {
+      if (!activeWorkspaceId) {
+        sendJson(res, 409, { ok: false, message: "Create or select a workspace before applying a team." });
+        return;
+      }
+      const ctx = getActiveContext();
+      if (ctx?.hasRunningAgent()) {
+        sendJson(res, 409, { ok: false, message: "Cannot change the team while an agent is running." });
+        return;
+      }
+      const input = (await readJson(req)) as { teamId?: unknown };
+      const template = AGENT_TEAM_TEMPLATES.find((item) => item.id === input.teamId);
+      if (!template) {
+        sendJson(res, 400, { ok: false, message: "Unknown team template." });
+        return;
+      }
+      allConfigs = template.members.map((member) => ({ ...member, enabled: true }));
+      configStore.save(activeWorkspaceId, allConfigs);
       refreshEnabledAgents();
       sendJson(res, 200, allConfigs);
       return;

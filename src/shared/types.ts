@@ -1,7 +1,5 @@
 export type AgentId = string;
 
-export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general" | "coordinator";
-
 export type ApprovalMode = "ask" | "full-access";
 
 export type SupervisionMode = "off" | "on";
@@ -94,27 +92,29 @@ export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): 
   );
 }
 
-export type AgentConfigUi = {
-  label?: string;
-};
-
 export type AgentConfig = {
   id: AgentId;
   name: string;
   description?: string;
-  role: AgentRole;
   runtime: AgentRuntimeKind;
   systemPrompt: string;
   enabled: boolean;
-  ui?: AgentConfigUi;
   triggers?: ChannelWatchTriggers;
+};
+
+export type AgentTemplate = Omit<AgentConfig, "enabled" | "triggers">;
+
+export type AgentTeamTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  members: AgentTemplate[];
 };
 
 export type AgentProfile = {
   id: AgentId;
   name: string;
   description?: string;
-  role: AgentRole;
   runtime: AgentRuntimeKind;
   cwd: string;
   systemPrompt: string;
@@ -129,7 +129,6 @@ export type AgentState = {
   label: string;
   runtime: AgentRuntimeKind;
   status: AgentStatus;
-  role: AgentRole;
   triggers?: ChannelWatchTriggers;
   selected?: boolean;
   runtimeAvailable?: boolean;

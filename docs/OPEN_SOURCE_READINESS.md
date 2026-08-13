@@ -52,7 +52,7 @@ administrator steps.
 - Local-data baseline: `docs/DATA_DIRECTORY.md` documents `~/.orbit` layout,
   backup, restore, reset, and workspace/conversation deletion scope.
 - Terminology baseline: `docs/TERMINOLOGY_AND_ROUTING.md` documents public
-  product terms, digital employee language, and `@developer:` routing markers.
+  product terms, digital employee language, and custom display-name routing markers.
 
 ## Release Gates
 

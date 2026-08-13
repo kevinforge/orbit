@@ -37,7 +37,7 @@ export type ManagedRun = {
   startedAt?: string;
   completedAt?: string;
   activity: AgentActivityEvent[];
-  /** When true, this run's completion will not trigger follow-up @agent: routing or supervisor. */
+  /** When true, this run's completion will not trigger follow-up assignment routing or supervision. */
   suppressFollowupRouting?: boolean;
   /** Who initiated this run: a user message, an agent's @mention, or the supervisor. */
   origin?: RunOrigin;
@@ -84,13 +84,29 @@ export class RunManager {
     return false;
   }
 
+  cancelAgentRuns(agentId: AgentId): string[] {
+    const cancelledRunIds: string[] = [];
+    const queue = this.getQueue(agentId);
+    while (queue.length > 0) {
+      const run = queue.shift()!;
+      this.markCancelled(run, "before start");
+      cancelledRunIds.push(run.id);
+    }
+
+    const activeRun = this.active.get(agentId);
+    if (activeRun && this.cancel(activeRun.id).ok) {
+      cancelledRunIds.push(activeRun.id);
+    }
+    return cancelledRunIds;
+  }
+
   enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage, origin?: RunOrigin): ManagedRun {
     const runId = createRunId(agentId);
     const resolvedOrigin: RunOrigin = origin ?? (sourceMessage.kind === "system" ? "supervisor" : sourceMessage.kind === "agent" ? "agent" : "user");
     // Supervisor runs are triggered by ChannelWatchService (already rate-limited
     // via maxTriggers) and represent a fresh coordination check, so they start
     // from a low route-depth base instead of inheriting the triggering message's
-    // depth. Otherwise a supervisor reply that assigns more work (@agent:) would
+    // depth. Otherwise a supervisor reply that assigns more work would
     // keep counting from an already-deep chain and could trip maxRouteDepth early.
     const routeDepth = resolvedOrigin === "supervisor" ? 1 : (sourceMessage.routeDepth ?? 0) + 1;
     const isBusy = this.active.has(agentId);
@@ -224,7 +240,7 @@ export class RunManager {
    *
    * - All queued runs are cancelled immediately.
    * - All running runs are marked with `suppressFollowupRouting`, so their
-   *   completions won't trigger further @agent: routing or supervisor checks.
+   *   completions won't trigger further assignment routing or supervision checks.
    * - Running runs continue to stream output and complete normally.
    * - New messages sent after the interrupt route normally.
    */

@@ -40,7 +40,6 @@ function makeSupervisorProfile(id = "supervisor"): AgentProfile {
   return {
     id,
     name: "Supervisor",
-    role: "coordinator",
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: "You are a supervisor.",
@@ -55,7 +54,6 @@ function makePlainAgentProfile(id: AgentId): AgentProfile {
   return {
     id,
     name: id,
-    role: "developer",
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: `You are ${id}.`,
@@ -936,6 +934,48 @@ test("hasAssignmentMarker only matches known agent IDs — @agent: reference tex
   service.dispose();
 });
 
+test("custom display names suppress supervisor follow-up assignments", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", implementation: "idle", verification: "idle" },
+  });
+
+  const implementation = makePlainAgentProfile("implementation");
+  implementation.name = "开发实现";
+  const verification = makePlainAgentProfile("verification");
+  verification.name = "质量验证";
+  const profiles = [makeSupervisorProfile("supervisor"), implementation, verification];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  const implementationReply = messages.add({
+    kind: "agent",
+    agentId: "implementation",
+    content: "已完成基础实现，@质量验证: 请继续检查边界条件。",
+    status: "done",
+    runId: "run_custom_name",
+    runStatus: "completed",
+  });
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "implementation",
+    runId: "run_custom_name",
+    resultMessageId: implementationReply.id,
+  });
+
+  assert.equal(enqueueCalls.length, 0);
+  service.dispose();
+});
+
 test("suppressed run.completed (suppressFollowupRouting=true) does NOT trigger supervisor", async () => {
   const eventBus = new EventBus();
   const messages = new MessageStore();
@@ -1274,7 +1314,6 @@ test("Issue #82: run.failed triggers supervisor with onRunFailed configured", as
   const supervisorProfile: AgentProfile = {
     id: "supervisor",
     name: "Supervisor",
-    role: "coordinator",
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: "You are a supervisor.",
@@ -1336,7 +1375,6 @@ test("run.failed does NOT trigger supervisor without onRunFailed configured", as
   const supervisorProfile: AgentProfile = {
     id: "supervisor",
     name: "Supervisor",
-    role: "coordinator",
     runtime: "claude-code",
     cwd: "/tmp",
     systemPrompt: "You are a supervisor.",

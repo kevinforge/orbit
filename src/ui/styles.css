@@ -301,7 +301,7 @@ button:active:not(:disabled) {
 }
 
 .agentButton {
-  --agent-role-color: var(--border);
+  --agent-color: var(--border);
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr);
   grid-template-areas:
@@ -311,7 +311,7 @@ button:active:not(:disabled) {
   width: 100%;
   min-height: 38px;
   border: 1px solid transparent;
-  border-left: 3px solid var(--agent-role-color);
+  border-left: 3px solid var(--agent-color);
   border-radius: 8px;
   padding: 6px 11px;
   color: var(--text-secondary);
@@ -323,7 +323,7 @@ button:active:not(:disabled) {
 
 .agentButton:hover {
   border-color: var(--border);
-  border-left-color: var(--agent-role-color);
+  border-left-color: var(--agent-color);
   background: rgba(255, 255, 255, 0.7);
   box-shadow: none;
   transform: none;
@@ -331,34 +331,9 @@ button:active:not(:disabled) {
 
 .agentButton.selected {
   border-color: var(--border);
-  border-left-color: var(--agent-role-color);
+  border-left-color: var(--agent-color);
   background: var(--bg-surface);
   box-shadow: var(--shadow-xs);
-}
-
-.agentRole-pm {
-  --agent-role-color: #4f7fb5;
-}
-
-.agentRole-architect {
-  --agent-role-color: #7468bd;
-}
-
-.agentRole-developer {
-  --agent-role-color: #159487;
-}
-
-.agentRole-tester {
-  --agent-role-color: #c48a32;
-}
-
-.agentRole-supervisor,
-.agentRole-coordinator {
-  --agent-role-color: #d16b5c;
-}
-
-.agentRole-general {
-  --agent-role-color: #7b8790;
 }
 
 .agentButton.statusHidden {
@@ -2519,7 +2494,7 @@ button:active:not(:disabled) {
 /* In compact mode, selected agent should not look like it's running */
 .compactAgents .agentButton.selected {
   border-color: transparent;
-  border-left-color: var(--agent-role-color);
+  border-left-color: var(--agent-color);
   background: transparent;
   box-shadow: none;
 }
@@ -3646,16 +3621,52 @@ button:active:not(:disabled) {
   text-transform: uppercase;
 }
 
-.configCardRole {
-  border: 1px solid var(--accent-border);
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
 .configCardRuntime {
   border: 1px solid var(--border);
   color: var(--text-muted);
   background: var(--bg-surface);
+}
+
+.agentTeamTemplates {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.agentTeamTemplate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.agentTeamTemplate > div {
+  min-width: 0;
+}
+
+.agentTeamTemplate strong,
+.agentTeamTemplate span {
+  display: block;
+}
+
+.agentTeamTemplate span {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agentTeamTemplate button {
+  flex: 0 0 auto;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 6px 12px;
+  color: var(--accent);
+  background: transparent;
+  cursor: pointer;
 }
 
 .supervisorBadge {
@@ -4970,18 +4981,18 @@ button:active:not(:disabled) {
     min-height: 40px;
     padding: 7px 9px;
     border: 1px solid transparent;
-    border-left: 2px solid var(--agent-role-color);
+    border-left: 2px solid var(--agent-color);
     border-radius: 9px;
   }
 
   .agentButton:hover {
-    border-left-color: var(--agent-role-color);
+    border-left-color: var(--agent-color);
     background: var(--bg-hover);
   }
 
   .agentButton.selected {
     border-color: var(--border);
-    border-left-color: var(--agent-role-color);
+    border-left-color: var(--agent-color);
     background: var(--bg-surface);
     box-shadow: 0 1px 3px rgba(25, 54, 49, 0.06);
   }
@@ -5812,13 +5823,13 @@ button:active:not(:disabled) {
     grid-template-areas: "dot text";
     padding: 7px 9px;
     border: 0;
-    border-left: 2px solid var(--agent-role-color);
+    border-left: 2px solid var(--agent-color);
     background: transparent;
   }
 
   .agentButton.selected {
     border-color: transparent;
-    border-left-color: var(--agent-role-color);
+    border-left-color: var(--agent-color);
     background: #eef1f5;
     box-shadow: none;
   }

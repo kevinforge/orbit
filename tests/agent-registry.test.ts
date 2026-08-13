@@ -17,7 +17,7 @@ function createTempSessionStore(): SessionStore {
 
 test("creates sessions with the runtime selected by each profile", async () => {
   const profiles = createDefaultAgentProfiles(process.cwd()).map((profile) =>
-    profile.id === "tester" ? { ...profile, runtime: "codebuddy" as const } : profile,
+    profile.id === "verification" ? { ...profile, runtime: "codebuddy" as const } : profile,
   );
   const calls: string[] = [];
   const codeBuddyRuntime: AgentRuntime = {
@@ -34,13 +34,13 @@ test("creates sessions with the runtime selected by each profile", async () => {
   const claudeRuntime: AgentRuntime = {
     kind: "claude-code",
     run() {
-      throw new Error("Claude runtime should not run for tester");
+      throw new Error("Claude runtime should not run for verification");
     },
   };
   const codexRuntime: AgentRuntime = {
     kind: "codex",
     run() {
-      throw new Error("Codex runtime should not run for tester");
+      throw new Error("Codex runtime should not run for verification");
     },
   };
   const registry = new AgentRegistry(
@@ -56,15 +56,15 @@ test("creates sessions with the runtime selected by each profile", async () => {
   );
 
   registry.startAll();
-  const result = await registry.get("tester").send("run-1", "hello");
+  const result = await registry.get("verification").send("run-1", "hello");
 
   assert.equal(result.content, "codebuddy final");
-  assert.deepEqual(calls, ["tester"]);
+  assert.deepEqual(calls, ["verification"]);
 });
 
 test("states include each agent runtime", () => {
   const profiles = createDefaultAgentProfiles(process.cwd()).map((profile) =>
-    profile.id === "developer" ? { ...profile, runtime: "codebuddy" as const } : profile,
+    profile.id === "implementation" ? { ...profile, runtime: "codebuddy" as const } : profile,
   );
   const runtime: AgentRuntime = {
     kind: "claude-code",
@@ -92,7 +92,7 @@ test("states include each agent runtime", () => {
     ]),
   );
 
-  const developer = registry.states().find((state) => state.id === "developer");
+  const developer = registry.states().find((state) => state.id === "implementation");
 
   assert.equal(developer?.runtime, "codebuddy");
 });

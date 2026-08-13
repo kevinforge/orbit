@@ -50,7 +50,7 @@ Orbit requires Node.js 22 or newer and at least one supported runtime:
 
 ## Features
 
-- Five built-in digital employee templates: product manager (`pm`), architect, developer, tester, and supervisor
+- One built-in software development team template with four configurable digital employees; collaboration supervision is enabled per conversation and is not a user-configured employee
 - Custom digital employee creation and configuration via UI
 - Per-message approval modes: ask before ACP tool operations or auto-approve them for the current task
 - Workspace templates for blank or multi-employee collaboration setups
@@ -81,7 +81,7 @@ restore, and reset guidance.
 ## Terminology And Routing
 
 See [docs/TERMINOLOGY_AND_ROUTING.md](docs/TERMINOLOGY_AND_ROUTING.md) for the
-public product terms and `@developer:` style assignment marker rules.
+public product terms and custom display-name assignment marker rules.
 
 ## Contributing
 

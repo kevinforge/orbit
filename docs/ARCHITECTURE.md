@@ -28,7 +28,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/server/index.ts` | Local HTTP routes, SSE wiring, message intake |
 | `src/server/sse-hub.ts` | Server-Sent Events client management |
 | `src/server/static-server.ts` | Static UI serving |
-| `src/core/agent-profiles.ts` | Built-in role definitions and config-to-profile conversion |
+| `src/core/agent-profiles.ts` | Built-in employee templates and config-to-profile conversion |
 | `src/core/agent-config-store.ts` | Persistent agent configuration (load/save/reset/validate) |
 | `src/core/agent-registry.ts` | Owns agent sessions and exposes agent state |
 | `src/core/agent-session.ts` | Starts one runtime adapter run, tracks status, and owns pending permission and elicitation decisions |
@@ -39,7 +39,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/codebuddy-acp-runtime.ts` | Runs CodeBuddy through ACP v1 and maps session updates into Orbit events |
 | `src/core/run-manager.ts` | Per-agent run queue and lifecycle events |
 | `src/core/message-router.ts` | Routes user and agent messages containing explicit assignments |
-| `src/core/mention-router.ts` | Parses `@agent:` assignment markers |
+| `src/core/mention-router.ts` | Parses `@display-name:` assignment markers |
 | `src/core/agent-context-builder.ts` | Builds private context passed into each agent run |
 | `src/core/agent-history-builder.ts` | Builds scoped channel history for each agent run |
 | `src/core/workspace-config-store.ts` | Load/save per-workspace configuration (systemPrompt, rules) |
@@ -57,32 +57,31 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 
 ## Agents
 
-Agents are configured via `AgentConfigStore` and persisted per-workspace in `~/.orbit/workspaces/<workspace-id>/agents.json`. Five agents are seeded by default:
+Digital employees are configured via `AgentConfigStore` and persisted per-workspace in `~/.orbit/workspaces/<workspace-id>/agents.json`. The software development team template seeds four employees:
 
 | Routing marker | Display name | Default runtime |
 | --- | --- | --- |
-| `@pm:` | 产品经理（pm） | `codex` |
-| `@architect:` | 架构师（architect） | `codex` |
-| `@developer:` | 开发（developer） | `claude-code` |
-| `@tester:` | 测试（tester） | `codebuddy` |
-| `@supervisor:` | 监督者（supervisor） | `claude-code` |
+| `@需求分�?` | 需求分�?| `codex` |
+| `@方案设计:` | 方案设计 | `codex` |
+| `@开发实�?` | 开发实�?| `claude-code` |
+| `@质量验证:` | 质量验证 | `codebuddy` |
 
-These defaults can be modified, disabled, or removed through the settings UI. Custom agents can be added with any of the supported runtimes and their own system prompt. Only enabled agents participate in routing.
+These defaults can be modified, disabled, or removed through the settings UI. Custom employees can be added with any of the supported runtimes and their own system prompt. Only enabled employees participate in routing.
 
 ### Two-Layer Model
 
-- **`AgentConfig`** (`src/shared/types.ts`): Persistence and UI model — includes id, name, description, role, runtime, systemPrompt, enabled, and ui metadata.
-- **`AgentProfile`** (`src/shared/types.ts`): Runtime model used by `AgentRegistry` and `AgentSession` — includes the resolved workspace cwd.
+- **`AgentConfig`** (`src/shared/types.ts`): Persistence and UI model containing an internal id, display name, description, runtime, systemPrompt, enabled state, and optional triggers.
+- **`AgentProfile`** (`src/shared/types.ts`): Runtime model used by `AgentRegistry` and `AgentSession` �?includes the resolved workspace cwd.
 
-`configsToProfiles()` in `agent-profiles.ts` converts enabled `AgentConfig` entries to `AgentProfile` instances. Role and system-prompt definitions describe the digital employee's responsibilities; there is no per-employee permission matrix.
+`configsToProfiles()` in `agent-profiles.ts` converts enabled `AgentConfig` entries to `AgentProfile` instances. The system prompt describes each employee's responsibilities; there is no role field or per-employee permission matrix.
 
 ### Config Store
 
 `AgentConfigStore` (`src/core/agent-config-store.ts`) handles:
 - **load**: Reads `agents.json`, returns seed defaults if missing or corrupted
 - **save**: Validates then writes with atomic file swap
-- **reset**: Restores the five built-in default configs
-- **validateAgentConfigs**: Checks id format, uniqueness, reserved names, runtime validity, systemPrompt, name, coordinator uniqueness, and coordinator prerequisites
+- **reset**: Restores the built-in software development team configs
+- **validateAgentConfigs**: Checks internal id and display-name format, uniqueness, reserved names, runtime validity, systemPrompt, and trigger settings
 
 ### Runtime Refresh
 
@@ -97,7 +96,7 @@ This ensures routing and run dispatch use the current agent configuration. A 409
 
 ## Routing Rules
 
-- Only `@agent:` with a colon assigns work.
+- Only `@display-name:` with a colon assigns work. The display name is configurable; the internal id is never used in public markers.
 - `@all:` assigns work to all registered agents (sender excluded); it expands at route time into individual agent assignments, not a real agent profile.
 - Plain `@agent` mentions are references and do not trigger routing.
 - Unknown `@xx:` mentions are silently ignored (no error, no routing).
@@ -116,8 +115,8 @@ Agent-to-agent routing chains are capped at a fixed depth of 10. Each agent repl
 
 Each workspace can have workspace-level settings (`WorkspaceConfig`) that apply to all agent runs in all conversations within that workspace:
 
-- `systemPrompt` — A prompt injected into every agent run, after Orbit's fixed rules and before the agent's role instruction.
-- `rules` — A list of rules rendered as bullet points in the agent context.
+- `systemPrompt` �?An employee instruction injected into every agent run, after Orbit's fixed rules and before channel history.
+- `rules` �?A list of rules rendered as bullet points in the agent context.
 
 Stored at `~/.orbit/workspaces/<workspaceId>/config.json`. Can be updated at runtime via `PUT /api/workspace-config`.
 
@@ -129,11 +128,11 @@ The final agent prompt is assembled in this order:
 2. **Final answer rules** (output format constraints)
 3. **Workspace system prompt** (from `WorkspaceConfig.systemPrompt`, if set)
 4. **Workspace rules** (from `WorkspaceConfig.rules`, if set)
-5. **Agent role instruction** (`AgentConfig.systemPrompt`)
+5. **Employee instruction** (`AgentConfig.systemPrompt`)
 6. **Channel history** (scoped messages since agent's last completed run)
 7. **Current task** (the routed message content)
 
-This means workspace prompts inject shared context across all agents, while each agent retains its own role-specific instruction.
+This means workspace prompts inject shared context across all employees, while each employee retains its own task-specific instruction. Collaboration supervision uses a separate internal profile only while enabled for the conversation.
 
 `WorkspaceConfigStore` (`src/core/workspace-config-store.ts`) manages load/save with atomic writes and graceful fallback to defaults when the file is missing or corrupted.
 
@@ -217,7 +216,7 @@ All three runtimes use ACP v1 over newline-delimited JSON-RPC on stdio. Runtime 
 
 ACP message chunks are grouped by assistant message ID. Orbit keeps visible progress in runtime output, ignores hidden thought chunks, and stores only the explicit final phase or the last main assistant message as the chat result.
 
-Each ACP agent is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for “ask” and `agent-full-access` for “full access”. Orbit advertises ACP elicitation support for form and URL modes. Claude's `AskUserQuestion` is therefore rendered as a transient Orbit form. URL requests show the full external URL and require explicit user consent before returning `accept`. Unsupported custom modes or schema fields are cancelled instead of being guessed at.
+Each ACP agent is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for “ask�?and `agent-full-access` for “full access�? Orbit advertises ACP elicitation support for form and URL modes. Claude's `AskUserQuestion` is therefore rendered as a transient Orbit form. URL requests show the full external URL and require explicit user consent before returning `accept`. Unsupported custom modes or schema fields are cancelled instead of being guessed at.
 
 The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request. Elicitation uses separate `elicitation.requested` and `elicitation.resolved` events and `/api/elicitations/resolve`, so user input is not treated as a security approval.
 

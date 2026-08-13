@@ -37,12 +37,12 @@ export function TaskDetailDrawer(props: TaskDetailDrawerProps) {
       <div className="taskDrawerBody">
         <section className="taskDrawerSection taskDrawerOverview">
           <div className="taskDrawerOwner">
-            <Avatar size="32px" style={{ backgroundColor: roleColor(agent?.role) }}>
+            <Avatar size="32px" style={{ backgroundColor: agentColor(agent?.id) }}>
               {(agent?.label || message.agentId || "员工").slice(0, 1)}
             </Avatar>
             <div>
               <strong>{agent?.label || message.agentId || "数字员工"}</strong>
-              <span>{message.agentId ? `@${message.agentId}` : "数字员工任务"}</span>
+              <span>{agent?.label ? `@${agent.label}` : "数字员工任务"}</span>
             </div>
             <Tag theme={status.theme} variant="light" icon={status.icon}>{status.label}</Tag>
           </div>
@@ -74,8 +74,8 @@ export function TaskDetailDrawer(props: TaskDetailDrawerProps) {
           <div className="taskDrawerAgents">
             {agents.map((item) => (
               <div className="taskDrawerAgent" key={item.id}>
-                <span className={`taskDrawerAgentDot ${item.status}`} style={{ backgroundColor: roleColor(item.role) }} />
-                <span className="taskDrawerAgentName"><strong>{item.label}</strong><small>@{item.id}</small></span>
+                <span className={`taskDrawerAgentDot ${item.status}`} style={{ backgroundColor: agentColor(item.id) }} />
+                <span className="taskDrawerAgentName"><strong>{item.label}</strong><small>@{item.label}</small></span>
                 <Tag size="small" variant="outline">{runtimeLabel(item.runtime)}</Tag>
               </div>
             ))}
@@ -157,11 +157,10 @@ function runtimeLabel(runtime: AgentState["runtime"]): string {
   return "CODEX";
 }
 
-function roleColor(role?: AgentState["role"]): string {
-  if (role === "architect") return "#0052d9";
-  if (role === "developer") return "#00a870";
-  if (role === "tester") return "#ed7b2f";
-  if (role === "coordinator") return "#8e56dd";
-  if (role === "pm") return "#d54941";
-  return "#6b7785";
+function agentColor(id?: string): string {
+  const colors = ["#0052d9", "#00a870", "#ed7b2f", "#8e56dd", "#d54941", "#6b7785"];
+  if (!id) return colors[colors.length - 1];
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length];
 }

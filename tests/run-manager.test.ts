@@ -90,6 +90,41 @@ test("queues a second run for the same agent until the first completes", async (
   assert.equal(messages.list()[1]?.status, "done");
 });
 
+test("cancelAgentRuns clears a supervisor queue and active run", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const calls: string[] = [];
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string) {
+            calls.push(runId);
+            return first.promise;
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const active = manager.enqueue("supervisor", "first", source);
+  const queued = manager.enqueue("supervisor", "second", source);
+  const cancelled = manager.cancelAgentRuns("supervisor");
+
+  assert.deepEqual(cancelled, [queued.id, active.id]);
+  assert.equal(active.status, "cancelled");
+  assert.equal(queued.status, "cancelled");
+  assert.deepEqual(calls, [active.id]);
+});
+
 test("propagates the source approval mode to the agent run and result message", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

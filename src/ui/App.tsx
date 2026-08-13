@@ -3,7 +3,7 @@ import { renderMarkdown } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
 import {
@@ -75,7 +75,7 @@ export function App() {
   const [showApprovalModeMenu, setShowApprovalModeMenu] = useState(false);
   const [resolvingPermissionIds, setResolvingPermissionIds] = useState<string[]>([]);
   const [resolvingElicitationIds, setResolvingElicitationIds] = useState<string[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
+  const [selectedAgent, setSelectedAgent] = useState<AgentId>("");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
   const [isInterrupting, setIsInterrupting] = useState(false);
@@ -274,7 +274,6 @@ export function App() {
       id: "supervisor",
       label: "协作监督",
       runtime: state.conversation.supervisionRuntime ?? "codebuddy",
-      role: "coordinator",
       status: "idle",
     });
     return agents;
@@ -309,12 +308,12 @@ export function App() {
     }
 
     const query = mentionDraft.query.toLowerCase();
-    const matched = agentIds.filter((agentId) => agentId.toLowerCase().startsWith(query));
+    const matched = state.agents.filter((agent) => agent.label.toLocaleLowerCase().startsWith(query)).map((agent) => agent.id);
     if ("all".startsWith(query) && !matched.includes("all")) {
       matched.push("all" as AgentId);
     }
     return matched;
-  }, [agentIds, inputFocused, mentionDraft]);
+  }, [agentIds, inputFocused, mentionDraft, state.agents]);
 
   useEffect(() => {
     if (!agentsById.has(selectedAgent) && agentIds[0]) {
@@ -644,18 +643,19 @@ export function App() {
   }
 
   function chooseAgent(agentId: AgentId) {
+    const agentName = agentsById.get(agentId)?.label ?? agentId;
     setSelectedAgent(agentId);
     setContent((current) => {
-      if (!current.trim() || /^@\w[\w-]*:\s*$/.test(current.trim())) {
-        return `@${agentId}: `;
+      if (!current.trim() || /^@[^\s@:：]+:\s*$/.test(current.trim())) {
+        return `@${agentName}: `;
       }
       return current;
     });
-    const nextCursorIndex = agentId.length + 3;
+    const nextCursorIndex = agentName.length + 3;
     setCursorIndex(nextCursorIndex);
     window.setTimeout(() => {
       inputRef.current?.focus();
-      if (!content.trim() || /^@\w[\w-]*:\s*$/.test(content.trim())) {
+      if (!content.trim() || /^@[^\s@:：]+:\s*$/.test(content.trim())) {
         inputRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
       }
     }, 0);
@@ -850,8 +850,9 @@ export function App() {
       return;
     }
 
-    const nextContent = `${content.slice(0, mentionDraft.start)}@${agentId}: ${content.slice(mentionDraft.end)}`;
-    const nextCursorIndex = mentionDraft.start + agentId.length + 3;
+    const agentName = agentId === "all" ? "all" : agentsById.get(agentId)?.label ?? agentId;
+    const nextContent = `${content.slice(0, mentionDraft.start)}@${agentName}: ${content.slice(mentionDraft.end)}`;
+    const nextCursorIndex = mentionDraft.start + agentName.length + 3;
     if (agentId !== "all") {
       setSelectedAgent(agentId);
     }
@@ -1091,7 +1092,7 @@ export function App() {
               agentIds.map((agentId) => (
                 <AgentButton
                   key={agentId}
-                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", role: "general", status: "idle" }}
+                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", status: "idle" }}
                   selected={selectedAgent === agentId}
                   showLiveStatus={activeView === "conversation"}
                   onClick={() => chooseAgent(agentId)}
@@ -1162,7 +1163,7 @@ export function App() {
           </div>
           <div className="conversationHeaderRight">
             <Avatar.Group size="28px" max={4}>
-              {state.agents.map((agent) => <Avatar key={agent.id} style={{ backgroundColor: agentRoleColor(agent.role) }}>{agent.label.slice(0, 1)}</Avatar>)}
+              {state.agents.map((agent) => <Avatar key={agent.id} style={{ backgroundColor: agentColor(agent.id) }}>{agent.label.slice(0, 1)}</Avatar>)}
             </Avatar.Group>
             <span className="headerMeta">{state.agents.length} 人在线</span>
             <Button
@@ -1204,7 +1205,7 @@ export function App() {
                 {hasWorkspace ? (
                   <>
                     <li><strong>1</strong> 启用或添加数字员工</li>
-                    <li><strong>2</strong> 使用 <code>@agent:</code> 输入任务</li>
+                    <li><strong>2</strong> 使用 <code>@数字员工名称:</code> 输入任务</li>
                     <li><strong>3</strong> 首句话会成为会话名称</li>
                   </>
                 ) : (
@@ -1329,7 +1330,7 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : supervisionEnabled ? "直接输入消息，协作监督会自动协调数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
+              placeholder={!hasWorkspace ? "先选择或创建工作区" : supervisionEnabled ? "直接输入消息，协作监督会自动协调数字员工" : hasEnabledAgent ? `@${agentsById.get(selectedAgent)?.label ?? selectedAgent}: 输入任务` : "先添加或启用数字员工"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1721,7 +1722,7 @@ function MentionMenu(props: {
           >
             <span className="mentionName">
               <span className={`mentionDot ${isAll ? "idle" : status}`} aria-hidden="true" />
-              <span>@{agentId}</span>
+        <span>@{agent?.label ?? agentId}</span>
             </span>
             <small>{isAll ? "all agents" : status}</small>
           </button>
@@ -1739,7 +1740,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
   const meta = runtimeMeta(props.agent.runtime);
   return (
     <button
-      className={`agentButton agentRole-${props.agent.role} ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""} ${showStatus ? "" : "statusHidden"}`}
+      className={`agentButton ${props.selected && !isRunning ? "selected" : ""} ${isRunning ? "agentRunning" : ""} ${isRuntimeMissing ? "agentRuntimeMissing" : ""} ${showStatus ? "" : "statusHidden"}`}
       onClick={props.onClick}
       type="button"
       title={isRuntimeMissing ? `${meta.label} 未安装，该数字员工无法运行` : undefined}
@@ -1766,7 +1767,6 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
           )}
         </span>
         <small>
-          {props.agent.id}
           {isRuntimeMissing ? (
             <>
               {" · "}<a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="agentInstallLink" onClick={(e) => e.stopPropagation()}>安装 ↗</a>
@@ -1970,7 +1970,6 @@ function ActivityList({ activity, status, onOpenDetails }: { activity: AgentActi
 }
 
 const RUNTIMES: readonly AgentRuntimeKind[] = AGENT_RUNTIME_PRIORITY;
-const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general"];
 // Global settings - only runtime-level config
 function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
   const [enableRunLogs, setEnableRunLogs] = useState(false);
@@ -2315,6 +2314,7 @@ function AgentManagerPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [teamTemplates, setTeamTemplates] = useState<AgentTeamTemplate[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const focusedAgentApplied = useRef(false);
 
@@ -2344,6 +2344,10 @@ function AgentManagerPanel({
       .then((r) => r.json())
       .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
       .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
+    fetch("/api/agent-teams")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setTeamTemplates(Array.isArray(data) ? data as AgentTeamTemplate[] : []))
+      .catch(() => setTeamTemplates([]));
   }, []);
 
   // Auto-expand the focused agent once configs are loaded
@@ -2361,12 +2365,10 @@ function AgentManagerPanel({
   }
 
   function addConfig() {
-    const role: AgentRole = "general";
     setConfigs((prev) => [
       {
         id: `agent-${Date.now()}`,
         name: "",
-        role,
         runtime: firstAvailableRuntime,
         systemPrompt: "",
         enabled: true,
@@ -2451,6 +2453,29 @@ function AgentManagerPanel({
     }
   }
 
+  async function applyTeam(teamId: string) {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/agents/apply-team", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teamId }),
+      });
+      if (!res.ok) {
+        const body = await res.json() as { message?: string };
+        setError(body.message ?? "应用团队模板失败。");
+        return;
+      }
+      setConfigs(await res.json() as AgentConfig[]);
+      onSaved();
+    } catch {
+      setError("网络错误，应用团队模板失败。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
@@ -2464,6 +2489,19 @@ function AgentManagerPanel({
               <strong>默认数字员工模板</strong>
               <span>四个内置模板默认不启用。产品经理、架构师、开发、测试负责规划与实现；会话监督通过当前会话的“协作监督”开关启用，不需要配置为数字员工。</span>
             </div>
+            {teamTemplates.length > 0 ? (
+              <div className="agentTeamTemplates">
+                {teamTemplates.map((team) => (
+                  <div className="agentTeamTemplate" key={team.id}>
+                    <div>
+                      <strong>{team.name}</strong>
+                      <span>{team.description}</span>
+                    </div>
+                    <button type="button" onClick={() => applyTeam(team.id)} disabled={saving}>应用</button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div className="runtimeProbeRow">
               <span>安装或更新命令行工具后，可以重新检测运行环境。</span>
               <button type="button" className="runtimeRefreshBtn" onClick={onRefreshRuntimes} disabled={isRefreshingRuntimes}>
@@ -2482,7 +2520,6 @@ function AgentManagerPanel({
                         <span className="toggleTrack" />
                       </label>
                       <span className="configCardName">{config.name || config.id}</span>
-                      <span className="configCardPill configCardRole">{config.role}</span>
                       <span className="configCardPill configCardRuntime">{config.runtime}</span>
                     </div>
                     <div className="configCardActions">
@@ -2495,38 +2532,16 @@ function AgentManagerPanel({
                     <div className="configCardBody">
                       <div className="configFields">
                         <div className="fieldWithHint">
-                          <input placeholder="标识符" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
-                          <span className="fieldHint" title="数字员工的唯一标识符，用于 @mention 语法（如 @developer:）。只能用小写字母，不能有空格。">?</span>
+                          <input placeholder="内部标识符" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
+                          <span className="fieldHint" title="仅用于内部保存会话和运行记录，用户指派时使用名称。">?</span>
                         </div>
                         <div className="fieldWithHint">
                           <input placeholder="名称" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
                           <span className="fieldHint" title="显示在侧边栏和消息头中的可读名称。">?</span>
                         </div>
                         <div className="fieldWithHint">
-                          <input placeholder="显示标签（可选）" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
-                          <span className="fieldHint" title="侧边栏显示的标签，为空则使用名称字段。">?</span>
-                        </div>
-                        <div className="fieldWithHint">
                           <input placeholder="描述" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
                           <span className="fieldHint" title="数字员工能力的简短描述。其他数字员工发现可协作成员时会看到此内容。">?</span>
-                        </div>
-                        <div className="pillGroup">
-                          <span className="pillLabel">角色 <span className="fieldHint" title="决定数字员工的默认职责和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义。">?</span></span>
-                          <div className="pillOptions">
-                            {ROLES.map((r) => (
-                              <button
-                                key={r}
-                                type="button"
-                                className={`pillBtn ${config.role === r ? "pillActive" : ""}`}
-                                onClick={() => {
-                                  if (config.role === r) return;
-                                   updateConfig(i, { role: r });
-                                }}
-                              >
-                                {r}
-                              </button>
-                            ))}
-                          </div>
                         </div>
                         <div className="pillGroup">
                           <span className="pillLabel">运行时 <span className="fieldHint" title="驱动该数字员工的本地运行时。claude-code = Claude ACP，codex = Codex ACP，codebuddy = CodeBuddy ACP。">?</span></span>
@@ -2760,7 +2775,7 @@ function runtimeLabel(runtime: AgentState["runtime"]): string {
 
 function findMentionDraft(value: string, cursorIndex: number): { start: number; end: number; query: string } | null {
   const beforeCursor = value.slice(0, cursorIndex);
-  const match = /(^|\s)@([a-zA-Z0-9_]*)$/.exec(beforeCursor);
+  const match = /(^|\s)@([^\s@:：]*)$/u.exec(beforeCursor);
   if (!match) {
     return null;
   }
@@ -2784,13 +2799,11 @@ function connectionLabel(state: "connecting" | "live" | "offline"): string {
   return "连接中";
 }
 
-function agentRoleColor(role: AgentRole): string {
-  if (role === "architect") return "#0052d9";
-  if (role === "developer") return "#00a870";
-  if (role === "tester") return "#ed7b2f";
-  if (role === "coordinator") return "#8e56dd";
-  if (role === "pm") return "#d54941";
-  return "#6b7785";
+function agentColor(id: string): string {
+  const colors = ["#0052d9", "#00a870", "#ed7b2f", "#8e56dd", "#d54941", "#6b7785"];
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length];
 }
 
 const SIDEBAR_MIN_WIDTH = 280;

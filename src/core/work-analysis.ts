@@ -281,7 +281,7 @@ function earliestRunCreatedAt(runs: ChatMessage[]): string {
 
 function taskTitle(content: string): string {
   // Reuse the canonical assignment marker pattern so titles stay in sync with
-  // how @agent: mentions are parsed (including the fullwidth colon form).
+  // how display-name assignment mentions are parsed (including the fullwidth colon form).
   const title = content.replace(assignmentPattern, "").replace(/\s+/g, " ").trim();
   if (!title) return "未命名任务";
   return title.length > 80 ? `${title.slice(0, 79)}…` : title;

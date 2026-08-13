@@ -239,10 +239,19 @@ export class ConversationContext {
     if (mode === "on") {
       const selectedRuntime = runtime ?? this._supervisionRuntime;
       if (!selectedRuntime) throw new Error("A runtime is required to enable collaboration supervision.");
-      if (!this.agents.has(INTERNAL_SUPERVISOR_ID)) {
+      const needsSupervisorReset = !this.agents.has(INTERNAL_SUPERVISOR_ID)
+        || this._supervisionMode !== "on"
+        || this._supervisionRuntime !== selectedRuntime;
+      if (needsSupervisorReset) {
+        this.runManager.cancelAgentRuns(INTERNAL_SUPERVISOR_ID);
+        this.agents.remove(INTERNAL_SUPERVISOR_ID);
         this.agents.add(createSupervisorProfile(this.cwd(), selectedRuntime));
       }
       this._supervisionRuntime = selectedRuntime;
+    } else {
+      this.runManager.cancelAgentRuns(INTERNAL_SUPERVISOR_ID);
+      this.agents.remove(INTERNAL_SUPERVISOR_ID);
+      this._supervisionRuntime = undefined;
     }
     this._supervisionMode = mode;
     this.rebuildCoordinationLayer();
@@ -286,7 +295,7 @@ export class ConversationContext {
   private createMessageRouter(_profiles: readonly AgentProfile[], runManager = this.runManager): MessageRouter {
     const self = this;
     return new MessageRouter({
-      availableAgents: this.agents.ids(),
+      availableAgents: _profiles.filter((profile) => !profile.internal),
       maxRouteDepth: MAX_ROUTE_DEPTH,
       hasActiveSupervisor: this._supervisionMode === "on",
       createSystemMessage: (content, parentMessageId) => {

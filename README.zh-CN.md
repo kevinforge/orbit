@@ -48,7 +48,7 @@ Orbit 需要 Node.js 22 或更高版本，并且至少有一个可用的运行�
 
 ## 功能
 
-- 五个内置数字员工模板：产品经理（`pm`）、架构师（`architect`）、开发（`developer`）、测试（`tester`）、监督者（`supervisor`）
+- 内置“软件开发团队”模板，包含四个可自定义名称的数字员工；协作监督按会话开启，不再作为用户配置的数字员工
 - 通过 UI 创建和配置自定义数字员工
 - 每条消息可选择“向我审批”或“完全批准”，由数字员工职责和当前任务决定具体操作
 - 支持空白工作区和多数字员工协作工作区模板
@@ -73,7 +73,7 @@ Orbit 将本地产品数据存储在 `~/.orbit` 下。数据布局、备份、�
 
 ## 术语与路由
 
-公开产品术语和 `@developer:` 这类指派标记规则见 [docs/TERMINOLOGY_AND_ROUTING.md](docs/TERMINOLOGY_AND_ROUTING.md)。
+公开产品术语和使用自定义名称进行 `@名称:` 指派的规则见 [docs/TERMINOLOGY_AND_ROUTING.md](docs/TERMINOLOGY_AND_ROUTING.md)。
 
 ## 贡献
 

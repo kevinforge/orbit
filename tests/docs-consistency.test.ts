@@ -215,10 +215,10 @@ test("repository documents public terminology and routing marker behavior", () =
 
   assert.match(terminology, /Digital employee/);
   assert.match(terminology, /Prefer \*\*digital employee\*\*/);
-  assert.match(terminology, /@developer:/);
+  assert.match(terminology, /@display-name:/);
   assert.match(terminology, /@all:/);
-  assert.match(terminology, /Plain `@id` without a colon is a reference only/);
-  assert.match(terminology, /Unknown `@id:` markers are ignored/);
+  assert.match(terminology, /Plain `@display-name` without a colon is a reference only/);
+  assert.match(terminology, /Unknown `@display-name:` markers are ignored/);
   assert.match(terminology, /empty assignment/);
   assert.match(terminology, /routing depth 10/);
   assert.match(terminology, /Handoffs/);

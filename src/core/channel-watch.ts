@@ -19,8 +19,7 @@ type TriggerContext = {
 
 export class ChannelWatchService {
   private readonly triggerContexts: Map<AgentId, TriggerContext> = new Map();
-  private readonly knownIds: Set<string>;
-  private readonly agentRoles: Map<AgentId, string>; // Issue #91: Map agentId -> role
+  private readonly knownNames: Set<string>;
   private readonly unsubscribe: () => void;
   private disposed = false;
 
@@ -32,12 +31,9 @@ export class ChannelWatchService {
     eventBus: EventBus,
     profiles: readonly AgentProfile[],
   ) {
-    this.knownIds = new Set(profiles.map((p) => p.id));
-    this.knownIds.add("user"); // @user: is the task-closure signal
-    this.knownIds.add("all");  // @all: is the broadcast signal
-
-    // Issue #91: Initialize agentId -> role mapping
-    this.agentRoles = new Map(profiles.map((p) => [p.id, p.role]));
+    this.knownNames = new Set(profiles.map((p) => p.name.toLocaleLowerCase()));
+    this.knownNames.add("user"); // @user: is the task-closure signal
+    this.knownNames.add("all");  // @all: is the broadcast signal
 
     for (const profile of profiles) {
       if (profile.triggers && hasActiveChannelWatchTriggers(profile.triggers)) {
@@ -100,7 +96,7 @@ export class ChannelWatchService {
 
   private onMessageCreated(message: ChatMessage): void {
     if (message.kind === "user") {
-      const hasAssignment = hasAssignmentMarker(message.content, this.knownIds);
+      const hasAssignment = hasAssignmentMarker(message.content, this.knownNames);
       for (const ctx of this.triggerContexts.values()) {
         ctx.triggerCount = 0;
         if (!hasAssignment && ctx.triggers.onUnassignedMessage) {
@@ -129,12 +125,11 @@ export class ChannelWatchService {
     // @user: is only a closure signal when the SUPERVISOR says it, not when other agents do.
     // Other agents might mention @user: in their responses (e.g., "I'll let @user: know"),
     // which should NOT suppress supervisor triggers.
-    // Issue #91: Use role-based check instead of hardcoded ID
-    const agentRole = this.agentRoles.get(agentId);
+    // The internal supervisor is identified by its reserved runtime ID.
     const hasAssignment = hasAssignmentMarkerExcludingUserForNonSupervisor(
       message.content,
-      this.knownIds,
-      agentRole,
+      this.knownNames,
+      agentId === "supervisor",
     );
     if (hasAssignment) return;
 
@@ -213,11 +208,11 @@ export class ChannelWatchService {
   }
 }
 
-function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): boolean {
+function hasAssignmentMarker(content: string, knownNames: ReadonlySet<string>): boolean {
   const pattern = new RegExp(assignmentPattern.source, "g");
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(content)) !== null) {
-    if (knownIds.has(m[1])) return true;
+    if (knownNames.has(m[1].toLocaleLowerCase())) return true;
   }
   return false;
 }
@@ -225,31 +220,27 @@ function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): bo
 /**
  * Check for assignment markers, but exclude @user: for non-supervisor agents.
  *
- * Issue #80: When non-supervisor agents (e.g., developer) include @user: in their
- * responses, it should NOT suppress supervisor triggers. @user: is only a closure
- * signal when the supervisor itself says it.
- *
- * Issue #91: Use role-based check instead of hardcoded agent ID.
+ * When a regular digital employee includes @user: in its response, that is not
+ * a closure signal and must not suppress the supervisor follow-up.
  *
  * @param content - Message content to check
- * @param knownIds - Set of known agent IDs
- * @param fromAgentRole - Role of the agent that sent this message
+ * @param knownNames - Set of known employee names
+ * @param fromSupervisor - Whether the sender is the internal supervisor
  * @returns true if there's an assignment marker that should suppress triggers
  */
 function hasAssignmentMarkerExcludingUserForNonSupervisor(
   content: string,
-  knownIds: ReadonlySet<string>,
-  fromAgentRole: string | undefined,
+  knownNames: ReadonlySet<string>,
+  fromSupervisor: boolean,
 ): boolean {
   const pattern = new RegExp(assignmentPattern.source, "g");
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(content)) !== null) {
-    const mentionedId = m[1];
-    // Issue #91: Skip @user: for non-coordinator agents (role-based check)
-    if (mentionedId === "user" && fromAgentRole !== "coordinator") {
+    const mentionedName = m[1];
+    if (mentionedName.toLocaleLowerCase() === "user" && !fromSupervisor) {
       continue;
     }
-    if (knownIds.has(mentionedId)) return true;
+    if (knownNames.has(mentionedName.toLocaleLowerCase())) return true;
   }
   return false;
 }
@@ -268,7 +259,7 @@ function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean,
   return (
     `[Supervisor Check #${count}/${maxTriggers}]\n\n` +
     `Evaluate the current state of the conversation. ` +
-    `If the overall task needs more work, assign tasks using @agent: markers. ` +
+    `If the overall task needs more work, assign tasks using an exact name from the available employees, such as @employee-name: . ` +
     `If all work is complete, conclude with @user: and a final summary.`
   );
 }

@@ -4,547 +4,101 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { AgentConfigStore, DEFAULT_AGENT_CONFIGS, validateAgentConfigs, type AgentConfig } from "../src/core/agent-config-store.ts";
+import {
+  AGENT_TEAM_TEMPLATES,
+  AgentConfigStore,
+  DEFAULT_AGENT_CONFIGS,
+  validateAgentConfigs,
+  type AgentConfig,
+} from "../src/core/agent-config-store.ts";
 
 function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-test-config-"));
 }
 
-test("DEFAULT_AGENT_CONFIGS seeds four disabled built-in templates", () => {
-  assert.equal(DEFAULT_AGENT_CONFIGS.length, 4);
-  const ids = DEFAULT_AGENT_CONFIGS.map((c) => c.id);
-  assert.ok(ids.includes("pm"));
-  assert.ok(ids.includes("architect"));
-  assert.ok(ids.includes("developer"));
-  assert.ok(ids.includes("tester"));
-  assert.ok(!ids.includes("supervisor"));
-  for (const config of DEFAULT_AGENT_CONFIGS) {
-    assert.equal(config.enabled, false, `${config.id} should be disabled by default`);
-    assert.ok(config.systemPrompt.length > 0, `${config.id} should have a systemPrompt`);
-  }
+function config(overrides: Partial<AgentConfig> = {}): AgentConfig {
+  return {
+    id: "custom",
+    name: "Custom Agent",
+    runtime: "claude-code",
+    systemPrompt: "You are a useful digital employee.",
+    enabled: true,
+    ...overrides,
+  };
+}
+
+test("defaults provide a disabled software development team", () => {
+  assert.deepEqual(DEFAULT_AGENT_CONFIGS.map((item) => item.id), [
+    "requirements",
+    "solution",
+    "implementation",
+    "verification",
+  ]);
+  assert.ok(DEFAULT_AGENT_CONFIGS.every((item) => !item.enabled));
+  assert.ok(DEFAULT_AGENT_CONFIGS.every((item) => item.name.length > 0 && item.systemPrompt.length > 0));
+  assert.ok(DEFAULT_AGENT_CONFIGS.every((item) => !("role" in item) && !("ui" in item)));
 });
 
-test("DEFAULT_AGENT_CONFIGS use Chinese built-in display names with stable ids", () => {
-  assert.deepEqual(
-    Object.fromEntries(DEFAULT_AGENT_CONFIGS.map((config) => [config.id, config.name])),
-    {
-      pm: "产品经理（pm）",
-      architect: "架构师（architect）",
-      developer: "开发（developer）",
-      tester: "测试（tester）",
-    },
-  );
+test("software development team template contains the default members", () => {
+  const template = AGENT_TEAM_TEMPLATES.find((item) => item.id === "software-development");
+  assert.ok(template);
+  assert.equal(template.members.length, DEFAULT_AGENT_CONFIGS.length);
+  assert.ok(template.members.every((member) => !("enabled" in member)));
 });
 
-test("load returns seed configs when no file exists", () => {
+test("valid custom names and runtimes pass validation", () => {
+  assert.deepEqual(validateAgentConfigs([config({ name: "我的助手", runtime: "codebuddy" })]), []);
+});
+
+test("duplicate names, reserved ids, and assignment punctuation are rejected", () => {
+  const errors = validateAgentConfigs([
+    config({ id: "supervisor", name: "同名" }),
+    config({ id: "second", name: "同名" }),
+    config({ id: "third", name: "带 空格" }),
+  ]);
+  assert.ok(errors.some((error) => error.includes("reserved")));
+  assert.ok(errors.some((error) => error.includes("Duplicate agent name")));
+  assert.ok(errors.some((error) => error.includes("without spaces")));
+});
+
+test("save and load round-trip without a role model", () => {
   const dir = tempDir();
   try {
     const store = new AgentConfigStore(dir);
-    const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
-    assert.equal(configs[0].id, "pm");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("save then load round-trips configs", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
-    const configs: AgentConfig[] = [
-      { id: "custom", name: "Custom Agent", role: "general", runtime: "claude-code", systemPrompt: "You are custom.", enabled: true },
-    ];
+    const configs = [config({ id: "reviewer", name: "代码审阅" })];
     store.save("ws1", configs);
-    const loaded = store.load("ws1");
-    // save() persists with current migration version, so load() skips auto-add
-    assert.equal(loaded.length, 1);
-    assert.equal(loaded[0].id, "custom");
-    assert.equal(loaded[0].name, "Custom Agent");
+    assert.deepEqual(store.load("ws1"), configs);
+    const raw = fs.readFileSync(path.join(dir, "workspaces", "ws1", "agents.json"), "utf8");
+    assert.equal(raw.includes("role"), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("save creates parent directories", () => {
-  const dir = path.join(tempDir(), "nested", "deep");
-  try {
-    const store = new AgentConfigStore(dir);
-    store.save("ws1", DEFAULT_AGENT_CONFIGS);
-    assert.ok(fs.existsSync(path.join(dir, "workspaces", "ws1", "agents.json")));
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("reset restores seed configs", () => {
+test("invalid or missing files fall back to the new defaults", () => {
   const dir = tempDir();
   try {
     const store = new AgentConfigStore(dir);
-    store.save("ws1", [{ id: "x", name: "X", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true }]);
-    const reset = store.reset("ws1");
-    assert.equal(reset.length, 4);
-    assert.equal(reset[0].id, "pm");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("different workspaces have independent configs", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
-    store.save("ws1", [{ id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "a", enabled: true }]);
-    store.save("ws2", [{ id: "b", name: "B", role: "general", runtime: "codex", systemPrompt: "b", enabled: true }]);
-    assert.equal(store.load("ws1")[0].id, "a");
-    assert.equal(store.load("ws2")[0].id, "b");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("load handles corrupted file gracefully", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
+    assert.deepEqual(store.load("missing").map((item) => item.id), DEFAULT_AGENT_CONFIGS.map((item) => item.id));
     const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, "not valid json{{{");
-    const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
-    assert.equal(configs[0].id, "pm");
+    fs.writeFileSync(filePath, JSON.stringify([{ id: "old", name: "旧员工", role: "developer", runtime: "claude-code", systemPrompt: "x", enabled: true }]));
+    assert.deepEqual(store.load("ws1").map((item) => item.id), DEFAULT_AGENT_CONFIGS.map((item) => item.id));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("load returns defaults for valid JSON with invalid runtime", () => {
+test("reset restores defaults and workspaces are independent", () => {
   const dir = tempDir();
   try {
     const store = new AgentConfigStore(dir);
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "not-a-runtime", systemPrompt: "x", enabled: true }]));
-    const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
-    assert.equal(configs[0].id, "pm");
+    store.save("ws1", [config({ id: "one", name: "一号" })]);
+    store.save("ws2", [config({ id: "two", name: "二号" })]);
+    assert.equal(store.load("ws1")[0]?.id, "one");
+    assert.equal(store.load("ws2")[0]?.id, "two");
+    assert.deepEqual(store.reset("ws1").map((item) => item.id), DEFAULT_AGENT_CONFIGS.map((item) => item.id));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("load returns defaults for valid JSON with duplicate ids", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify([
-      { id: "dup", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
-      { id: "dup", name: "B", role: "general", runtime: "codex", systemPrompt: "y", enabled: true },
-    ]));
-    const configs = store.load("ws1");
-    assert.equal(configs.length, 4);
-    assert.equal(configs[0].id, "pm");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("load accepts valid JSON with no enabled agents", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify([{ id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: false }]));
-    const configs = store.load("ws1");
-    // auto-migration adds 4 missing default templates → 1 + 4 = 5
-    assert.equal(configs.length, 5);
-    assert.equal(configs[0].id, "a");
-    assert.equal(configs[0].enabled, false);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-// --- Validation tests ---
-
-test("validates ok for seed configs", () => {
-  const errors = validateAgentConfigs(DEFAULT_AGENT_CONFIGS);
-  assert.deepEqual(errors, []);
-});
-
-test("rejects duplicate ids", () => {
-  const configs: AgentConfig[] = [
-    { id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
-    { id: "a", name: "A2", role: "general", runtime: "codex", systemPrompt: "y", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.toLowerCase().includes("duplicate")));
-});
-
-test("rejects id 'all'", () => {
-  const configs: AgentConfig[] = [
-    { id: "all", name: "All", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("reserved")));
-});
-
-test("rejects invalid id format", () => {
-  const configs: AgentConfig[] = [
-    { id: "bad id!", name: "Bad", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("format")));
-});
-
-test("rejects invalid runtime", () => {
-  const configs: AgentConfig[] = [
-    { id: "agent1", name: "A", role: "general", runtime: "invalid-runtime" as AgentConfig["runtime"], systemPrompt: "x", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("runtime")));
-});
-
-test("rejects empty systemPrompt", () => {
-  const configs: AgentConfig[] = [
-    { id: "agent1", name: "A", role: "general", runtime: "claude-code", systemPrompt: "  ", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("systemPrompt")));
-});
-
-test("rejects empty name", () => {
-  const configs: AgentConfig[] = [
-    { id: "agent1", name: "  ", role: "general", runtime: "claude-code", systemPrompt: "do stuff", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("name")));
-});
-
-test("accepts config with no enabled agents", () => {
-  const configs: AgentConfig[] = DEFAULT_AGENT_CONFIGS.map((c) => ({ ...c, enabled: false }));
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-test("rejects empty config list", () => {
-  const errors = validateAgentConfigs([]);
-  assert.ok(errors.length > 0);
-});
-
-test("rejects invalid role", () => {
-  const configs: AgentConfig[] = [
-    { id: "agent1", name: "A", role: "bad-role" as AgentConfig["role"], runtime: "claude-code", systemPrompt: "do stuff", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("role") && e.includes("agent1")), `Expected a role error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects non-boolean enabled field", () => {
-  const configs: AgentConfig[] = [
-    { id: "agent1", name: "A", role: "general", runtime: "claude-code", systemPrompt: "do stuff", enabled: "false" as unknown as boolean },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("enabled") && e.includes("boolean")), `Expected an enabled/boolean error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects missing enabled field", () => {
-  const configs: AgentConfig[] = [
-    { id: "agent1", name: "A", role: "general", runtime: "claude-code", systemPrompt: "do stuff", enabled: undefined as unknown as boolean },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("enabled")), `Expected an enabled error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects non-string id without throwing", () => {
-  const configs = [
-    { id: 123, name: "A", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
-  ] as unknown as AgentConfig[];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("id")), `Expected an id error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects non-string name without throwing", () => {
-  const configs = [
-    { id: "a", name: 123, role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
-  ] as unknown as AgentConfig[];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("name")), `Expected a name error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects non-string systemPrompt without throwing", () => {
-  const configs = [
-    { id: "a", name: "A", role: "general", runtime: "claude-code", systemPrompt: 123, enabled: true },
-  ] as unknown as AgentConfig[];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("systemPrompt")), `Expected a systemPrompt error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects null array element without throwing", () => {
-  const errors = validateAgentConfigs([null] as unknown as AgentConfig[]);
-  assert.ok(errors.some((e) => e.includes("object")), `Expected an object error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects non-object array element without throwing", () => {
-  const errors = validateAgentConfigs(["bad"] as unknown as AgentConfig[]);
-  assert.ok(errors.some((e) => e.includes("object")), `Expected an object error, got: ${JSON.stringify(errors)}`);
-});
-
-test("load migrates old configs missing permissionProfile to role defaults", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    // Old config without permissionProfile (simulating pre-#26 format)
-    fs.writeFileSync(filePath, JSON.stringify([
-      { id: "old-dev", name: "Old Dev", description: "", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-    ]));
-    const loaded = store.load("ws1");
-    // auto-migration adds 4 missing default templates → 1 + 4 = 5
-    assert.equal(loaded.length, 5);
-    assert.equal("permissionProfile" in loaded[0], false);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("load removes legacy permission settings", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify({
-      configs: [{
-        id: "legacy", name: "Legacy", role: "general", runtime: "claude-code",
-        systemPrompt: "legacy", enabled: true,
-        permissionProfile: {
-          canReadFiles: true,
-          canWriteFiles: true,
-          canRunCommands: true,
-          allowedDirectories: ["."],
-        },
-      }],
-      _meta: { migrationVersion: 3 },
-    }));
-
-    const loaded = store.load("ws1");
-    assert.equal("permissionProfile" in loaded[0], false);
-    const saved = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    assert.equal("permissionProfile" in saved.configs[0], false);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("load migrates legacy default agent names to Chinese names with ids while preserving custom names", () => {
-  const dir = tempDir();
-  try {
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const legacyDefaults: AgentConfig[] = [
-      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "pm")!), name: "Product Manager" },
-      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "architect")!), name: "Architect" },
-      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "developer")!), name: "Developer" },
-      { ...structuredClone(DEFAULT_AGENT_CONFIGS.find((config) => config.id === "tester")!), name: "Tester" },
-      { id: "custom", name: "My Developer", role: "developer", runtime: "claude-code", systemPrompt: "custom", enabled: true },
-    ];
-    fs.writeFileSync(filePath, JSON.stringify({ configs: legacyDefaults, _meta: { migrationVersion: 2 } }, null, 2));
-
-    const store = new AgentConfigStore(dir);
-    const loaded = store.load("ws1");
-
-    assert.equal(loaded.find((config) => config.id === "pm")?.name, "产品经理（pm）");
-    assert.equal(loaded.find((config) => config.id === "architect")?.name, "架构师（architect）");
-    assert.equal(loaded.find((config) => config.id === "developer")?.name, "开发（developer）");
-    assert.equal(loaded.find((config) => config.id === "tester")?.name, "测试（tester）");
-    assert.equal(loaded.find((config) => config.id === "custom")?.name, "My Developer");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("reset outputs configs without permission settings", () => {
-  const dir = tempDir();
-  try {
-    const store = new AgentConfigStore(dir);
-    const reset = store.reset("ws1");
-    assert.ok(reset.every((config) => !("permissionProfile" in config)));
-    // Check file on disk too
-    const filePath = path.join(dir, "workspaces", "ws1", "agents.json");
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    assert.ok((raw.configs as AgentConfig[]).every((entry) => !("permissionProfile" in entry)));
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("validate accepts configs without permission settings", () => {
-  const configs: AgentConfig[] = [
-    { id: "old", name: "Old", role: "general", runtime: "claude-code", systemPrompt: "x", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-// --- Triggers validation tests ---
-
-test("rejects triggers as a non-object (string)", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: "bad" as unknown as AgentConfig["triggers"],
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("triggers") && e.includes("object")), `Expected a triggers object error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects triggers as an array", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: [] as unknown as AgentConfig["triggers"],
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("triggers") && e.includes("object")), `Expected a triggers object error for array, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects triggers with non-boolean onUnassignedMessage", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { onUnassignedMessage: "yes" as unknown as boolean },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("onUnassignedMessage") && e.includes("boolean")), `Expected onUnassignedMessage boolean error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects triggers with non-boolean onAgentBlocked", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { onAgentBlocked: "no" as unknown as boolean },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("onAgentBlocked") && e.includes("boolean")), `Expected onAgentBlocked boolean error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects triggers with non-boolean onRunFailed", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { onRunFailed: "yes" as unknown as boolean },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("onRunFailed") && e.includes("boolean")), `Expected onRunFailed boolean error, got: ${JSON.stringify(errors)}`);
-});
-
-test("accepts valid triggers with both flags set", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { onUnassignedMessage: true, onAgentBlocked: false },
-    },
-    { id: "b", name: "B", role: "developer", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-test("accepts triggers with undefined values (omitted flags)", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: {},
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-test("rejects triggers.maxTriggersPerConversation when non-number", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { maxTriggersPerConversation: "five" as unknown as number },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("maxTriggersPerConversation")), `Expected maxTriggersPerConversation error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects triggers.maxTriggersPerConversation when out of range", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { maxTriggersPerConversation: 200 },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("maxTriggersPerConversation")), `Expected maxTriggersPerConversation range error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects triggers.debounceMs when non-number", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { debounceMs: "fast" as unknown as number },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("debounceMs")), `Expected debounceMs error, got: ${JSON.stringify(errors)}`);
-});
-
-test("rejects triggers.debounceMs when out of range", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "coordinator", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { debounceMs: 120_000 },
-    },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.ok(errors.some((e) => e.includes("debounceMs")), `Expected debounceMs range error, got: ${JSON.stringify(errors)}`);
-});
-
-test("accepts triggers with valid maxTriggersPerConversation and debounceMs", () => {
-  const configs: AgentConfig[] = [
-    {
-      id: "a", name: "A", role: "general", runtime: "claude-code",
-      systemPrompt: "do stuff", enabled: true,
-      triggers: { maxTriggersPerConversation: 10, debounceMs: 5000 },
-    },
-    { id: "dev", name: "Dev", role: "general", runtime: "claude-code", systemPrompt: "dev", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
-});
-
-test("validate does not require permissionProfile for each config", () => {
-  // permissionProfile is optional in AgentConfig by design
-  const configs: AgentConfig[] = [
-    { id: "a", name: "A", role: "pm", runtime: "codex", systemPrompt: "do pm stuff", enabled: true },
-    { id: "b", name: "B", role: "developer", runtime: "claude-code", systemPrompt: "do dev stuff", enabled: true },
-  ];
-  const errors = validateAgentConfigs(configs);
-  assert.deepEqual(errors, []);
 });

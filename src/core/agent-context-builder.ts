@@ -36,16 +36,16 @@ function escapeDynamicContent(text: string): string {
 function renderIdentitySection(profile: AgentProfile | undefined, agentId: AgentId): string {
   return [
     "<identity>",
-    `Current agent: ${profile?.name ?? agentId} (@${agentId})`,
-    `Role: ${profile?.role ?? "general"}`,
+    `Current agent: ${profile?.name ?? agentId}`,
+    "Identity: a configurable digital employee with a specific task instruction.",
     "</identity>",
   ].join("\n");
 }
 
 function renderAvailableAgentsSection(profiles: readonly AgentProfile[]): string {
   const agentLines = profiles.map((agent) => {
-    const desc = agent.description ? ` - ${agent.description}` : "";
-    return `@${agent.id}: ${agent.name}${desc}`;
+    const desc = agent.description ? ` ${agent.description}` : " available digital employee";
+    return `@${agent.name}:${desc}`;
   });
   return ["<available-agents>", ...agentLines, "</available-agents>"].join("\n");
 }
@@ -54,12 +54,12 @@ function renderCollaborationRulesSection(): string {
   return [
     "<collaboration-rules>",
     "Collaboration rules:",
-    "- Execute only the assignment addressed to your own @agent: marker.",
+    "- Execute only the assignment addressed to your own @employee-name: marker.",
     "- The conversation may contain assignments for multiple agents. Orbit has already scheduled the other agents.",
     "- Use other agents' assignments as shared context, not as your own work, and do not repeat or forward assignments that already exist in the same conversation.",
-    "- Plain @agent mentions without a colon are references only.",
-    "- Only create a new @agent: assignment when it is genuinely new follow-up work that is not already present in the conversation.",
-    "- If you need another agent to continue, use that agent's @agent: assignment marker with a clear task.",
+    "- Plain @employee-name mentions without a colon are references only.",
+    "- Only create a new @employee-name: assignment when it is genuinely new follow-up work that is not already present in the conversation.",
+    "- If you need another employee to continue, use that employee's exact @name: assignment marker with a clear task.",
     "",
     "Collaboration examples:",
     "",
@@ -68,13 +68,13 @@ function renderCollaborationRulesSection(): string {
     "Bad: Ready for @reviewer to re-check.  (This looks like a handoff but won't route!)",
     "",
     "# Actually needing another agent to continue work (must use assignment):",
-    "Good: @reviewer: Please review the changes above, focusing on edge cases.",
+    "Good: @Quality Check: Please review the changes above, focusing on edge cases.",
     "",
     "# Typical handoff loop:",
-    "Planner -> @worker: Build the first version, then decide if others are needed.",
-    "Worker -> @reviewer: Review this for completeness and risks.",
-    "Reviewer -> @worker: Fix issues X and Y, then re-submit.",
-    "Worker -> @reviewer: Fixes applied, please re-verify.",
+    "Planner -> @Builder: Build the first version, then decide if others are needed.",
+    "Builder -> @Quality Check: Review this for completeness and risks.",
+    "Quality Check -> @Builder: Fix issues X and Y, then re-submit.",
+    "Builder -> @Quality Check: Fixes applied, please re-verify.",
     "Reviewer -> Done. No further work needed.",
     "",
     "# No further work - just end naturally:",
@@ -82,7 +82,7 @@ function renderCollaborationRulesSection(): string {
     "",
     "Final answer rules:",
     "- Return only your useful result, question, or concise status.",
-    "- Do not start by repeating the conversation, the private context, or your own @agent: assignment marker.",
+    "- Do not start by repeating the conversation, the private context, or your own assignment marker.",
     "- Do not include terminal UI noise, hook output, API errors, or thinking/status text.",
     "- If the task is complete, provide a concise final answer and stop.",
     "</collaboration-rules>",
@@ -103,9 +103,8 @@ function renderSupervisorConstraintsSection(): string {
       "and notifying the user via @user:",
     "",
     "Delegation guide:",
-    "- Need code analysis? -> @architect: analyze ...",
-    "- Need implementation? -> @developer: implement ...",
-    "- Need testing? -> @tester: validate ...",
+    "- Delegate only to an exact employee name from <available-agents>, for example @employee-name: analyze ...",
+    "- Do not invent employee names or use internal IDs in assignments.",
     "- Task complete? -> @user: summarize what was accomplished",
     "",
     "Violating these constraints corrupts the supervision mechanism.",
@@ -129,12 +128,12 @@ function renderWorkspaceContextSection(config: WorkspaceRuntimeConfig): string {
   return ["<workspace-context>", ...inner, "</workspace-context>"].join("\n");
 }
 
-function renderAgentRoleSection(profile: AgentProfile | undefined): string {
+function renderAgentInstructionSection(profile: AgentProfile | undefined): string {
   if (!profile?.systemPrompt) return "";
   return [
-    "<agent-role>",
-    `Role instruction: ${escapeDynamicContent(profile.systemPrompt)}`,
-    "</agent-role>",
+    "<agent-instructions>",
+    `Instructions: ${escapeDynamicContent(profile.systemPrompt)}`,
+    "</agent-instructions>",
   ].join("\n");
 }
 
@@ -196,12 +195,12 @@ export function buildAgentContext(input: AgentContextInput): string {
     renderIdentitySection(profile, input.agentId),
     renderAvailableAgentsSection(input.profiles),
     renderCollaborationRulesSection(),
-    // Supervisor constraints only for coordinator role
-    ...(profile?.role === "coordinator" ? [renderSupervisorConstraintsSection()] : []),
-    // Workspace config after fixed rules, before agent role instruction
+    // Supervisor constraints only for the internal collaboration supervisor
+    ...(profile?.internal ? [renderSupervisorConstraintsSection()] : []),
+    // Workspace config after fixed rules, before employee instructions
     ...(input.workspaceConfig ? [renderWorkspaceContextSection(input.workspaceConfig)] : []),
-    // Agent role instruction after workspace config
-    renderAgentRoleSection(profile),
+    // Agent instructions after workspace config
+    renderAgentInstructionSection(profile),
     // Conversation history (optional)
     ...(input.history?.length ? [renderHistorySection(input.history)] : []),
     // Current task (always present)

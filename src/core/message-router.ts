@@ -1,8 +1,8 @@
-import type { AgentId, ChatMessage, MessageRouteState } from "../shared/types.ts";
+import type { AgentId, AgentProfile, ChatMessage, MessageRouteState } from "../shared/types.ts";
 import { routeMention } from "./mention-router.ts";
 
 export type MessageRouterOptions = {
-  availableAgents: readonly AgentId[];
+  availableAgents: readonly AgentProfile[];
   maxRouteDepth: number;
   hasActiveSupervisor?: boolean;
   createSystemMessage: (content: string, parentMessageId?: string) => ChatMessage;
