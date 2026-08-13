@@ -5725,9 +5725,8 @@ button:active:not(:disabled) {
   }
 
   .workspaceStack {
-    min-height: 0;
-    max-height: 52vh;
-    flex: 0 1 auto;
+    min-height: 180px;
+    flex: 1 1 auto;
     overflow: hidden;
   }
 
@@ -5802,8 +5801,7 @@ button:active:not(:disabled) {
   }
 
   .compactAgents {
-    max-height: 310px;
-    flex: 0 1 auto;
+    flex: 0 1 310px;
     padding-top: 8px;
     border-top: 1px solid var(--border);
   }
@@ -5863,7 +5861,7 @@ button:active:not(:disabled) {
   }
 
   .sidebarBottom {
-    margin: auto 12px 0;
+    margin: 0 12px !important;
     padding: 10px 0 14px;
     gap: 2px;
     border-top: 1px solid var(--border);
@@ -6306,7 +6304,12 @@ button:active:not(:disabled) {
 }
 
 .taskDrawerActivity .t-collapse-panel__body {
+  overflow: hidden;
   padding: 0 10px 18px;
+}
+
+.taskDrawerActivity .t-collapse-panel__body--collapsed {
+  padding-bottom: 0;
 }
 
 .taskDrawerTimeline {
