@@ -6360,6 +6360,10 @@ button:active:not(:disabled) {
 }
 
 .composerSupervisionToggle.t-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
   min-height: 30px;
   padding: 0 9px;
   border: 0;
@@ -6377,7 +6381,23 @@ button:active:not(:disabled) {
 }
 
 .composerSupervisionToggle .supervisionToggleDot {
+  display: inline-block;
+  flex: 0 0 7px;
   margin-right: 5px;
+  vertical-align: middle;
+}
+
+.approvalModeTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  line-height: 1;
+}
+
+.approvalModeIcon,
+.approvalModeChevron {
+  flex: 0 0 auto;
+  vertical-align: middle;
 }
 
 .composerActions {
