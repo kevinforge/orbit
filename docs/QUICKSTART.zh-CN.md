@@ -39,11 +39,11 @@ npm --version
 
 Orbit 提供网页工作台，真正执行任务的是背后的 CLI 运行时。你至少需要一个运行时可用，不需要一开始就安装全部三个。
 
-检查运行时：
+检查你准备使用的厂商运行时：
 
 ```powershell
-claude-agent-acp --version
-codex-acp --version
+claude --version
+codex --version
 codebuddy --version
 ```
 
@@ -53,8 +53,8 @@ codebuddy --version
 
 | 运行时 | 常见用途 | 安装方式 |
 | --- | --- | --- |
-| Claude Code | 开发、监督 | `npm install -g @agentclientprotocol/claude-agent-acp` |
-| OpenAI Codex | 产品、架构、通用任务 | `npm install -g @openai/codex @agentclientprotocol/codex-acp` |
+| Claude Code | 开发、监督 | Orbit 已内置 ACP 适配器，只需安装并登录 Claude Code |
+| OpenAI Codex | 产品、架构、通用任务 | Orbit 已内置 ACP 适配器，只需安装并登录 Codex |
 | CodeBuddy | 测试或自定义员工 | `npm install -g @tencent-ai/codebuddy-code` |
 
 如果 npm 安装卡住、超时或下载失败，通常是网络无法稳定访问 npm 源。可以切换到能访问 npm 的网络，或临时使用镜像源：
@@ -63,7 +63,7 @@ codebuddy --version
 npm config set registry https://registry.npmmirror.com
 ```
 
-安装运行时后，再运行版本检查。Claude Code 可执行 `claude-agent-acp --cli` 完成登录，Codex 可执行 `codex` 完成登录；其他运行时按各自 CLI 的提示完成授权。Orbit 只能调用已经能在本机正常运行的运行时。
+安装运行时后，再按各自 CLI 的提示完成登录。Orbit 会自动使用内置的 ACP 适配器连接 Claude Code 和 Codex，不需要额外安装 `claude-agent-acp` 或 `codex-acp`。Orbit 只能调用已经能在本机正常运行的运行时。
 
 ## 第 1 步：安装 Orbit
 

@@ -80,16 +80,15 @@ test("probeAllRuntimes returns a record for Codex ACP", async () => {
 test("runtimeMeta returns label and installUrl for claude-code", () => {
   const meta = runtimeMeta("claude-code");
   assert.equal(meta.label, "Claude Code");
-  assert.ok(meta.installUrl.includes("claude-agent-acp"), "should have Claude ACP install URL");
-  assert.ok(meta.installCommand.includes("@agentclientprotocol/claude-agent-acp"), "should include Claude ACP install command");
+  assert.ok(meta.installUrl.includes("anthropic.com"), "should have Claude Code setup URL");
+  assert.equal(meta.installCommand, "", "ACP adapter installation must stay internal");
 });
 
 test("runtimeMeta returns label and installUrl for codex", () => {
   const meta = runtimeMeta("codex");
   assert.equal(meta.label, "OpenAI Codex");
-  assert.ok(meta.installUrl.includes("codex-acp"), "should have Codex ACP install URL");
-  assert.ok(meta.installCommand.includes("@openai/codex"), "should include Codex CLI install command");
-  assert.ok(meta.installCommand.includes("@agentclientprotocol/codex-acp"), "should include Codex ACP install command");
+  assert.ok(meta.installUrl.includes("github.com/openai/codex"), "should have Codex setup URL");
+  assert.equal(meta.installCommand, "", "ACP adapter installation must stay internal");
 });
 
 test("runtimeMeta returns label and installUrl for codebuddy", () => {

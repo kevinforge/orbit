@@ -42,8 +42,8 @@ Orbit 需要 Node.js 22 或更高版本，并且至少有一个可用的运行�
 
 | 运行时 | 安装方式 |
 |--------|----------|
-| Claude Code（ACP） | `npm install -g @agentclientprotocol/claude-agent-acp` |
-| Codex（ACP） | `npm install -g @openai/codex @agentclientprotocol/codex-acp` |
+| Claude Code | 安装 Orbit 时已内置 ACP 适配器，只需准备 Claude Code 并完成登录 |
+| Codex | 安装 Orbit 时已内置 ACP 适配器，只需准备 Codex 并完成登录 |
 | CodeBuddy（需要支持 ACP） | `npm install -g @tencent-ai/codebuddy-code` |
 
 ## 功能

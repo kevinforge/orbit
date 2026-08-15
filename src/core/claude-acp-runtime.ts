@@ -9,13 +9,17 @@ import {
   type AcpRuntimeDefinition,
 } from "./acp-runtime.ts";
 import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
+import { resolveBundledCommand } from "./bundled-runtime.ts";
 
 export type ClaudeAcpRunOptions = AcpRunOptions;
 export type ClaudeAcpConnection = AcpConnection;
 export type ClaudeAcpConnector = AcpConnector;
 
 export function resolveClaudeAcpCommand(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CLAUDE_ACP_PATH?.trim() || "claude-agent-acp";
+  return env.CLAUDE_ACP_PATH?.trim() || resolveBundledCommand(
+    "claude-agent-acp",
+    env,
+  );
 }
 
 export function buildClaudeAcpCommand(

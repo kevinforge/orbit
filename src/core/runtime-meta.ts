@@ -17,14 +17,14 @@ export function runtimeMeta(runtime: string): RuntimeMeta {
     case "claude-code":
       return {
         label: "Claude Code",
-        installUrl: "https://github.com/agentclientprotocol/claude-agent-acp",
-        installCommand: "npm install -g @agentclientprotocol/claude-agent-acp",
+        installUrl: "https://docs.anthropic.com/en/docs/claude-code/overview",
+        installCommand: "",
       };
     case "codex":
       return {
         label: "OpenAI Codex",
-        installUrl: "https://github.com/agentclientprotocol/codex-acp",
-        installCommand: "npm install -g @openai/codex @agentclientprotocol/codex-acp",
+        installUrl: "https://github.com/openai/codex",
+        installCommand: "",
       };
     case "codebuddy":
       return {

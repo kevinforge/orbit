@@ -108,7 +108,18 @@ test("dependency license identifiers stay within the reviewed open source set", 
   const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8")) as {
     packages?: Record<string, { license?: string }>;
   };
-  const reviewed = new Set(["0BSD", "Apache-2.0", "BSD-3-Clause", "ISC", "MIT", "MPL-2.0"]);
+  const reviewed = new Set([
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "SEE LICENSE IN LICENSE.md",
+    "SEE LICENSE IN README.md",
+    "Unlicense",
+  ]);
   const licenses = new Set(
     Object.values(lock.packages ?? {})
       .map((pkg) => pkg.license)

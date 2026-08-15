@@ -10,15 +10,23 @@ identifiers:
 
 - `0BSD`
 - `Apache-2.0`
+- `BSD-2-Clause`
 - `BSD-3-Clause`
 - `ISC`
 - `MIT`
 - `MPL-2.0`
+- `SEE LICENSE IN LICENSE.md`
+- `SEE LICENSE IN README.md`
+- `Unlicense`
 
-These licenses are commonly used in open source JavaScript projects. The
-permissive licenses above are generally straightforward for distribution. The
-`MPL-2.0` dependencies should be treated with care because MPL has file-level
-copyleft requirements for modified MPL-covered files.
+These licenses are commonly used in open source JavaScript projects. The two
+`SEE LICENSE IN ...` values are package metadata markers; their distributed
+license files remain part of the installed npm dependencies. The permissive
+licenses above are generally straightforward for distribution. The `MPL-2.0`
+dependencies should be treated with care because MPL has file-level copyleft
+requirements for modified MPL-covered files. The ACP adapters also bring
+`BSD-2-Clause` and `Unlicense` into the lockfile; Orbit does not modify those
+dependencies.
 
 ## Release Gate
 

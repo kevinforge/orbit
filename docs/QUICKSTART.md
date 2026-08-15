@@ -29,8 +29,10 @@ node --version
 npm --version
 ```
 
-Install the runtime you plan to use. Orbit will show the exact install command
-for missing runtimes in the employee settings panel.
+Install the vendor runtime you plan to use. Orbit includes the ACP adapters it
+needs and does not require users to install protocol adapters separately.
+Orbit will show the vendor setup guide for a missing runtime in the employee
+settings panel.
 
 ## Step 1: Start Orbit
 

@@ -9,13 +9,17 @@ import {
   type AcpRuntimeDefinition,
 } from "./acp-runtime.ts";
 import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
+import { resolveBundledCommand } from "./bundled-runtime.ts";
 
 export type CodexAcpRunOptions = AcpRunOptions;
 export type CodexAcpConnection = AcpConnection;
 export type CodexAcpConnector = AcpConnector;
 
 export function resolveCodexAcpCommand(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CODEX_ACP_PATH?.trim() || "codex-acp";
+  return env.CODEX_ACP_PATH?.trim() || resolveBundledCommand(
+    "codex-acp",
+    env,
+  );
 }
 
 export function buildCodexAcpCommand(
