@@ -186,6 +186,11 @@ export function runAcp(
     else connection.close();
   };
 
+  const cancellationError = () => new AgentRunCancelledError(
+    `${definition.displayName} ACP turn was cancelled.`,
+    permissionRejected ? "权限申请未获批准，任务已停止。" : "运行已取消。",
+  );
+
   const result = (async () => {
     let succeeded = false;
     try {
@@ -219,10 +224,7 @@ export function runAcp(
       acceptingUpdates = false;
 
       if (cancelled || response.stopReason === "cancelled") {
-        throw new AgentRunCancelledError(
-          `${definition.displayName} ACP turn was cancelled.`,
-          permissionRejected ? "权限申请未获批准，任务已停止。" : "运行已取消。",
-        );
+        throw cancellationError();
       }
       if (response.stopReason === "refusal") {
         throw new Error(`${definition.displayName} ACP refused the request.`);
@@ -234,6 +236,11 @@ export function runAcp(
       }
       succeeded = true;
       return answer;
+    } catch (error: unknown) {
+      // Cancellation can happen during initialize/session setup, before the
+      // prompt response has a chance to report stopReason=cancelled.
+      if (cancelled) throw cancellationError();
+      throw error;
     } finally {
       acceptingUpdates = false;
       resolveSessionId(activeSessionId);

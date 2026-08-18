@@ -18,12 +18,12 @@ import { isAgentRunCancelledError } from "./agent-runtime.ts";
 type AgentRunner = {
   get(agentId: AgentId): {
     send(runId: string, prompt: string, imagePaths?: string[], approvalMode?: ApprovalMode): Promise<RunResult>;
-    /** Hard interrupt: terminate the running process tree for this agent. */
+    /** Request runtime cancellation; the runtime may fall back to process termination. */
     interrupt(runId: string): boolean;
   };
 };
 
-export type ManagedRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type ManagedRunStatus = "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
 
 export type RunOrigin = "user" | "agent" | "supervisor";
 
@@ -165,7 +165,7 @@ export class RunManager {
       return { ok: false, reason: "not_found" };
     }
 
-    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+    if (run.status === "completed" || run.status === "failed" || run.status === "cancelling" || run.status === "cancelled") {
       return { ok: false, reason: "not_cancellable" };
     }
 
@@ -180,21 +180,37 @@ export class RunManager {
       return { ok: true };
     }
 
-    // Handle running run interruption (hard interrupt)
+    // Keep the run active until the runtime settles so a late response cannot
+    // race the next queued task.
     if (run.status === "running") {
       const interrupted = this.options.agents.get(run.agentId).interrupt(runId);
       if (!interrupted) {
         // Process may have already exited naturally
         return { ok: false, reason: "not_cancellable" };
       }
-      this.markCancelled(run, "during execution");
+      this.markCancelling(run);
       return { ok: true };
     }
 
     return { ok: false, reason: "not_cancellable" };
   }
 
+  private markCancelling(run: ManagedRun): void {
+    run.status = "cancelling";
+    this.chunkBuffers.delete(run.id);
+    this.lastToolNames.delete(run.id);
+    this.appendActivity(run, "正在请求取消运行。");
+
+    const updated = this.options.messages.update(run.resultMessageId, {
+      status: "cancelling",
+      runStatus: "cancelling",
+      activity: run.activity,
+    });
+    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+  }
+
   private markCancelled(run: ManagedRun, phase: "before start" | "during execution", reason?: string): void {
+    if (run.status === "cancelled") return;
     run.status = "cancelled";
     run.completedAt = new Date().toISOString();
     // Only remove from active if interrupting a running run
@@ -234,8 +250,8 @@ export class RunManager {
 
     // A running run was interrupted, freeing the agent's slot — start the next
     // queued run so the queue doesn't stall (and FIFO is preserved via shift).
-    // Late settlement of the killed run is no-op: complete()/fail() early-return
-    // on status === "cancelled", so they won't touch the newly-active run.
+    // Late settlement of the cancelled run is a no-op: complete()/fail() early-
+    // return on status === "cancelled", so they won't touch the next run.
     if (phase === "during execution") {
       this.startNext(run.agentId);
     }
@@ -304,21 +320,21 @@ export class RunManager {
     return { cancelledQueuedRunIds, suppressedRunningRunIds };
   }
 
-  /** Hard-stop everything in this conversation: discard all queued runs and
-   * kill all running runs. Used by the unified "停止所有任务" button.
+  /** Stop everything in this conversation: discard all queued runs and request
+   * cancellation for all running runs. Used by the unified "停止所有任务" button.
    *
    * - Queued runs go through `markDiscarded()`: their messages are marked
    *   `discarded: true` so the frontend filters them out (no "已取消" row).
-   * - Running runs go through `cancel()`: their messages are preserved with
-   *   status "cancelled" and the partially-streamed content stays visible.
+   * - Running runs go through `cancel()`: their messages first show
+   *   "cancelling" and preserve the partially-streamed content.
    * - Does not call `fail()`, so `run.failed` subscribers (ChannelWatch) are
    *   not triggered. `run.cancelled` is published but ChannelWatch does not
    *   subscribe to it.
    * - `interruptCurrentChain()` is left intact for internal/test use.
    */
-  interruptAll(): { cancelledQueuedRunIds: string[]; killedRunningRunIds: string[] } {
+  interruptAll(): { cancelledQueuedRunIds: string[]; cancellingRunningRunIds: string[] } {
     const cancelledQueuedRunIds: string[] = [];
-    const killedRunningRunIds: string[] = [];
+    const cancellingRunningRunIds: string[] = [];
 
     // 1. Discard all queued runs (messages marked discarded, frontend filters)
     for (const queue of this.queues.values()) {
@@ -329,15 +345,15 @@ export class RunManager {
       }
     }
 
-    // 2. Kill all running runs via cancel() → markCancelled("during execution")
-    //    Snapshot the active map first: cancel() mutates it during iteration.
+    // 2. Request cancellation for all running runs. They remain active until
+    //    their runtime promises settle, so the queue cannot advance early.
     for (const run of Array.from(this.active.values())) {
       if (this.cancel(run.id).ok) {
-        killedRunningRunIds.push(run.id);
+        cancellingRunningRunIds.push(run.id);
       }
     }
 
-    return { cancelledQueuedRunIds, killedRunningRunIds };
+    return { cancelledQueuedRunIds, cancellingRunningRunIds };
   }
 
   private start(run: ManagedRun): void {
@@ -388,6 +404,10 @@ export class RunManager {
     if (run.status === "cancelled") {
       return;
     }
+    if (run.status === "cancelling") {
+      this.markCancelled(run, "during execution", "运行已取消。");
+      return;
+    }
     run.status = "completed";
     run.completedAt = new Date().toISOString();
     this.active.delete(run.agentId);
@@ -427,6 +447,10 @@ export class RunManager {
   // add the suppressFollowupRouting check here to match complete().
   private fail(run: ManagedRun, error: string): void {
     if (run.status === "cancelled") {
+      return;
+    }
+    if (run.status === "cancelling") {
+      this.markCancelled(run, "during execution", "运行已取消。");
       return;
     }
     const errorSummary = summarizeRunError(error);

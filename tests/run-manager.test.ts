@@ -120,9 +120,13 @@ test("cancelAgentRuns clears a supervisor queue and active run", async () => {
   const cancelled = manager.cancelAgentRuns("supervisor");
 
   assert.deepEqual(cancelled, [queued.id, active.id]);
-  assert.equal(active.status, "cancelled");
+  assert.equal(active.status, "cancelling");
   assert.equal(queued.status, "cancelled");
   assert.deepEqual(calls, [active.id]);
+
+  first.reject(new AgentRunCancelledError("cancelled"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(active.status, "cancelled");
 });
 
 test("propagates the source approval mode to the agent run and result message", async () => {
@@ -783,13 +787,17 @@ test("cancel a running run triggers interrupt and succeeds", async () => {
 
   const result = manager.cancel(run.id);
   assert.equal(result.ok, true);
-  assert.equal(run.status, "cancelled", "run status should be cancelled");
+  assert.equal(run.status, "cancelling", "run should expose cancellation while the runtime is settling");
   assert.equal(interruptedRunId, run.id, "interrupt should be called with correct runId");
 
-  // Verify run.cancelled event was published
+  assert.equal(messages.get(run.resultMessageId)?.status, "cancelling");
+  first.reject(new AgentRunCancelledError("cancelled"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Verify run.cancelled event was published after the runtime settled
   const msg = messages.get(run.resultMessageId);
   assert.equal(msg?.status, "cancelled");
-  assert.ok(msg?.activity?.some((a) => "text" in a && a.text === "Interrupted by user during execution."));
+  assert.ok(msg?.activity?.some((a) => "text" in a && a.text === "运行已取消。"));
 });
 
 test("cancelling a running run starts the next queued run (no stall, FIFO preserved)", async () => {
@@ -824,14 +832,19 @@ test("cancelling a running run starts the next queued run (no stall, FIFO preser
   const r2 = manager.enqueue("developer", "R2", source);   // queued behind r1
   assert.equal(r2.status, "queued");
 
-  // Interrupt the running R1 — R2 must start instead of stalling forever.
+  // Request cancellation for R1 — R2 must wait until R1 actually settles.
   manager.cancel(r1.id);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(calls.map((c) => c.prompt), ["R1"], "R2 must not start while cancellation is pending");
+  assert.equal(r1.status, "cancelling");
+  first.reject(new AgentRunCancelledError("cancelled"));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.deepEqual(calls.map((c) => c.prompt), ["R1", "R2"], "R2 should start after R1 is cancelled");
   assert.equal(r2.status, "running", "R2 should now be running");
 
-  // The killed R1 process may settle late; it must not disturb the now-running R2.
+  // A late R1 settlement must not disturb the now-running R2.
   first.reject(new Error("killed"));
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(r2.status, "running", "late settlement of cancelled R1 must not stop R2");
@@ -950,6 +963,8 @@ test("cancel a running run publishes run.cancelled event", async () => {
   const result = manager.cancel(run.id);
   assert.equal(result.ok, true);
 
+  first.reject(new AgentRunCancelledError("cancelled"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
   const cancelledEvents = events.filter((e) => e.type === "run.cancelled");
   assert.equal(cancelledEvents.length, 1, "interrupted running runs should publish run.cancelled");
 });
@@ -1233,7 +1248,7 @@ test("interruptCurrentChain does not suppress when no running runs", () => {
   assert.equal(result.suppressedRunningRunIds.length, 0);
 });
 
-test("interruptAll discards queued runs and kills running runs across agents", async () => {
+test("interruptAll discards queued runs and requests cancellation across agents", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
   const devRunning = deferred();
@@ -1277,29 +1292,29 @@ test("interruptAll discards queued runs and kills running runs across agents", a
   assert.ok(result.cancelledQueuedRunIds.includes(devQueued2.id));
   assert.ok(result.cancelledQueuedRunIds.includes(revQueued1.id));
 
-  // 2 running runs killed
-  assert.equal(result.killedRunningRunIds.length, 2);
-  assert.ok(result.killedRunningRunIds.includes(devRun.id));
-  assert.ok(result.killedRunningRunIds.includes(revRun.id));
+  // 2 running runs are now cancelling
+  assert.equal(result.cancellingRunningRunIds.length, 2);
+  assert.ok(result.cancellingRunningRunIds.includes(devRun.id));
+  assert.ok(result.cancellingRunningRunIds.includes(revRun.id));
 
   // Queued messages marked discarded (frontend filters them out)
   assert.equal(messages.get(devQueued1.resultMessageId)?.discarded, true);
   assert.equal(messages.get(devQueued2.resultMessageId)?.discarded, true);
   assert.equal(messages.get(revQueued1.resultMessageId)?.discarded, true);
 
-  // Running messages preserved as cancelled, NOT discarded
-  assert.equal(messages.get(devRun.resultMessageId)?.status, "cancelled");
-  assert.equal(messages.get(revRun.resultMessageId)?.status, "cancelled");
+  // Running messages first expose cancellation in progress
+  assert.equal(messages.get(devRun.resultMessageId)?.status, "cancelling");
+  assert.equal(messages.get(revRun.resultMessageId)?.status, "cancelling");
   assert.equal(messages.get(devRun.resultMessageId)?.discarded, undefined);
   assert.equal(messages.get(revRun.resultMessageId)?.discarded, undefined);
 
-  // cancel() path does not set suppressFollowupRouting on killed runs
+  // cancel() path does not set suppressFollowupRouting on cancelled runs
   assert.equal(devRun.suppressFollowupRouting, undefined);
   assert.equal(revRun.suppressFollowupRouting, undefined);
 
-  // Late settlement of killed runs is a no-op (status already cancelled)
-  devRunning.resolve({ content: "dev done" });
-  revRunning.resolve({ content: "rev done" });
+  // The next queue step waits until both runtimes settle.
+  devRunning.reject(new AgentRunCancelledError("cancelled"));
+  revRunning.reject(new AgentRunCancelledError("cancelled"));
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(messages.get(devRun.resultMessageId)?.status, "cancelled");
   assert.equal(messages.get(revRun.resultMessageId)?.status, "cancelled");
@@ -1323,7 +1338,7 @@ test("interruptAll with no runs returns empty result", () => {
 
   const result = manager.interruptAll();
   assert.equal(result.cancelledQueuedRunIds.length, 0);
-  assert.equal(result.killedRunningRunIds.length, 0);
+  assert.equal(result.cancellingRunningRunIds.length, 0);
 });
 
 test("interruptAll allows new runs to start after interrupt", async () => {
@@ -1353,12 +1368,16 @@ test("interruptAll allows new runs to start after interrupt", async () => {
   assert.equal(running.status, "running");
 
   manager.interruptAll();
-  assert.equal(running.status, "cancelled");
+  assert.equal(running.status, "cancelling");
 
-  // Agent slot is free; a new run starts immediately
+  // The active slot remains occupied until cancellation settles.
   const next = manager.enqueue("developer", "next", source);
-  assert.equal(next.status, "running");
+  assert.equal(next.status, "queued");
 
+  first.reject(new AgentRunCancelledError("cancelled"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(running.status, "cancelled");
+  assert.equal(next.status, "running");
   second.resolve({ content: "next done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(messages.get(next.resultMessageId)?.status, "done");
@@ -1545,6 +1564,8 @@ test("run lifecycle content and activity do not leak the raw 'run' codeword", as
   const queued = manager.enqueue("developer", "second", source);  // queued behind running
   manager.cancel(queued.id);                                      // cancel before start
   manager.cancel(running.id);                                     // interrupt running run
+  interrupted.reject(new AgentRunCancelledError("cancelled"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
   manager.enqueue("developer", "third", source);                 // running again
   completed.resolve({ content: "third done" });
   await new Promise((resolve) => setTimeout(resolve, 0));

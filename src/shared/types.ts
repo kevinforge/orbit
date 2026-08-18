@@ -175,7 +175,7 @@ export const ATTACHMENT_LIMITS = {
 
 export type ChatMessageKind = "user" | "agent" | "system";
 
-export type ChatMessageStatus = "sent" | "running" | "done" | "error" | "cancelled";
+export type ChatMessageStatus = "sent" | "running" | "cancelling" | "done" | "error" | "cancelled";
 
 export type MessageRouteState = "unprocessed" | "ignored" | "routed" | "blocked";
 
@@ -207,7 +207,7 @@ export type ChatMessage = {
   createdAt: string;
   status?: ChatMessageStatus;
   runId?: string;
-  runStatus?: "queued" | "running" | "completed" | "failed" | "cancelled";
+  runStatus?: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   parentMessageId?: string;
   routeState?: MessageRouteState;
   routeDepth?: number;

@@ -30,6 +30,7 @@ export type AgentSessionOptions = {
 
 type ActiveRun = {
   runId: string;
+  cancellationRequested?: boolean;
   child: {
     kill: () => void;
     pid: number;
@@ -117,7 +118,7 @@ export class AgentSession {
     this.setStatus("stopped");
   }
 
-  /** Hard interrupt: terminate the entire process tree for the running agent. */
+  /** Request cancellation and keep the active run until its runtime settles. */
   interrupt(runId: string): boolean {
     if (!this.activeRun || this.activeRun.runId !== runId) {
       return false;
@@ -125,10 +126,10 @@ export class AgentSession {
 
     this.settlePendingPermissions(runId, "reject");
     this.settlePendingElicitations(runId, { action: "cancel" });
-    // Terminate entire process tree
+    this.activeRun.cancellationRequested = true;
+    // ACP runtimes send session/cancel first and only terminate the process
+    // tree if the runtime does not settle within its grace period.
     this.activeRun.child.interrupt();
-    this.activeRun = null;
-    this.setStatus("idle");
 
     // Note: We intentionally do NOT clear the session here.
     // The CLI's --resume parameter restores the entire conversation context,
@@ -268,11 +269,12 @@ export class AgentSession {
 
         this.settlePendingPermissions(runId, "reject");
         this.settlePendingElicitations(runId, { action: "cancel" });
+        const cancellationRequested = this.activeRun?.runId === runId && this.activeRun.cancellationRequested === true;
         this.activeRun = null;
 
         // ACP reports a rejected permission as a cancelled turn. Keep the
         // agent available for the next task instead of leaving it in error.
-        if (isAgentRunCancelledError(error)) {
+        if (isAgentRunCancelledError(error) || cancellationRequested) {
           this.setStatus("idle");
         } else if (this.status !== "idle") {
           this.setStatus("error");

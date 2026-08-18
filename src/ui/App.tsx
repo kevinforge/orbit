@@ -9,9 +9,11 @@ import * as TDesign from "tdesign-react";
 import {
   AddIcon,
   ChartIcon,
+  CheckIcon,
   ChatBubbleHistoryIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CopyIcon,
   EditIcon,
   FolderIcon,
   MoreIcon,
@@ -159,8 +161,9 @@ export function App() {
   // 新建会话第一条无 @ 消息只触发监工，state.agents 全 idle 且无 queued 时，
   // 仍需通过 messages 上的 runStatus==='running' 暴露停止按钮。
   const hasAnyActiveRun = state.messages.some(
-    (m) => m.runStatus === "running" || m.runStatus === "queued",
+    (m) => m.runStatus === "running" || m.runStatus === "cancelling" || m.runStatus === "queued",
   );
+  const hasCancellingRun = state.messages.some((m) => m.runStatus === "cancelling");
   const hasRunningOrQueued = isAnyAgentRunning || hasAnyActiveRun;
   const hasWorkspace = Boolean(state.workspace.id);
   const missingRuntimeAgents = useMemo(
@@ -651,8 +654,8 @@ export function App() {
         throw new Error(`Interrupt request failed: ${response.status}`);
       }
       const data = await response.json();
-      if ((data.cancelledQueuedRunIds?.length ?? 0) > 0 || (data.killedRunningRunIds?.length ?? 0) > 0) {
-        setInterruptToast("已停止所有任务");
+      if ((data.cancelledQueuedRunIds?.length ?? 0) > 0 || (data.cancellingRunningRunIds?.length ?? 0) > 0) {
+        setInterruptToast("正在停止所有任务");
         window.setTimeout(() => setInterruptToast(null), 3000);
       }
     } catch {
@@ -1471,13 +1474,13 @@ export function App() {
                 type="button"
                 className="interruptBtn"
                 onClick={interruptChain}
-                disabled={isInterrupting}
+                disabled={isInterrupting || hasCancellingRun}
                 title="停止所有任务"
                 variant="outline"
                 theme="danger"
                 icon={<StopCircleIcon />}
               >
-                {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "停止所有任务"}
+                {isInterrupting || hasCancellingRun ? <><span className="sendSpinner" aria-hidden="true" />正在停止…</> : "停止所有任务"}
               </Button>
             ) : null}
             <Button type="submit" theme="primary" icon={<SendIcon />} disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode}>
@@ -1870,6 +1873,7 @@ function MessageRow({
 }) {
   const author = message.kind === "user" ? "你" : message.kind === "agent" ? agent?.label ?? message.agentId ?? "数字员工" : "系统";
   const isRunning = message.status === "running";
+  const isCancelling = message.status === "cancelling" || message.runStatus === "cancelling";
   const isQueued = message.runStatus === "queued";
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
   const compactHandoffSource = parentMessage?.kind === "agent"
@@ -1877,6 +1881,33 @@ function MessageRow({
     : null;
   const isProgressPlaceholder = message.kind === "agent"
     && (message.content.endsWith(" is working...") || message.content.endsWith(" queued..."));
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyResetTimer = useRef<number | null>(null);
+  const canCopyMessage = message.content.trim().length > 0 && !isProgressPlaceholder;
+
+  useEffect(() => () => {
+    if (copyResetTimer.current !== null) {
+      window.clearTimeout(copyResetTimer.current);
+    }
+  }, []);
+
+  async function copyMessage() {
+    if (!canCopyMessage) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+
+    if (copyResetTimer.current !== null) {
+      window.clearTimeout(copyResetTimer.current);
+    }
+    copyResetTimer.current = window.setTimeout(() => setCopyState("idle"), 1500);
+  }
 
   return (
     <article className={`message ${message.kind}`}>
@@ -1906,6 +1937,17 @@ function MessageRow({
             isRunning={isRunning}
           />
         ) : null}
+        {canCopyMessage ? (
+          <button
+            className={`messageCopyBtn ${copyState}`}
+            type="button"
+            onClick={(event) => { event.stopPropagation(); void copyMessage(); }}
+            aria-label={copyState === "copied" ? "已复制消息" : "复制消息"}
+            title={copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制消息"}
+          >
+            {copyState === "copied" ? <CheckIcon /> : <CopyIcon />}
+          </button>
+        ) : null}
       </div>
       {message.sessionId || message.runIndex ? (
         <div className="sessionInfo">
@@ -1925,7 +1967,7 @@ function MessageRow({
       ) : null}
       <div className="messageBody">
         {isProgressPlaceholder ? (
-          <span className="messageProgressText">{isQueued ? "等待处理" : "正在处理"}</span>
+          <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
         ) : message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
@@ -1957,6 +1999,7 @@ function messageStatusLabel(status: ChatMessage["status"]): string {
   switch (status) {
     case "sent": return "已发送";
     case "running": return "运行中";
+    case "cancelling": return "取消中";
     case "done": return "已完成";
     case "error": return "失败";
     case "cancelled": return "已取消";

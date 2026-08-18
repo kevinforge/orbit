@@ -150,7 +150,7 @@ export class MessageStore {
 
     for (const message of allMessages) {
       const isActiveAgentRun = message.kind === "agent" && (
-        message.runStatus === "running" || message.runStatus === "queued" || (message.status === "running" && Boolean(message.runId))
+        message.runStatus === "running" || message.runStatus === "cancelling" || message.runStatus === "queued" || (message.status === "running" && Boolean(message.runId))
       );
       if (isActiveAgentRun) {
         const updated: ChatMessage = {

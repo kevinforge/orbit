@@ -135,6 +135,9 @@ function taskStatus(message: ChatMessage) {
   if (message.status === "cancelled" || message.runStatus === "cancelled") {
     return { label: "已取消", percentage: 100, theme: "warning" as const, color: "#ed7b2f", progressStatus: "warning" as const, icon: <ErrorCircleFilledIcon /> };
   }
+  if (message.status === "cancelling" || message.runStatus === "cancelling") {
+    return { label: "取消中", percentage: 82, theme: "warning" as const, color: "#ed7b2f", progressStatus: "active" as const, icon: <TimeIcon /> };
+  }
   if (message.status === "running" || message.runStatus === "running") {
     return { label: "运行中", percentage: 68, theme: "primary" as const, color: "#0052d9", progressStatus: "active" as const, icon: <TimeIcon /> };
   }

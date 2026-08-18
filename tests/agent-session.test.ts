@@ -531,8 +531,9 @@ test("interrupt followed by result reject should NOT change status to error", as
   assert.equal(interrupted, true);
   assert.equal(interruptCalled, true);
 
-  // Status should be idle after interrupt
-  assert.equal(session.getStatus(), "idle", "status should be idle immediately after interrupt");
+  // Cancellation is asynchronous: the active run remains occupied until the
+  // runtime promise settles, so a queued task cannot start too early.
+  assert.equal(session.getStatus(), "running", "status should remain running while cancellation is pending");
 
   // Simulate what happens when the killed process exits: result promise rejects
   deferredResult.reject(new Error("Process killed: exit code 137"));

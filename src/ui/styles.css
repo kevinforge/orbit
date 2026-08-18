@@ -955,6 +955,62 @@ button:active:not(:disabled) {
   animation: pulseOpacity 2s ease-in-out infinite;
 }
 
+.messageCopyBtn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-xs);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  cursor: pointer;
+  transition: opacity var(--transition-fast), transform var(--transition-fast), color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.message:hover .messageCopyBtn,
+.message:focus-within .messageCopyBtn {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.messageCopyBtn:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.messageCopyBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.messageCopyBtn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.messageCopyBtn.copied {
+  border-color: var(--success-border);
+  color: var(--success);
+  background: var(--success-subtle);
+}
+
+.messageCopyBtn.failed {
+  border-color: var(--danger-border, #fecaca);
+  color: var(--danger, #dc2626);
+  background: var(--danger-subtle, #fef2f2);
+}
+
 .cancelRunBtn {
   border: 1px solid var(--danger-border, #fecaca);
   border-radius: var(--radius-full);
@@ -981,6 +1037,11 @@ button:active:not(:disabled) {
 .statusPill.cancelled {
   background: var(--danger-subtle, #fef2f2);
   color: var(--danger, #dc2626);
+}
+
+.statusPill.cancelling {
+  background: var(--warning-subtle);
+  color: var(--warning);
 }
 
 @keyframes pulseOpacity {
@@ -1221,7 +1282,10 @@ button:active:not(:disabled) {
 .markdown h3,
 .markdown h4,
 .markdown p,
-.markdown ul {
+.markdown ul,
+.markdown ol,
+.markdown blockquote,
+.markdown table {
   margin: 0;
 }
 
@@ -1253,6 +1317,14 @@ button:active:not(:disabled) {
   padding-left: 20px;
 }
 
+.markdown ol {
+  padding-left: 24px;
+}
+
+.markdown li::marker {
+  color: var(--text-muted);
+}
+
 .markdown li + li {
   margin-top: 4px;
 }
@@ -1260,15 +1332,15 @@ button:active:not(:disabled) {
 .markdown a {
   color: var(--accent);
   text-decoration: none;
-  border-bottom: 1px solid var(--accent-border);
-  transition: all var(--transition-fast);
+  border-bottom: 1px solid transparent;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
 .markdown a:hover {
   color: var(--accent-hover);
-  border-bottom-color: var(--accent);
+  border-bottom-color: currentColor;
 }
 
 .markdown strong {
@@ -1277,18 +1349,18 @@ button:active:not(:disabled) {
 }
 
 .markdown pre {
-  background: #1c1917;
-  color: #d6d3d1;
-  padding: 16px 20px;
+  background: #f7f8f7;
+  color: #293330;
+  padding: 16px 18px;
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   overflow-x: auto;
   max-width: 100%;
   font-family: var(--font-mono);
   font-size: 13px;
-  line-height: 1.65;
-  border: 1px solid #292524;
+  line-height: 1.6;
+  border: 1px solid #dce4e1;
   border-top: 0;
-  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.15);
+  box-shadow: none;
   margin: 0;
 }
 
@@ -1309,8 +1381,8 @@ button:active:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   padding: 6px 14px;
-  background: #292524;
-  border: 1px solid #3a3633;
+  background: #eef3f1;
+  border: 1px solid #dce4e1;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
 }
 
@@ -1318,7 +1390,7 @@ button:active:not(:disabled) {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
-  color: #a8a29e;
+  color: #66736f;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -1327,9 +1399,9 @@ button:active:not(:disabled) {
   font: inherit;
   font-size: 11px;
   font-weight: 600;
-  color: #a8a29e;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #66736f;
+  background: transparent;
+  border: 1px solid #c9d7d2;
   border-radius: 4px;
   padding: 2px 10px;
   cursor: pointer;
@@ -1338,8 +1410,9 @@ button:active:not(:disabled) {
 }
 
 .codeCopyBtn:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: #e7e5e4;
+  background: #e1eeea;
+  color: var(--accent);
+  border-color: #9ecfc3;
 }
 
 .codeCopyBtn.copied {
@@ -1362,11 +1435,11 @@ button:active:not(:disabled) {
 }
 
 .markdown code {
-  border: 1px solid var(--border);
+  border: 1px solid #f0cfbb;
   border-radius: 5px;
   padding: 2px 7px;
-  color: var(--secondary);
-  background: var(--secondary-subtle);
+  color: #b85c2a;
+  background: #fff8f2;
   font-family: var(--font-mono);
   font-size: 0.88em;
   font-weight: 600;
@@ -1405,12 +1478,12 @@ button:active:not(:disabled) {
 
 .markdown blockquote {
   margin: 0;
-  border-left: 3px solid var(--accent);
+  border-left: 3px solid #b9d9d1;
   padding: 8px 16px;
-  color: var(--text-secondary);
-  background: var(--accent-subtle);
+  color: #5e6b67;
+  background: #f5f8f7;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  font-style: italic;
+  font-style: normal;
 }
 
 /* ── Composer ──────────────────────────────────────────────── */
@@ -3158,6 +3231,18 @@ button:active:not(:disabled) {
   background: var(--warning);
 }
 
+.taskStatus.cancelling,
+.taskTimelineBar.cancelling {
+  background: var(--warning-subtle);
+  color: var(--warning);
+  border-color: var(--warning-border);
+}
+
+.taskStatus.cancelling {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-subtle);
+}
+
 .taskStatus.running {
   background: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-subtle);
@@ -3243,6 +3328,11 @@ button:active:not(:disabled) {
 }
 
 .taskStatusLabel.cancelled {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.taskStatusLabel.cancelling {
   background: var(--warning-subtle);
   color: var(--warning);
 }

@@ -45,7 +45,7 @@ export type AgentRuntimeRunHandle = {
   process: {
     kill: () => void;
     pid: number;
-    /** Hard interrupt: terminate entire process tree (not just parent process). */
+    /** Request cancellation; ACP runtimes may terminate the process tree as a fallback. */
     interrupt: () => void;
   };
   result: Promise<string>;
