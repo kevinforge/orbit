@@ -308,7 +308,6 @@ export class AgentSession {
         if (!pending) return;
         this.settlePendingPermission(permission.id, pending, "reject", "审批请求已过期，操作未获批准。");
       }, timeoutMs);
-      timer.unref?.();
       this.pendingPermissionStates.set(permission.id, { permission, resolve, timer });
       this.options.eventBus.publish({
         type: "permission.requested",
@@ -353,7 +352,6 @@ export class AgentSession {
         if (!pending) return;
         this.settlePendingElicitation(id, pending, { action: "cancel" }, "用户输入请求已过期。");
       }, timeoutMs);
-      timer.unref?.();
       this.pendingElicitationStates.set(id, { elicitation, resolve, timer });
       this.options.eventBus.publish({
         type: "elicitation.requested",
