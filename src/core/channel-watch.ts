@@ -100,6 +100,11 @@ export class ChannelWatchService {
         // 每条用户消息重置限流计数（无论模式），但只有复杂协作链的消息才触发监工。
         ctx.triggerCount = 0;
         if (!hasAssignment && ctx.triggers.onUnassignedMessage && isSupervisedSnapshot(message.interactionMode)) {
+          // 通道非空闲（其他数字员工正在工作）时不触发监工：当前任务完成后
+          // onAgentCompleted 会自动触发监工，监工通过 buildHistoryForAgent 看到
+          // 用户消息并评估。通道空闲时仍传 relaxIdleCheck: true，以保留用户消息
+          // 恢复 error 状态监工的语义（issue #82）。
+          if (!this.isChannelTrulyIdle(ctx.agentId)) continue;
           this.tryTrigger(ctx, message, { relaxIdleCheck: true });
         }
       }

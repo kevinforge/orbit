@@ -83,7 +83,7 @@ function buildConversationTasks(
   const runsByRoot = new Map<string, ChatMessage[]>();
 
   for (const message of messages) {
-    if (message.kind !== "agent" || !message.runId) continue;
+    if (message.discarded || message.kind !== "agent" || !message.runId) continue;
     const rootId = findTaskRootId(message, messagesById, rootCache);
     runsByRoot.set(rootId, [...(runsByRoot.get(rootId) ?? []), message]);
   }

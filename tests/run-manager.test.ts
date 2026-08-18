@@ -1233,6 +1233,137 @@ test("interruptCurrentChain does not suppress when no running runs", () => {
   assert.equal(result.suppressedRunningRunIds.length, 0);
 });
 
+test("interruptAll discards queued runs and kills running runs across agents", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const devRunning = deferred();
+  const revRunning = deferred();
+  const pending = [devRunning, revRunning];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.shift()!.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const devRun = manager.enqueue("developer", "work", source);
+  const devQueued1 = manager.enqueue("developer", "queued-1", source);
+  const devQueued2 = manager.enqueue("developer", "queued-2", source);
+  const revRun = manager.enqueue("reviewer", "review", source);
+  const revQueued1 = manager.enqueue("reviewer", "queued-rev", source);
+
+  assert.equal(devRun.status, "running");
+  assert.equal(devQueued1.status, "queued");
+  assert.equal(devQueued2.status, "queued");
+  assert.equal(revRun.status, "running");
+  assert.equal(revQueued1.status, "queued");
+
+  const result = manager.interruptAll();
+
+  // 3 queued runs discarded
+  assert.equal(result.cancelledQueuedRunIds.length, 3);
+  assert.ok(result.cancelledQueuedRunIds.includes(devQueued1.id));
+  assert.ok(result.cancelledQueuedRunIds.includes(devQueued2.id));
+  assert.ok(result.cancelledQueuedRunIds.includes(revQueued1.id));
+
+  // 2 running runs killed
+  assert.equal(result.killedRunningRunIds.length, 2);
+  assert.ok(result.killedRunningRunIds.includes(devRun.id));
+  assert.ok(result.killedRunningRunIds.includes(revRun.id));
+
+  // Queued messages marked discarded (frontend filters them out)
+  assert.equal(messages.get(devQueued1.resultMessageId)?.discarded, true);
+  assert.equal(messages.get(devQueued2.resultMessageId)?.discarded, true);
+  assert.equal(messages.get(revQueued1.resultMessageId)?.discarded, true);
+
+  // Running messages preserved as cancelled, NOT discarded
+  assert.equal(messages.get(devRun.resultMessageId)?.status, "cancelled");
+  assert.equal(messages.get(revRun.resultMessageId)?.status, "cancelled");
+  assert.equal(messages.get(devRun.resultMessageId)?.discarded, undefined);
+  assert.equal(messages.get(revRun.resultMessageId)?.discarded, undefined);
+
+  // cancel() path does not set suppressFollowupRouting on killed runs
+  assert.equal(devRun.suppressFollowupRouting, undefined);
+  assert.equal(revRun.suppressFollowupRouting, undefined);
+
+  // Late settlement of killed runs is a no-op (status already cancelled)
+  devRunning.resolve({ content: "dev done" });
+  revRunning.resolve({ content: "rev done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(messages.get(devRun.resultMessageId)?.status, "cancelled");
+  assert.equal(messages.get(revRun.resultMessageId)?.status, "cancelled");
+});
+
+test("interruptAll with no runs returns empty result", () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return { send() { return Promise.resolve({ content: "ok" }); }, interrupt() { return true; } };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const result = manager.interruptAll();
+  assert.equal(result.cancelledQueuedRunIds.length, 0);
+  assert.equal(result.killedRunningRunIds.length, 0);
+});
+
+test("interruptAll allows new runs to start after interrupt", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.shift()!.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const running = manager.enqueue("developer", "first", source);
+  assert.equal(running.status, "running");
+
+  manager.interruptAll();
+  assert.equal(running.status, "cancelled");
+
+  // Agent slot is free; a new run starts immediately
+  const next = manager.enqueue("developer", "next", source);
+  assert.equal(next.status, "running");
+
+  second.resolve({ content: "next done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(messages.get(next.resultMessageId)?.status, "done");
+});
+
 test("completed suppressed run does NOT call onRunCompleted but still publishes run.completed", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

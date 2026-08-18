@@ -241,6 +241,36 @@ export class RunManager {
     }
   }
 
+  /** Discard a queued run without writing a visible "cancelled" message.
+   *
+   * Used by `interruptAll()` for queued tasks: the message is marked
+   * `discarded: true` so the frontend filters it out, instead of leaving a
+   * "排队任务已取消" row behind. Running runs are NOT handled here — they go
+   * through `cancel()` so their partially-streamed content is preserved.
+   */
+  private markDiscarded(run: ManagedRun): void {
+    run.status = "cancelled";
+    run.completedAt = new Date().toISOString();
+    this.chunkBuffers.delete(run.id);
+    this.lastToolNames.delete(run.id);
+    this.appendActivity(run, "Cancelled by user before start.");
+    const updated = this.options.messages.update(run.resultMessageId, {
+      discarded: true,
+      status: "cancelled",
+      runStatus: "cancelled",
+      activity: run.activity,
+      completedAt: run.completedAt,
+    });
+    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({
+      type: "run.cancelled",
+      conversationId: this.options.conversationId,
+      agentId: run.agentId,
+      runId: run.id,
+      resultMessageId: updated.id,
+    });
+  }
+
   /** Interrupt the current auto-collaboration chain without killing running CLI processes.
    *
    * - All queued runs are cancelled immediately.
@@ -272,6 +302,42 @@ export class RunManager {
     }
 
     return { cancelledQueuedRunIds, suppressedRunningRunIds };
+  }
+
+  /** Hard-stop everything in this conversation: discard all queued runs and
+   * kill all running runs. Used by the unified "停止所有任务" button.
+   *
+   * - Queued runs go through `markDiscarded()`: their messages are marked
+   *   `discarded: true` so the frontend filters them out (no "已取消" row).
+   * - Running runs go through `cancel()`: their messages are preserved with
+   *   status "cancelled" and the partially-streamed content stays visible.
+   * - Does not call `fail()`, so `run.failed` subscribers (ChannelWatch) are
+   *   not triggered. `run.cancelled` is published but ChannelWatch does not
+   *   subscribe to it.
+   * - `interruptCurrentChain()` is left intact for internal/test use.
+   */
+  interruptAll(): { cancelledQueuedRunIds: string[]; killedRunningRunIds: string[] } {
+    const cancelledQueuedRunIds: string[] = [];
+    const killedRunningRunIds: string[] = [];
+
+    // 1. Discard all queued runs (messages marked discarded, frontend filters)
+    for (const queue of this.queues.values()) {
+      while (queue.length > 0) {
+        const run = queue.shift()!;
+        this.markDiscarded(run);
+        cancelledQueuedRunIds.push(run.id);
+      }
+    }
+
+    // 2. Kill all running runs via cancel() → markCancelled("during execution")
+    //    Snapshot the active map first: cancel() mutates it during iteration.
+    for (const run of Array.from(this.active.values())) {
+      if (this.cancel(run.id).ok) {
+        killedRunningRunIds.push(run.id);
+      }
+    }
+
+    return { cancelledQueuedRunIds, killedRunningRunIds };
   }
 
   private start(run: ManagedRun): void {

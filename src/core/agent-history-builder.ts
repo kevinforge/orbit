@@ -47,6 +47,7 @@ export function buildHistoryForAgent(agentId: AgentId, allMessages: ChatMessage[
   for (let i = cutoffIndex + 1; i < allMessages.length; i++) {
     const msg = allMessages[i];
     if (msg.kind === "system") continue;
+    if (msg.discarded) continue;
     if (msg.status === "running") continue;
     // Exclude only the specific source message (already injected as <current-task>),
     // rather than all routed agent messages which may contain valuable context.

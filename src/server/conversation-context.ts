@@ -147,8 +147,8 @@ export class ConversationContext {
     return this.hasRunningAgent() || this.runManager.hasQueuedRuns();
   }
 
-  interrupt(): { cancelledQueuedRunIds: string[]; suppressedRunningRunIds: string[] } {
-    return this.runManager.interruptCurrentChain();
+  interrupt(): { cancelledQueuedRunIds: string[]; killedRunningRunIds: string[] } {
+    return this.runManager.interruptAll();
   }
 
   pendingPermissions(): PendingPermission[] {

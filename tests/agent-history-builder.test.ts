@@ -84,6 +84,17 @@ test("filters out system and running messages but keeps routed agent messages", 
   assert.equal(history[3].content, "arch done");
 });
 
+test("filters discarded messages out of employee history", () => {
+  const messages: ChatMessage[] = [
+    msg({ kind: "user", content: "original task" }),
+    msg({ kind: "agent", agentId: "developer", content: "developer queued...", status: "cancelled", runStatus: "cancelled", discarded: true }),
+    msg({ kind: "user", content: "next task" }),
+  ];
+
+  const history = buildHistoryForAgent("developer", messages);
+  assert.deepEqual(history.map((entry) => entry.content), ["original task", "next task"]);
+});
+
 test("truncates total history to MAX_HISTORY_CHARS", () => {
   const messages: ChatMessage[] = [];
   const chunkSize = 400;

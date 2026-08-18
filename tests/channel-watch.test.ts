@@ -1062,7 +1062,9 @@ test("hasAssignmentMarker matches @user: as known ID — @user: in reply suppres
   service.dispose();
 });
 
-test("unassigned user message triggers supervisor even when other agent is running (relaxIdleCheck)", async () => {
+test("unassigned user message does NOT trigger supervisor while another agent is running", async () => {
+  // 修复：复杂协作模式下，数字员工正在工作时，用户发送无 @ 消息不应立即触发监工。
+  // 通道非空闲（dev running）→ 跳过本次触发；等 dev 完成后由 onAgentCompleted 触发监工评估。
   const eventBus = new EventBus();
   const messages = new MessageStore();
   const { agentRegistry, runManager, enqueueCalls } = createMocks({
@@ -1079,14 +1081,69 @@ test("unassigned user message triggers supervisor even when other agent is runni
     profiles,
   );
 
-  // Verify that isChannelTrulyIdle would return false
+  // 通道非空闲：dev 正在运行
   assert.equal(service.isChannelTrulyIdle("supervisor"), false);
 
-  // But user unassigned message should still trigger supervisor
   eventBus.publish({
     type: "message.created",
     conversationId: "conv-1",
     message: createUserMessage("What's the status?"),
+  });
+
+  // 不应触发监工——需等当前任务完成
+  assert.equal(enqueueCalls.length, 0);
+
+  service.dispose();
+});
+
+test("dev completing after a queued user message triggers supervisor", async () => {
+  // 修复配套：用户在 dev 工作期间发的无 @ 消息不会丢失——dev 完成后 onAgentCompleted
+  // 触发监工，监工通过 buildHistoryForAgent 看到该用户消息并评估。
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", dev: "running" },
+  });
+
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService(
+    "conv-1",
+    agentRegistry as any,
+    runManager as any,
+    messages,
+    eventBus,
+    profiles,
+  );
+
+  // 用户在 dev 工作期间发送无 @ 消息（不触发监工）
+  eventBus.publish({
+    type: "message.created",
+    conversationId: "conv-1",
+    message: createUserMessage("Please also cover the edge case."),
+  });
+  assert.equal(enqueueCalls.length, 0);
+
+  // dev 完成（无 @ 派发标记）→ 通道回到空闲 → 触发监工评估
+  const devReply = messages.add({
+    kind: "agent",
+    agentId: "dev",
+    content: "Done.",
+    status: "done",
+    runId: "run_dev",
+    runStatus: "completed", interactionMode: "supervised",
+  });
+  // 切换 dev 到 idle 以让 isChannelTrulyIdle 返回 true
+  (agentRegistry as any).get = (id: string) => {
+    const status = id === "dev" ? "idle" : "idle";
+    return { getStatus: () => status };
+  };
+
+  eventBus.publish({
+    type: "run.completed",
+    conversationId: "conv-1",
+    agentId: "dev",
+    runId: "run_dev",
+    resultMessageId: devReply.id,
   });
 
   assert.equal(enqueueCalls.length, 1);
@@ -1095,7 +1152,10 @@ test("unassigned user message triggers supervisor even when other agent is runni
   service.dispose();
 });
 
-test("unassigned user message enqueues supervisor even when supervisor is running", async () => {
+test("unassigned user message does NOT enqueue supervisor when supervisor is already running", async () => {
+  // 修复：supervisor 自身 running + dev running 时，用户无 @ 消息不应触发（也不应排队新监工任务）。
+  // 通道非空闲（dev running）→ 跳过；监工自身的排队由 RunManager.enqueue 在 isBusy 时处理，
+  // 但本次修复后 onMessageCreated 根本不会调用到 enqueue。
   const eventBus = new EventBus();
   const messages = new MessageStore();
   const { agentRegistry, runManager, enqueueCalls } = createMocks({
@@ -1118,9 +1178,8 @@ test("unassigned user message enqueues supervisor even when supervisor is runnin
     message: createUserMessage("Hello?"),
   });
 
-  // Should still enqueue — supervisor is busy but runManager queues it
-  assert.equal(enqueueCalls.length, 1);
-  assert.equal(enqueueCalls[0].agentId, "supervisor");
+  // 不应排队新的监工任务
+  assert.equal(enqueueCalls.length, 0);
 
   service.dispose();
 });

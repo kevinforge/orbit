@@ -115,6 +115,33 @@ test("buildWorkAnalysis reports failed and cancelled tasks without counting them
   });
 });
 
+test("buildWorkAnalysis excludes discarded queued runs", () => {
+  const messages: ChatMessage[] = [
+    user("discarded-root", "已停止的任务", "2026-06-19T10:00:00.000Z"),
+    {
+      ...run({
+        id: "discarded-run",
+        parentMessageId: "discarded-root",
+        agentId: "developer",
+        status: "cancelled",
+        completedAt: "2026-06-19T10:00:01.000Z",
+      }),
+      discarded: true,
+    },
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map(),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.summary.totalTasks, 0);
+  assert.equal(analysis.tasks.length, 0);
+});
+
 test("buildWorkAnalysis ignores a cancelled queued branch when later work completes", () => {
   const messages: ChatMessage[] = [
     user("root", "完成协作任务", "2026-06-19T10:00:00.000Z"),

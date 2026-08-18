@@ -155,8 +155,13 @@ export function App() {
   }, [approvalMode]);
 
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
-  const hasAnyQueuedRun = state.messages.some((m) => m.runStatus === "queued");
-  const hasRunningOrQueued = isAnyAgentRunning || hasAnyQueuedRun;
+  // messages 上的 runStatus 覆盖被 AgentRegistry.states() 过滤的 internal 监工：
+  // 新建会话第一条无 @ 消息只触发监工，state.agents 全 idle 且无 queued 时，
+  // 仍需通过 messages 上的 runStatus==='running' 暴露停止按钮。
+  const hasAnyActiveRun = state.messages.some(
+    (m) => m.runStatus === "running" || m.runStatus === "queued",
+  );
+  const hasRunningOrQueued = isAnyAgentRunning || hasAnyActiveRun;
   const hasWorkspace = Boolean(state.workspace.id);
   const missingRuntimeAgents = useMemo(
     () => state.agents.filter((agent) => agent.runtimeAvailable === false),
@@ -295,10 +300,13 @@ export function App() {
     return agents;
   }, [state.agents, state.conversation.supervisionRuntime]);
   const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
-  const selectedTaskMessage = selectedTaskMessageId ? messagesById.get(selectedTaskMessageId) ?? null : null;
+  const visibleMessages = useMemo(() => state.messages.filter((message) => !message.discarded), [state.messages]);
+  const selectedTaskMessage = selectedTaskMessageId
+    ? visibleMessages.find((message) => message.id === selectedTaskMessageId) ?? null
+    : null;
   const latestTaskMessage = useMemo(
-    () => [...state.messages].reverse().find((message) => message.kind === "agent" && (message.runId || message.activity?.length)) ?? null,
-    [state.messages],
+    () => [...visibleMessages].reverse().find((message) => message.kind === "agent" && (message.runId || message.activity?.length)) ?? null,
+    [visibleMessages],
   );
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
@@ -643,8 +651,8 @@ export function App() {
         throw new Error(`Interrupt request failed: ${response.status}`);
       }
       const data = await response.json();
-      if ((data.cancelledQueuedRunIds?.length ?? 0) > 0 || (data.suppressedRunningRunIds?.length ?? 0) > 0) {
-        setInterruptToast("已打断后续自动协作");
+      if ((data.cancelledQueuedRunIds?.length ?? 0) > 0 || (data.killedRunningRunIds?.length ?? 0) > 0) {
+        setInterruptToast("已停止所有任务");
         window.setTimeout(() => setInterruptToast(null), 3000);
       }
     } catch {
@@ -1221,7 +1229,7 @@ export function App() {
               {isLoadingOlderMessages ? "加载中..." : "加载更早的消息"}
             </button>
           ) : null}
-          {state.messages.length === 0 ? (
+          {visibleMessages.length === 0 ? (
             <div className="emptyState">
               <div className="emptyOrbital" aria-hidden="true">
                 <svg viewBox="0 0 120 120" width="120" height="120">
@@ -1251,7 +1259,7 @@ export function App() {
               </ol>
             </div>
           ) : (
-            state.messages.map((message) => (
+            visibleMessages.map((message) => (
               <MessageRow
                 key={message.id}
                 message={message}
@@ -1464,12 +1472,12 @@ export function App() {
                 className="interruptBtn"
                 onClick={interruptChain}
                 disabled={isInterrupting}
-                title="停止后续自动协作"
+                title="停止所有任务"
                 variant="outline"
                 theme="danger"
                 icon={<StopCircleIcon />}
               >
-                {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
+                {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "停止所有任务"}
               </Button>
             ) : null}
             <Button type="submit" theme="primary" icon={<SendIcon />} disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode}>
@@ -1869,19 +1877,6 @@ function MessageRow({
     : null;
   const isProgressPlaceholder = message.kind === "agent"
     && (message.content.endsWith(" is working...") || message.content.endsWith(" queued..."));
-  const [cancelling, setCancelling] = useState(false);
-
-  async function cancelRun() {
-    if (!message.runId || cancelling) return;
-    setCancelling(true);
-    try {
-      await fetch(`/api/runs/${message.runId}/cancel`, { method: "POST" });
-    } catch {
-      // Cancellation request failed silently — the run may already be done
-    } finally {
-      setCancelling(false);
-    }
-  }
 
   return (
     <article className={`message ${message.kind}`}>
@@ -1899,17 +1894,6 @@ function MessageRow({
         <strong>{author}</strong>
         {message.kind === "agent" && agent ? <RuntimeBadge runtime={agent.runtime} /> : null}
         {message.status ? <span className={`statusPill ${message.status}`}>{messageStatusLabel(message.status)}</span> : null}
-        {((isQueued || isRunning) && message.runId) || cancelling ? (
-          <button
-            type="button"
-            className="cancelRunBtn"
-            onClick={cancelRun}
-            disabled={cancelling}
-            title={cancelling ? "正在取消..." : isRunning ? "打断正在执行的任务" : "取消排队任务"}
-          >
-            {cancelling ? "取消中..." : isRunning ? "打断" : "取消"}
-          </button>
-        ) : null}
         {/* 用户消息显示创建时间 */}
         {message.kind === "user" && message.createdAt ? (
           <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>

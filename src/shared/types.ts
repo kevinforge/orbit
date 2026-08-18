@@ -220,6 +220,8 @@ export type ChatMessage = {
   runIndex?: number;
   attachments?: MessageAttachment[];
   approvalMode?: ApprovalMode;
+  /** 排队任务被全局停止时标记：前端据此过滤，不渲染该消息。仅 interruptAll 丢弃排队任务时设置。 */
+  discarded?: boolean;
 };
 
 export type RunResult = {
