@@ -35,7 +35,7 @@ export function buildClaudeAcpCommand(
   return { file: "cmd.exe", args: ["/d", "/s", "/c", windowsCommand] };
 }
 
-const CLAUDE_ACP: AcpRuntimeDefinition = {
+export const CLAUDE_ACP: AcpRuntimeDefinition = {
   kind: "claude-code",
   displayName: "Claude Code",
   buildCommand: buildClaudeAcpCommand,

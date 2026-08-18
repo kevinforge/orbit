@@ -60,7 +60,7 @@ export function classifyCodexAnswerChunk(
   return undefined;
 }
 
-const CODEX_ACP: AcpRuntimeDefinition = {
+export const CODEX_ACP: AcpRuntimeDefinition = {
   kind: "codex",
   displayName: "Codex",
   buildCommand: buildCodexAcpCommand,

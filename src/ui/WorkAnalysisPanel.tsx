@@ -6,7 +6,6 @@ type TaskFilter = "all" | WorkTaskStatus;
 
 export function WorkAnalysisPanel(props: {
   workspaceId: string;
-  workspaceName: string;
   onOpenConversation: (conversationId: string) => void;
 }) {
   const [days, setDays] = useState(30);
@@ -52,7 +51,6 @@ export function WorkAnalysisPanel(props: {
     <section className="analysisPage" aria-label="数字员工协作洞察">
       <header className="analysisHeader">
         <div>
-          <p className="eyebrow">{props.workspaceName || "当前工作区"}</p>
           <h1>协作洞察</h1>
           <p>回顾数字员工完成的任务、协作规模与实际耗时。</p>
         </div>

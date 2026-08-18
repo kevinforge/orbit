@@ -881,6 +881,19 @@ button:active:not(:disabled) {
   font-size: 12.5px;
 }
 
+.messageAuthorAvatar.t-avatar {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 24px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
 .messageMeta span {
   border-radius: var(--radius-full);
   padding: 2px 8px;
@@ -6232,6 +6245,58 @@ button:active:not(:disabled) {
 .taskDrawerFacts dd {
   margin: 0;
   font-size: 12px;
+}
+
+.taskDrawerPlanList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.taskDrawerPlanList li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  color: #4e5969;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.taskDrawerPlanMarker {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border: 1px solid #c9cdd4;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.taskDrawerPlanList li.in_progress .taskDrawerPlanMarker {
+  border-color: #0052d9;
+  background: #0052d9;
+  box-shadow: 0 0 0 3px rgba(0, 82, 217, 0.1);
+}
+
+.taskDrawerPlanList li.completed {
+  color: #86909c;
+}
+
+.taskDrawerPlanList li.completed .taskDrawerPlanMarker {
+  border-color: #00a870;
+  background: #00a870;
+}
+
+.taskDrawerPlanMarkdown,
+.taskDrawerPlanFile {
+  margin: 0;
+  color: #4e5969;
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .taskDrawerFacts dt {

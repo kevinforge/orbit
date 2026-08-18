@@ -599,6 +599,53 @@ test("publishes and resolves runtime permission requests", async () => {
   await sendPromise;
 });
 
+test("keeps parallel runtime permission requests isolated", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: new Promise<string>((resolve) => { finishRun = resolve; }),
+        sessionId: Promise.resolve("parallel-permission-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+  session.start();
+  const sendPromise = session.send("run-parallel", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const first = runOptions!.requestPermission!({ id: "tool-1", title: "Read file" });
+  const second = runOptions!.requestPermission!({ id: "tool-2", title: "Run tests" });
+  assert.deepEqual(session.pendingPermissions().map((permission) => permission.id), [
+    "run-parallel:tool-1",
+    "run-parallel:tool-2",
+  ]);
+
+  assert.equal(session.resolvePermission("run-parallel:tool-1", "allow"), true);
+  assert.equal(session.resolvePermission("run-parallel:tool-2", "reject"), true);
+  assert.equal(await first, "allow");
+  assert.equal(await second, "reject");
+  assert.equal(session.pendingPermissions().length, 0);
+
+  finishRun("clean final");
+  await sendPromise;
+});
+
 test("publishes and resolves runtime elicitation requests", async () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
@@ -645,6 +692,90 @@ test("publishes and resolves runtime elicitation requests", async () => {
   assert.deepEqual(await responsePromise, { action: "accept", content: { strategy: "safe" } });
   assert.equal(session.pendingElicitations().length, 0);
   assert.ok(events.some((event) => event.type === "elicitation.resolved"));
+
+  finishRun("clean final");
+  await sendPromise;
+});
+
+test("expires pending permission requests and clears their UI state", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  const events: Array<{ type: string }> = [];
+  eventBus.subscribe((event) => events.push(event));
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: new Promise<string>((resolve) => { finishRun = resolve; }),
+        sessionId: Promise.resolve("permission-expiry-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+    interactionTimeoutMs: 10,
+  });
+  session.start();
+  const sendPromise = session.send("run-expiry", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const decision = runOptions!.requestPermission!({ id: "tool-1", title: "Run tests" });
+  assert.ok(session.pendingPermissions()[0]!.expiresAt);
+  assert.equal(await decision, "reject");
+  assert.equal(session.pendingPermissions().length, 0);
+  assert.ok(events.filter((event) => event.type === "permission.resolved").length === 1);
+
+  finishRun("clean final");
+  await sendPromise;
+});
+
+test("expires pending elicitation requests and ignores late responses", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: new Promise<string>((resolve) => { finishRun = resolve; }),
+        sessionId: Promise.resolve("elicitation-expiry-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+    interactionTimeoutMs: 10,
+  });
+  session.start();
+  const sendPromise = session.send("run-expiry", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const response = runOptions!.requestElicitation!({ message: "Choose", mode: "form" });
+  const requestId = session.pendingElicitations()[0]!.id;
+  assert.deepEqual(await response, { action: "cancel" });
+  assert.equal(session.pendingElicitations().length, 0);
+  assert.equal(session.resolveElicitation(requestId, { action: "decline" }), false);
 
   finishRun("clean final");
   await sendPromise;

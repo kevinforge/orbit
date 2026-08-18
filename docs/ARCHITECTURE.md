@@ -34,6 +34,9 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/agent-session.ts` | Starts one runtime adapter run, tracks status, and owns pending permission and elicitation decisions |
 | `src/core/agent-runtime.ts` | Shared runtime adapter contract |
 | `src/core/acp-runtime.ts` | Shared ACP v1 client, session, approval, elicitation, cancellation, and activity mapping |
+| `src/core/acp-runner-registry.ts` | Single registry for built-in ACP runtime definitions, instances, and availability probes |
+| `src/core/acp-output-guard.ts` | Bounded NDJSON frame and stderr diagnostics handling |
+| `src/core/acp-connection-pool.ts` | Conversation-isolated ACP process reuse with idle TTL eviction |
 | `src/core/claude-acp-runtime.ts` | Starts the external Claude Code ACP adapter |
 | `src/core/codex-acp-runtime.ts` | Starts the external Codex ACP adapter and maps approval modes to Codex agent modes |
 | `src/core/codebuddy-acp-runtime.ts` | Runs CodeBuddy through ACP v1 and maps session updates into Orbit events |
@@ -214,11 +217,13 @@ All three runtimes use ACP v1 over newline-delimited JSON-RPC on stdio. Runtime 
 - tool/activity events
 - runtime output for diagnostics
 
-ACP message chunks are grouped by assistant message ID. Orbit keeps visible progress in runtime output, ignores hidden thought chunks, and stores only the explicit final phase or the last main assistant message as the chat result.
+ACP message chunks are grouped by assistant message ID. Orbit keeps visible progress in runtime output, ignores hidden thought chunks, and stores only the explicit final phase or the last main assistant message as the chat result. Each newline-delimited JSON frame is bounded independently, so long tasks remain supported while a malformed or unbounded frame only fails its own run. Stderr is retained in a bounded diagnostic tail.
 
-Each ACP agent is started once per Orbit run. Its backend session is restored through ACP, and cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for “ask�?and `agent-full-access` for “full access�? Orbit advertises ACP elicitation support for form and URL modes. Claude's `AskUserQuestion` is therefore rendered as a transient Orbit form. URL requests show the full external URL and require explicit user consent before returning `accept`. Unsupported custom modes or schema fields are cancelled instead of being guessed at.
+The ACP runner registry is the single source for built-in runtime definitions, instances, and availability probes. A successfully completed turn releases its adapter process into an idle pool for a short TTL. Reuse is restricted to the same conversation, employee, workspace, command, and approval mode. Sessions remain independent, and a failed, cancelled, interrupted, or unhealthy process is destroyed instead of returned to the pool. Shutdown drains the pool explicitly.
 
-The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request. Elicitation uses separate `elicitation.requested` and `elicitation.resolved` events and `/api/elicitations/resolve`, so user input is not treated as a security approval.
+Backend sessions are restored through ACP when they are not already loaded in a reused process. Cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for "ask" and `agent-full-access` for "full access". Orbit advertises ACP plan updates and elicitation support for form and URL modes. Native plan snapshots are stored as run activity and displayed in the task drawer.
+
+The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request. Permission and elicitation requests also expire after 30 minutes so abandoned agent turns cannot wait forever. Elicitation uses separate `elicitation.requested` and `elicitation.resolved` events and `/api/elicitations/resolve`, so user input is not treated as a security approval.
 
 ## Activity Stream
 
@@ -226,6 +231,7 @@ Activity events are derived from runtime stream output or ACP session updates an
 
 - run accepted / started / completed / failed
 - tool started / completed / failed
+- native ACP plan updated / removed
 - runtime produced output
 
 The UI keeps running activities expanded and scrolls to the latest event. Completed cards are collapsed by default and can be expanded manually.

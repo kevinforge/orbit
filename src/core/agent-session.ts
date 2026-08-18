@@ -25,6 +25,7 @@ export type AgentSessionOptions = {
   quietWindowMs?: number;
   sessionStore: SessionStore;
   conversationId: string;
+  interactionTimeoutMs?: number;
 };
 
 type ActiveRun = {
@@ -39,17 +40,21 @@ type ActiveRun = {
 type PendingPermissionState = {
   permission: PendingPermission;
   resolve: (decision: PermissionDecision) => void;
+  timer: NodeJS.Timeout;
 };
 
 type PendingElicitationState = {
   elicitation: PendingElicitation;
   resolve: (response: ElicitationResponse) => void;
+  timer: NodeJS.Timeout;
 };
+
+const DEFAULT_INTERACTION_TIMEOUT_MS = 30 * 60 * 1000;
 
 export class AgentSession {
   private status: AgentStatus = "stopped";
   private activeRun: ActiveRun | null = null;
-  private pendingPermission: PendingPermissionState | null = null;
+  private readonly pendingPermissionStates = new Map<string, PendingPermissionState>();
   private readonly pendingElicitationStates = new Map<string, PendingElicitationState>();
   private elicitationCount = 0;
   private runCount = 0;
@@ -102,7 +107,7 @@ export class AgentSession {
 
   stop(): void {
     if (this.activeRun) {
-      this.settlePendingPermission(this.activeRun.runId, "reject");
+      this.settlePendingPermissions(this.activeRun.runId, "reject");
       this.settlePendingElicitations(this.activeRun.runId, { action: "cancel" });
       // Terminate entire process tree (same behavior as interrupt)
       this.activeRun.child.interrupt();
@@ -118,7 +123,7 @@ export class AgentSession {
       return false;
     }
 
-    this.settlePendingPermission(runId, "reject");
+    this.settlePendingPermissions(runId, "reject");
     this.settlePendingElicitations(runId, { action: "cancel" });
     // Terminate entire process tree
     this.activeRun.child.interrupt();
@@ -134,7 +139,7 @@ export class AgentSession {
   }
 
   pendingPermissions(): PendingPermission[] {
-    return this.pendingPermission ? [this.pendingPermission.permission] : [];
+    return [...this.pendingPermissionStates.values()].map((pending) => pending.permission);
   }
 
   pendingElicitations(): PendingElicitation[] {
@@ -142,24 +147,16 @@ export class AgentSession {
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
-    const pending = this.pendingPermission;
-    if (!pending || pending.permission.id !== requestId) {
-      return false;
-    }
-    this.settlePendingPermission(pending.permission.runId, decision);
+    const pending = this.pendingPermissionStates.get(requestId);
+    if (!pending) return false;
+    this.settlePendingPermission(requestId, pending, decision);
     return true;
   }
 
   resolveElicitation(requestId: string, response: ElicitationResponse): boolean {
     const pending = this.pendingElicitationStates.get(requestId);
     if (!pending) return false;
-    this.pendingElicitationStates.delete(requestId);
-    pending.resolve(response);
-    this.options.eventBus.publish({
-      type: "elicitation.resolved",
-      conversationId: this.options.conversationId,
-      requestId,
-    });
+    this.settlePendingElicitation(requestId, pending, response);
     return true;
   }
 
@@ -200,6 +197,7 @@ export class AgentSession {
 
     const handle = this.options.runtime.run({
       agentId: this.id,
+      poolKey: `${this.options.conversationId}:${this.id}`,
       cwd: this.options.cwd,
       prompt,
       approvalMode,
@@ -218,7 +216,7 @@ export class AgentSession {
       },
       onActivity: (activity) => {
         this.options.eventBus.publish({
-          type: "run.activity",
+          type: "runtime.activity",
           conversationId: this.options.conversationId,
           agentId: this.id,
           runId,
@@ -247,7 +245,7 @@ export class AgentSession {
           this.persistSession(sessionId);
         }
 
-        this.settlePendingPermission(runId, "reject");
+        this.settlePendingPermissions(runId, "reject");
         this.settlePendingElicitations(runId, { action: "cancel" });
         this.activeRun = null;
         this.setStatus("idle");
@@ -268,7 +266,7 @@ export class AgentSession {
           this.persistSession(sessionId);
         }
 
-        this.settlePendingPermission(runId, "reject");
+        this.settlePendingPermissions(runId, "reject");
         this.settlePendingElicitations(runId, { action: "cancel" });
         this.activeRun = null;
 
@@ -285,21 +283,33 @@ export class AgentSession {
   }
 
   private requestPermission(runId: string, request: AgentPermissionRequest): Promise<PermissionDecision> {
-    if (this.activeRun?.runId !== runId || this.pendingPermission) {
+    if (this.activeRun?.runId !== runId) {
       return Promise.resolve("reject");
     }
 
+    const createdAt = new Date();
+    const timeoutMs = this.interactionTimeoutMs();
     const permission: PendingPermission = {
       ...request,
       id: `${runId}:${request.id}`,
       conversationId: this.options.conversationId,
       agentId: this.id,
       runId,
-      createdAt: new Date().toISOString(),
+      createdAt: createdAt.toISOString(),
+      expiresAt: new Date(createdAt.getTime() + timeoutMs).toISOString(),
     };
+    if (this.pendingPermissionStates.has(permission.id)) {
+      return Promise.resolve("reject");
+    }
 
     return new Promise((resolve) => {
-      this.pendingPermission = { permission, resolve };
+      const timer = setTimeout(() => {
+        const pending = this.pendingPermissionStates.get(permission.id);
+        if (!pending) return;
+        this.settlePendingPermission(permission.id, pending, "reject", "审批请求已过期，操作未获批准。");
+      }, timeoutMs);
+      timer.unref?.();
+      this.pendingPermissionStates.set(permission.id, { permission, resolve, timer });
       this.options.eventBus.publish({
         type: "permission.requested",
         conversationId: this.options.conversationId,
@@ -325,17 +335,26 @@ export class AgentSession {
     }
 
     const id = `${runId}:elicitation-${++this.elicitationCount}`;
+    const createdAt = new Date();
+    const timeoutMs = this.interactionTimeoutMs();
     const elicitation: PendingElicitation = {
       ...request,
       id,
       conversationId: this.options.conversationId,
       agentId: this.id,
       runId,
-      createdAt: new Date().toISOString(),
+      createdAt: createdAt.toISOString(),
+      expiresAt: new Date(createdAt.getTime() + timeoutMs).toISOString(),
     };
 
     return new Promise((resolve) => {
-      this.pendingElicitationStates.set(id, { elicitation, resolve });
+      const timer = setTimeout(() => {
+        const pending = this.pendingElicitationStates.get(id);
+        if (!pending) return;
+        this.settlePendingElicitation(id, pending, { action: "cancel" }, "用户输入请求已过期。");
+      }, timeoutMs);
+      timer.unref?.();
+      this.pendingElicitationStates.set(id, { elicitation, resolve, timer });
       this.options.eventBus.publish({
         type: "elicitation.requested",
         conversationId: this.options.conversationId,
@@ -355,13 +374,14 @@ export class AgentSession {
     });
   }
 
-  private settlePendingPermission(runId: string, decision: PermissionDecision): void {
-    const pending = this.pendingPermission;
-    if (!pending || pending.permission.runId !== runId) {
-      return;
-    }
-
-    this.pendingPermission = null;
+  private settlePendingPermission(
+    requestId: string,
+    pending: PendingPermissionState,
+    decision: PermissionDecision,
+    activityText?: string,
+  ): void {
+    this.pendingPermissionStates.delete(requestId);
+    clearTimeout(pending.timer);
     pending.resolve(decision);
     this.options.eventBus.publish({
       type: "permission.resolved",
@@ -372,26 +392,60 @@ export class AgentSession {
       type: "run.activity",
       conversationId: this.options.conversationId,
       agentId: this.id,
-      runId,
+      runId: pending.permission.runId,
       activity: {
         type: "status",
-        text: decision === "allow" ? "操作已批准，继续执行。" : "操作已拒绝。",
+        text: activityText ?? (decision === "allow" ? "操作已批准，继续执行。" : "操作已拒绝。"),
         timestamp: new Date().toISOString(),
       },
     });
   }
 
+  private settlePendingPermissions(runId: string, decision: PermissionDecision): void {
+    for (const [requestId, pending] of this.pendingPermissionStates) {
+      if (pending.permission.runId !== runId) continue;
+      this.settlePendingPermission(requestId, pending, decision);
+    }
+  }
+
   private settlePendingElicitations(runId: string, response: ElicitationResponse): void {
     for (const [requestId, pending] of this.pendingElicitationStates) {
       if (pending.elicitation.runId !== runId) continue;
-      this.pendingElicitationStates.delete(requestId);
-      pending.resolve(response);
+      this.settlePendingElicitation(requestId, pending, response);
+    }
+  }
+
+  private settlePendingElicitation(
+    requestId: string,
+    pending: PendingElicitationState,
+    response: ElicitationResponse,
+    activityText?: string,
+  ): void {
+    this.pendingElicitationStates.delete(requestId);
+    clearTimeout(pending.timer);
+    pending.resolve(response);
+    this.options.eventBus.publish({
+      type: "elicitation.resolved",
+      conversationId: this.options.conversationId,
+      requestId,
+    });
+    if (activityText) {
       this.options.eventBus.publish({
-        type: "elicitation.resolved",
+        type: "run.activity",
         conversationId: this.options.conversationId,
-        requestId,
+        agentId: this.id,
+        runId: pending.elicitation.runId,
+        activity: {
+          type: "status",
+          text: activityText,
+          timestamp: new Date().toISOString(),
+        },
       });
     }
+  }
+
+  private interactionTimeoutMs(): number {
+    return Math.max(1, this.options.interactionTimeoutMs ?? DEFAULT_INTERACTION_TIMEOUT_MS);
   }
 
   private persistSession(sessionId: string): void {

@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { configsToProfiles } from "../core/agent-profiles.ts";
+import { disposeAcpConnectionPool } from "../core/acp-runtime.ts";
 import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
 import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
@@ -106,6 +107,7 @@ function runtimeAvailable(runtime: string): boolean {
 
 // Forward all events to SSE clients (single global subscriber)
 eventBus.subscribe((event) => {
+  if (event.type === "runtime.activity") return;
   sseHub.publish(event);
   // After agent.status events, push running.updated if summaries changed
   if (event.type === "agent.status") {
@@ -1528,6 +1530,7 @@ function shutdown(): void {
   }
   contextMap.clear();
   contextLru.length = 0;
+  disposeAcpConnectionPool();
   const forceExitTimer = setTimeout(() => {
     process.exit(0);
   }, SHUTDOWN_FORCE_EXIT_MS);

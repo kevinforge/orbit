@@ -154,6 +154,60 @@ test("propagates the source approval mode to the agent run and result message", 
   assert.equal(messages.get(run.resultMessageId)?.approvalMode, "full-access");
 });
 
+test("persists bounded native plans and replaces earlier snapshots of the same plan", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const pending = deferred();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+  const run = manager.enqueue("developer", "work", createSourceMessage());
+
+  eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity: {
+      type: "plan.updated",
+      plan: { id: "plan-1", format: "markdown", content: "first" },
+      timestamp: new Date().toISOString(),
+    },
+  });
+  eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity: {
+      type: "plan.updated",
+      plan: { id: "plan-1", format: "markdown", content: "x".repeat(20_000) },
+      timestamp: new Date().toISOString(),
+    },
+  });
+
+  const runningPlans = messages.get(run.resultMessageId)?.activity?.filter((item) => item.type === "plan.updated") ?? [];
+  assert.equal(runningPlans.length, 1);
+  assert.equal(runningPlans[0]?.type === "plan.updated" && runningPlans[0].plan.format === "markdown" && runningPlans[0].plan.content.length, 10_000);
+
+  pending.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const completedPlans = messages.get(run.resultMessageId)?.activity?.filter((item) => item.type === "plan.updated") ?? [];
+  assert.equal(completedPlans.length, 1);
+});
+
 test("treats ACP cancellation after permission rejection as a cancelled run", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

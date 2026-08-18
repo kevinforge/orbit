@@ -2,8 +2,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { resolveClaudeAcpCommand } from "./claude-acp-runtime.ts";
-import { resolveCodexAcpCommand } from "./codex-acp-runtime.ts";
+import { defaultAcpRunnerRegistry, type AcpRunnerRegistration } from "./acp-runner-registry.ts";
 
 // Re-export from shared browser-safe module
 export { runtimeKindToCliKey, runtimeMeta, type RuntimeMeta } from "./runtime-meta.ts";
@@ -62,33 +61,17 @@ export async function probeRuntime(command: string): Promise<RuntimeProbeResult>
 export type RuntimeAvailabilityMap = Record<string, RuntimeProbeResult>;
 
 export async function probeAllRuntimes(): Promise<RuntimeProbeResult[]> {
-  return Promise.all([
-    probeClaudeAcpRuntime(),
-    probeCodexAcpRuntime(),
-    probeRuntime("codebuddy"),
-  ]);
+  return Promise.all(defaultAcpRunnerRegistry.list().map((registration) => probeAcpRunner(registration)));
 }
 
-async function probeClaudeAcpRuntime(): Promise<RuntimeProbeResult> {
+async function probeAcpRunner(registration: AcpRunnerRegistration): Promise<RuntimeProbeResult> {
   const checkedAt = new Date().toISOString();
-  const resolved = resolveClaudeAcpCommand();
+  const resolved = registration.resolveProbeCommand();
   if (path.isAbsolute(resolved)) {
     return fs.existsSync(resolved)
-      ? { runtime: "claude-agent-acp", available: true, path: resolved, checkedAt }
-      : { runtime: "claude-agent-acp", available: false, path: null, error: `Configured path not found: ${resolved}`, checkedAt };
+      ? { runtime: registration.availabilityKey, available: true, path: resolved, checkedAt }
+      : { runtime: registration.availabilityKey, available: false, path: null, error: `Configured path not found: ${resolved}`, checkedAt };
   }
   const result = await probeRuntime(resolved);
-  return { ...result, runtime: "claude-agent-acp" };
-}
-
-async function probeCodexAcpRuntime(): Promise<RuntimeProbeResult> {
-  const checkedAt = new Date().toISOString();
-  const resolved = resolveCodexAcpCommand();
-  if (path.isAbsolute(resolved)) {
-    return fs.existsSync(resolved)
-      ? { runtime: "codex-acp", available: true, path: resolved, checkedAt }
-      : { runtime: "codex-acp", available: false, path: null, error: `Configured path not found: ${resolved}`, checkedAt };
-  }
-  const result = await probeRuntime(resolved);
-  return { ...result, runtime: "codex-acp" };
+  return { ...result, runtime: registration.availabilityKey };
 }

@@ -403,11 +403,18 @@ export class RunManager {
   }
 
   private appendActivityEvent(run: ManagedRun, activity: AgentActivityEvent): void {
-    run.activity.push(truncateActivity(activity));
+    const boundedActivity = truncateActivity(activity);
+    if (boundedActivity.type === "plan.updated") {
+      const previousIndex = findPlanActivityIndex(run.activity, boundedActivity.plan.id);
+      if (previousIndex >= 0) run.activity[previousIndex] = boundedActivity;
+      else run.activity.push(boundedActivity);
+    } else {
+      run.activity.push(boundedActivity);
+    }
     this.options.messages.update(run.resultMessageId, {
       activity: run.activity,
     });
-    this.options.eventBus.publish({ type: "run.activity", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, activity: run.activity[run.activity.length - 1]! });
+    this.options.eventBus.publish({ type: "run.activity", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, activity: boundedActivity });
   }
 
   private handleRuntimeEvent(event: RuntimeEvent): void {
@@ -421,6 +428,14 @@ export class RunManager {
           sessionId: event.sessionId,
         });
         this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+      }
+      return;
+    }
+
+    if (event.type === "runtime.activity" && event.runId) {
+      const run = this.runs.get(event.runId);
+      if (run && run.status === "running") {
+        this.appendActivityEvent(run, event.activity);
       }
       return;
     }
@@ -777,7 +792,40 @@ function truncateActivity(activity: AgentActivityEvent): AgentActivityEvent {
   if (activity.type === "tool.completed" || activity.type === "tool.failed") {
     return { ...activity, summary: activity.summary ? truncateText(activity.summary, MAX_TOOL_SUMMARY_CHARS) : undefined };
   }
+  if (activity.type === "plan.updated") {
+    if (activity.plan.format === "items") {
+      return {
+        ...activity,
+        plan: {
+          ...activity.plan,
+          entries: activity.plan.entries.slice(0, 100).map((entry) => ({
+            ...entry,
+            content: truncateText(entry.content, MAX_ACTIVITY_TEXT_CHARS),
+          })),
+        },
+      };
+    }
+    if (activity.plan.format === "markdown") {
+      return {
+        ...activity,
+        plan: { ...activity.plan, content: truncateText(activity.plan.content, 10_000) },
+      };
+    }
+    return {
+      ...activity,
+      plan: { ...activity.plan, uri: truncateText(activity.plan.uri, MAX_ACTIVITY_TEXT_CHARS) },
+    };
+  }
   return activity;
+}
+
+function findPlanActivityIndex(activity: AgentActivityEvent[], planId: string | undefined): number {
+  for (let index = activity.length - 1; index >= 0; index -= 1) {
+    const item = activity[index];
+    if (item?.type === "plan.removed" && (planId === undefined || item.planId === planId)) return -1;
+    if (item?.type === "plan.updated" && item.plan.id === planId) return index;
+  }
+  return -1;
 }
 
 function summarizeRunError(error: string): string {

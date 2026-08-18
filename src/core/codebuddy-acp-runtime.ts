@@ -47,7 +47,7 @@ export function classifyCodeBuddyAnswerChunk(
   return undefined;
 }
 
-const CODEBUDDY_ACP: AcpRuntimeDefinition = {
+export const CODEBUDDY_ACP: AcpRuntimeDefinition = {
   kind: "codebuddy",
   displayName: "CodeBuddy",
   buildCommand: buildCodeBuddyAcpCommand,

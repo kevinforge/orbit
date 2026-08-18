@@ -62,6 +62,7 @@ export type PendingElicitation = Omit<AgentElicitationRequest, "id"> & {
   agentId: AgentId;
   runId: string;
   createdAt: string;
+  expiresAt: string;
 };
 
 export type PendingPermission = AgentPermissionRequest & {
@@ -69,6 +70,7 @@ export type PendingPermission = AgentPermissionRequest & {
   agentId: AgentId;
   runId: string;
   createdAt: string;
+  expiresAt: string;
 };
 
 export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
@@ -170,11 +172,24 @@ export type ChatMessageStatus = "sent" | "running" | "done" | "error" | "cancell
 
 export type MessageRouteState = "unprocessed" | "ignored" | "routed" | "blocked";
 
+export type AgentPlanEntry = {
+  content: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
+};
+
+export type AgentPlanSnapshot =
+  | { id?: string; format: "items"; entries: AgentPlanEntry[] }
+  | { id: string; format: "markdown"; content: string }
+  | { id: string; format: "file"; uri: string };
+
 export type AgentActivityEvent =
   | { type: "status"; text: string; timestamp: string }
   | { type: "tool.started"; name: string; input?: string; timestamp: string }
   | { type: "tool.completed"; name: string; summary?: string; timestamp: string }
   | { type: "tool.failed"; name: string; summary?: string; timestamp: string }
+  | { type: "plan.updated"; plan: AgentPlanSnapshot; timestamp: string }
+  | { type: "plan.removed"; planId: string; timestamp: string }
   | { type: "error"; message: string; timestamp: string };
 
 export type ChatMessage = {
@@ -290,6 +305,7 @@ export type RuntimeEvent =
   | { type: "message.created"; conversationId: string; message: ChatMessage }
   | { type: "message.updated"; conversationId: string; message: ChatMessage }
   | { type: "agent.status"; conversationId: string; agentId: AgentId; status: AgentStatus }
+  | { type: "runtime.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "terminal.chunk"; conversationId: string; agentId: AgentId; runId?: string; text: string }
   | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string; suppressFollowupRouting?: boolean }

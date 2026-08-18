@@ -37,6 +37,8 @@ export type AgentRuntimeRunOptions = {
   onOutput?: (text: string) => void;
   onActivity?: (activity: AgentActivityEvent) => void;
   imagePaths?: string[];
+  /** Stable owner key used to prevent ACP process reuse across conversations. */
+  poolKey?: string;
 };
 
 export type AgentRuntimeRunHandle = {

@@ -1,17 +1,9 @@
 import type { AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
 import { AgentSession } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
-import { claudeCodeRuntime } from "./claude-acp-runtime.ts";
-import { codexRuntime } from "./codex-acp-runtime.ts";
-import { codeBuddyRuntime } from "./codebuddy-acp-runtime.ts";
+import { DEFAULT_AGENT_RUNTIMES } from "./acp-runner-registry.ts";
 import { EventBus } from "./event-bus.ts";
 import type { SessionStore } from "./session-store.ts";
-
-const DEFAULT_RUNTIMES = new Map<AgentRuntime["kind"], AgentRuntime>([
-  [claudeCodeRuntime.kind, claudeCodeRuntime],
-  [codexRuntime.kind, codexRuntime],
-  [codeBuddyRuntime.kind, codeBuddyRuntime],
-]);
 
 export class AgentRegistry {
   private readonly sessions = new Map<AgentId, AgentSession>();
@@ -22,7 +14,7 @@ export class AgentRegistry {
     private readonly eventBus: EventBus,
     private readonly sessionStore: SessionStore,
     private readonly conversationId: string,
-    private readonly runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_RUNTIMES,
+    private readonly runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_AGENT_RUNTIMES,
   ) {
     this.profilesById = [...profiles];
     for (const profile of profiles) {

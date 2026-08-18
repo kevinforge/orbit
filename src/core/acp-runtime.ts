@@ -38,6 +38,11 @@ import type {
 import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunHandle, type AgentRuntimeRunOptions } from "./agent-runtime.ts";
 import { interruptProcessTree } from "./process-tree.ts";
 import { extractReadableText } from "./ansi-text-extractor.ts";
+import {
+  AcpStderrForwarder,
+  createAcpFrameLimitTransform,
+} from "./acp-output-guard.ts";
+import { AcpConnectionPool } from "./acp-connection-pool.ts";
 
 const CANCEL_GRACE_MS = 1_500;
 
@@ -51,7 +56,18 @@ export type AcpConnection = {
   resumeSession(request: ResumeSessionRequest): Promise<void>;
   prompt(request: PromptRequest): Promise<PromptResponse>;
   cancel(sessionId: string): Promise<void>;
+  hasSession?(sessionId: string): boolean;
   close(): void;
+  destroy?(): void;
+};
+
+export type AcpReusableConnection = AcpConnection & {
+  rebind(
+    options: AcpRunOptions,
+    onSessionUpdate: (notification: SessionNotification) => void,
+  ): void;
+  deactivate(): void;
+  isAlive(): boolean;
 };
 
 export type AcpConnector = (
@@ -78,6 +94,20 @@ export type AcpRuntimeDefinition = {
   classifyAnswerChunk?: (update: SessionNotification["update"]) => AcpAnswerChunkDisposition | undefined;
 };
 
+const acpConnectionPool = new AcpConnectionPool(spawnAcpConnection);
+
+export function disposeAcpConnectionPool(): void {
+  acpConnectionPool.dispose();
+}
+
+function pooledAcpConnector(
+  definition: AcpRuntimeDefinition,
+  options: AcpRunOptions,
+  onSessionUpdate: (notification: SessionNotification) => void,
+): AcpConnection {
+  return acpConnectionPool.acquire(definition, options, onSessionUpdate);
+}
+
 type ToolState = {
   name: string;
   status?: ToolCallStatus | null;
@@ -97,9 +127,7 @@ type AnswerState = {
 
 export function createAcpRuntime(
   definition: AcpRuntimeDefinition,
-  connector: AcpConnector = (options, onSessionUpdate) => (
-    spawnAcpConnection(definition, options, onSessionUpdate)
-  ),
+  connector: AcpConnector = (options, onSessionUpdate) => pooledAcpConnector(definition, options, onSessionUpdate),
 ): AgentRuntime {
   return {
     kind: definition.kind,
@@ -112,9 +140,7 @@ export function createAcpRuntime(
 export function runAcp(
   options: AcpRunOptions,
   definition: AcpRuntimeDefinition,
-  connector: AcpConnector = (runOptions, onSessionUpdate) => (
-    spawnAcpConnection(definition, runOptions, onSessionUpdate)
-  ),
+  connector: AcpConnector = (runOptions, onSessionUpdate) => pooledAcpConnector(definition, runOptions, onSessionUpdate),
 ): AgentRuntimeRunHandle {
   let acceptingUpdates = false;
   let activeSessionId: string | null = null;
@@ -152,14 +178,16 @@ export function runAcp(
     };
   });
 
-  const close = () => {
+  const close = (destroy = false) => {
     if (closed) return;
     closed = true;
     if (cancelTimer) clearTimeout(cancelTimer);
-    connection.close();
+    if (destroy) connection.destroy?.();
+    else connection.close();
   };
 
   const result = (async () => {
+    let succeeded = false;
     try {
       const initialized = await connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
@@ -168,6 +196,7 @@ export function runAcp(
             form: {},
             url: {},
           },
+          plan: {},
         },
         clientInfo: { name: "Orbit", version: "1.0.0" },
       });
@@ -192,7 +221,7 @@ export function runAcp(
       if (cancelled || response.stopReason === "cancelled") {
         throw new AgentRunCancelledError(
           `${definition.displayName} ACP turn was cancelled.`,
-          permissionRejected ? "权限申请已拒绝，任务已停止。" : "运行已取消。",
+          permissionRejected ? "权限申请未获批准，任务已停止。" : "运行已取消。",
         );
       }
       if (response.stopReason === "refusal") {
@@ -203,11 +232,12 @@ export function runAcp(
       if (!answer) {
         throw new Error(`${definition.displayName} ACP completed with ${response.stopReason} but no final answer.`);
       }
+      succeeded = true;
       return answer;
     } finally {
       acceptingUpdates = false;
       resolveSessionId(activeSessionId);
-      close();
+      close(!succeeded);
     }
   })();
 
@@ -215,12 +245,12 @@ export function runAcp(
     if (cancelled || closed) return;
     cancelled = true;
     if (!activeSessionId) {
-      close();
+      close(true);
       return;
     }
 
-    void connection.cancel(activeSessionId).catch(() => close());
-    cancelTimer = setTimeout(close, CANCEL_GRACE_MS);
+    void connection.cancel(activeSessionId).catch(() => close(true));
+    cancelTimer = setTimeout(() => close(true), CANCEL_GRACE_MS);
     cancelTimer.unref?.();
   };
 
@@ -246,6 +276,10 @@ async function prepareSession(
   if (!existingSessionId) {
     const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
     return created.sessionId;
+  }
+
+  if (connection.hasSession?.(existingSessionId)) {
+    return existingSessionId;
   }
 
   const request = {
@@ -327,6 +361,48 @@ function handleSessionUpdate(
   definition: AcpRuntimeDefinition,
 ): void {
   const update = notification.update;
+  if (update.sessionUpdate === "plan") {
+    emitActivity(options, {
+      type: "plan.updated",
+      plan: { format: "items", entries: update.entries.map(toAgentPlanEntry) },
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
+  if (update.sessionUpdate === "plan_update") {
+    const plan = update.plan;
+    if (plan.type === "items") {
+      emitActivity(options, {
+        type: "plan.updated",
+        plan: { id: plan.planId, format: "items", entries: plan.entries.map(toAgentPlanEntry) },
+        timestamp: new Date().toISOString(),
+      });
+    } else if (plan.type === "markdown") {
+      emitActivity(options, {
+        type: "plan.updated",
+        plan: { id: plan.planId, format: "markdown", content: plan.content },
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      emitActivity(options, {
+        type: "plan.updated",
+        plan: { id: plan.planId, format: "file", uri: plan.uri },
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return;
+  }
+
+  if (update.sessionUpdate === "plan_removed") {
+    emitActivity(options, {
+      type: "plan.removed",
+      planId: update.planId,
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
   if (update.sessionUpdate === "agent_message_chunk") {
     if (update.content.type === "text") {
       if (definition.isDiagnosticMessage?.(update)) {
@@ -386,6 +462,18 @@ function handleSessionUpdate(
       timestamp: new Date().toISOString(),
     });
   }
+}
+
+function toAgentPlanEntry(entry: {
+  content: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
+}) {
+  return {
+    content: entry.content,
+    priority: entry.priority,
+    status: entry.status,
+  };
 }
 
 function createAnswerState(): AnswerState {
@@ -618,7 +706,7 @@ export function spawnAcpConnection(
   definition: AcpRuntimeDefinition,
   options: AcpRunOptions,
   onSessionUpdate: (notification: SessionNotification) => void,
-): AcpConnection {
+): AcpReusableConnection {
   const baseEnv = options.env ?? process.env;
   const command = definition.buildCommand(baseEnv);
   const child = spawn(command.file, command.args, {
@@ -632,42 +720,66 @@ export function spawnAcpConnection(
     windowsHide: true,
     detached: os.platform() !== "win32",
   });
+  let context: { options: AcpRunOptions; onSessionUpdate: typeof onSessionUpdate } | null = {
+    options,
+    onSessionUpdate,
+  };
+  const stderrForwarder = new AcpStderrForwarder();
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
     const readable = extractReadableText(chunk);
-    if (readable) options.onOutput?.(readable);
+    if (!readable) return;
+    for (const output of stderrForwarder.forward(readable)) {
+      context?.options.onOutput?.(output);
+    }
   });
 
   const app = client({ name: "Orbit" })
     .onRequest(methods.client.session.requestPermission, ({ params }) => (
-      resolveAcpPermission(params, options, definition)
+      context ? resolveAcpPermission(params, context.options, definition) : selectAcpPermission(params, "reject")
     ))
     .onRequest(methods.client.elicitation.create, ({ params }) => (
-      resolveAcpElicitation(params, options)
+      context ? resolveAcpElicitation(params, context.options) : Promise.resolve({ action: "cancel" })
     ))
     .onNotification(methods.client.elicitation.complete, ({ params }) => {
-      options.onActivity?.({
+      context?.options.onActivity?.({
         type: "status",
         text: `外部输入流程已完成：${params.elicitationId}`,
         timestamp: new Date().toISOString(),
       });
     })
     .onNotification(methods.client.session.update, ({ params }) => {
-      onSessionUpdate(params);
+      context?.onSessionUpdate(params);
     });
+  const guardedStdout = child.stdout.pipe(createAcpFrameLimitTransform());
   const stream = ndJsonStream(
     Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-    Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+    Readable.toWeb(guardedStdout) as ReadableStream<Uint8Array>,
   );
   const acp = app.connect(stream);
 
-  return connectionFromProcess(child, acp, definition.displayName);
+  const connection = connectionFromProcess(child, acp, definition.displayName, guardedStdout, () => stderrForwarder.tailText());
+  return {
+    ...connection,
+    rebind(nextOptions, nextOnSessionUpdate) {
+      context = { options: nextOptions, onSessionUpdate: nextOnSessionUpdate };
+      stderrForwarder.reset();
+    },
+    deactivate() {
+      context = null;
+    },
+    isAlive() {
+      return child.exitCode === null && child.signalCode === null;
+    },
+  };
 }
 
 function connectionFromProcess(
   child: ChildProcessWithoutNullStreams,
   acp: ClientConnection,
   displayName: string,
+  guardedStdout?: NodeJS.ReadableStream,
+  stderrText?: () => string,
 ): AcpConnection {
   const pid = child.pid ?? 0;
   let closed = false;
@@ -675,11 +787,15 @@ function connectionFromProcess(
   const processFailure = new Promise<never>((_resolve, reject) => {
     rejectProcessFailure = reject;
   });
+  void processFailure.catch(() => undefined);
   child.once("error", (error) => rejectProcessFailure(error));
+  guardedStdout?.once("error", (error) => rejectProcessFailure(error));
   child.once("exit", (code, signal) => {
     if (!closed) {
+      const stderr = stderrText?.().trim();
       rejectProcessFailure(new Error(
-        `${displayName} ACP process exited unexpectedly (${code === null ? signal : `code ${code}`}).`,
+        `${displayName} ACP process exited unexpectedly (${code === null ? signal : `code ${code}`}).` +
+        (stderr ? `\n${stderr}` : ""),
       ));
     }
   });
@@ -688,7 +804,8 @@ function connectionFromProcess(
   const close = () => {
     if (closed) return;
     closed = true;
-    if (pid > 0) {
+    const processStillRunning = child.exitCode === null && child.signalCode === null;
+    if (pid > 0 && processStillRunning) {
       if (os.platform() === "win32") {
         // Finish tree termination before closing stdio. If cmd.exe exits first,
         // taskkill can no longer discover and terminate the nested agent process.

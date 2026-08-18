@@ -1,6 +1,6 @@
 import * as TDesign from "tdesign-react";
 import { CheckCircleFilledIcon, ErrorCircleFilledIcon, TimeIcon } from "tdesign-icons-react";
-import type { AgentActivityEvent, AgentState, ChatMessage } from "../shared/types.ts";
+import type { AgentActivityEvent, AgentPlanSnapshot, AgentState, ChatMessage } from "../shared/types.ts";
 
 const { Avatar, Collapse, Drawer, Progress, Tag } = TDesign;
 
@@ -21,6 +21,7 @@ export function TaskDetailDrawer(props: TaskDetailDrawerProps) {
   const duration = getDuration(message);
   const description = parentMessage?.content?.trim() || message.content.trim();
   const activity = message.activity ?? [];
+  const plan = latestPlan(activity);
 
   return (
     <Drawer
@@ -48,6 +49,29 @@ export function TaskDetailDrawer(props: TaskDetailDrawerProps) {
           </div>
           <p className="taskDrawerDescription">{compactText(description, 180)}</p>
         </section>
+
+        {plan ? (
+          <section className="taskDrawerSection taskDrawerPlan">
+            <div className="taskDrawerSectionTitle">
+              <strong>执行计划</strong>
+              {plan.format === "items" ? <span>{plan.entries.filter((entry) => entry.status === "completed").length}/{plan.entries.length}</span> : null}
+            </div>
+            {plan.format === "items" ? (
+              <ol className="taskDrawerPlanList">
+                {plan.entries.map((entry, index) => (
+                  <li className={entry.status} key={`${entry.content}-${index}`}>
+                    <span className="taskDrawerPlanMarker" />
+                    <span>{entry.content}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : plan.format === "markdown" ? (
+              <p className="taskDrawerPlanMarkdown">{plan.content}</p>
+            ) : (
+              <p className="taskDrawerPlanFile" title={plan.uri}>{plan.uri}</p>
+            )}
+          </section>
+        ) : null}
 
         <section className="taskDrawerSection">
           <div className="taskDrawerSectionTitle">
@@ -148,7 +172,21 @@ function activityText(item: AgentActivityEvent): string {
   if (item.type === "tool.started") return `开始 ${item.name}`;
   if (item.type === "tool.completed") return item.summary || `完成 ${item.name}`;
   if (item.type === "tool.failed") return item.summary || `${item.name} 执行失败`;
+  if (item.type === "plan.updated") return "执行计划已更新";
+  if (item.type === "plan.removed") return "执行计划已移除";
   return item.message;
+}
+
+function latestPlan(activity: AgentActivityEvent[]): AgentPlanSnapshot | null {
+  let plan: AgentPlanSnapshot | null = null;
+  for (const item of activity) {
+    if (item.type === "plan.updated") {
+      plan = item.plan;
+    } else if (item.type === "plan.removed" && (!plan || !plan.id || plan.id === item.planId)) {
+      plan = null;
+    }
+  }
+  return plan;
 }
 
 function runtimeLabel(runtime: AgentState["runtime"]): string {
@@ -160,6 +198,7 @@ function runtimeLabel(runtime: AgentState["runtime"]): string {
 function agentColor(id?: string): string {
   const colors = ["#0052d9", "#00a870", "#ed7b2f", "#8e56dd", "#d54941", "#6b7785"];
   if (!id) return colors[colors.length - 1];
+  if (id === "supervisor") return "#0f766e";
   let hash = 0;
   for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return colors[hash % colors.length];

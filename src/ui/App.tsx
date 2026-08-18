@@ -1166,7 +1166,6 @@ export function App() {
       {activeView === "analysis" ? (
         <WorkAnalysisPanel
           workspaceId={state.workspace.id}
-          workspaceName={state.workspace.name}
           onOpenConversation={(conversationId) => { void switchConversation(conversationId); }}
         />
       ) : (
@@ -1832,6 +1831,16 @@ function MessageRow({
   return (
     <article className={`message ${message.kind}`}>
       <div className="messageMeta">
+        {message.kind === "agent" ? (
+          <Avatar
+            className="messageAuthorAvatar"
+            size="24px"
+            style={{ backgroundColor: agentColor(message.agentId ?? agent?.id ?? "agent") }}
+            aria-label={`${author}头像`}
+          >
+            {author.slice(0, 1)}
+          </Avatar>
+        ) : null}
         <strong>{author}</strong>
         {message.kind === "agent" && agent ? <RuntimeBadge runtime={agent.runtime} /> : null}
         {message.status ? <span className={`statusPill ${message.status}`}>{messageStatusLabel(message.status)}</span> : null}
@@ -2546,7 +2555,7 @@ function AgentManagerPanel({
                           <span className="fieldHint" title="数字员工能力的简短描述。其他数字员工发现可协作成员时会看到此内容。">?</span>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">运行时 <span className="fieldHint" title="驱动该数字员工的本地运行时。claude-code = Claude ACP，codex = Codex ACP，codebuddy = CodeBuddy ACP。">?</span></span>
+                          <span className="pillLabel">运行时 <span className="fieldHint" title="驱动该数字员工的本地运行时。协议适配由 Orbit 在内部处理。">?</span></span>
                           <div className="pillOptions">
                             {RUNTIMES.map((r) => {
                               const isAvail = isRuntimeAvailable(r);
@@ -2578,7 +2587,7 @@ function AgentManagerPanel({
                             return (
                               <div className="runtimeInstallHint">
                                 <span>未检测到 {meta.label}。请先安装，并确认终端中可以运行对应命令；安装后点击重新检测即可继续。</span>
-                                <code className="runtimeInstallCommand">{meta.installCommand}</code>
+                                {meta.installCommand ? <code className="runtimeInstallCommand">{meta.installCommand}</code> : null}
                                 <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallBtn">查看安装指南 ↗</a>
                                 <button type="button" className="runtimeRefreshBtn" onClick={onRefreshRuntimes} disabled={isRefreshingRuntimes}>
                                   {isRefreshingRuntimes ? "检测中..." : "重新检测"}
@@ -2624,6 +2633,12 @@ function activityText(item: AgentActivityEvent): string {
   }
   if (item.type === "error") {
     return item.message;
+  }
+  if (item.type === "plan.updated") {
+    return "执行计划已更新";
+  }
+  if (item.type === "plan.removed") {
+    return "执行计划已移除";
   }
   return item.text;
 }
@@ -2722,7 +2737,25 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
         if (message.runId !== event.runId) {
           return message;
         }
-        return { ...message, activity: [...(message.activity ?? []), event.activity] };
+        const activity = [...(message.activity ?? [])];
+        if (event.activity.type === "plan.updated") {
+          let previousIndex = -1;
+          for (let index = activity.length - 1; index >= 0; index -= 1) {
+            const item = activity[index];
+            if (item?.type === "plan.removed" && (
+              event.activity.plan.id === undefined || item.planId === event.activity.plan.id
+            )) break;
+            if (item?.type === "plan.updated" && item.plan.id === event.activity.plan.id) {
+              previousIndex = index;
+              break;
+            }
+          }
+          if (previousIndex >= 0) activity[previousIndex] = event.activity;
+          else activity.push(event.activity);
+        } else {
+          activity.push(event.activity);
+        }
+        return { ...message, activity };
       }),
     };
   }
@@ -2803,6 +2836,7 @@ function connectionLabel(state: "connecting" | "live" | "offline"): string {
 
 function agentColor(id: string): string {
   const colors = ["#0052d9", "#00a870", "#ed7b2f", "#8e56dd", "#d54941", "#6b7785"];
+  if (id === "supervisor") return "#0f766e";
   let hash = 0;
   for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return colors[hash % colors.length];

@@ -17,6 +17,7 @@ import type { AgentActivityEvent } from "../src/shared/types.ts";
 
 type FakeOptions = {
   capabilities?: Awaited<ReturnType<CodeBuddyAcpConnection["initialize"]>>["agentCapabilities"];
+  loadedSessionId?: string;
   onLoad?: (notify: Parameters<CodeBuddyAcpConnector>[1]) => void;
   onPrompt?: (notify: Parameters<CodeBuddyAcpConnector>[1]) => void;
   promptResponse?: Awaited<ReturnType<CodeBuddyAcpConnection["prompt"]>>;
@@ -54,6 +55,9 @@ function fakeConnector(options: FakeOptions = {}) {
     async cancel(sessionId) {
       cancelled = true;
       calls.push({ method: "session/cancel", value: sessionId });
+    },
+    hasSession(sessionId) {
+      return sessionId === options.loadedSessionId;
     },
     close() {
       closed = true;
@@ -196,6 +200,33 @@ test("loads an existing session and suppresses replayed history", async () => {
   assert.ok(!fake.calls.some((call) => call.method === "session/new"));
 });
 
+test("prompts an existing session directly when the pooled process already has it loaded", async () => {
+  const fake = fakeConnector({
+    capabilities: { sessionCapabilities: { resume: {} } },
+    loadedSessionId: "existing-session",
+    onPrompt(notify) {
+      notify({
+        sessionId: "existing-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "continued answer" },
+        },
+      });
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+
+  assert.equal(
+    await runtime.run(runOptions({ resumeSessionId: "existing-session" })).result,
+    "continued answer",
+  );
+  assert.deepEqual(fake.calls.map((call) => call.method), [
+    "initialize",
+    "session/prompt",
+    "close",
+  ]);
+});
+
 test("prefers session/resume when the agent advertises it", async () => {
   const fake = fakeConnector({
     capabilities: { sessionCapabilities: { resume: {} } },
@@ -281,6 +312,49 @@ test("maps ACP tool lifecycle updates to Orbit activity events", async () => {
 
   assert.deepEqual(activities.map((activity) => activity.type), ["tool.started", "tool.completed"]);
   assert.equal(activities[0]?.type === "tool.started" && activities[0].name, "Read package.json");
+});
+
+test("advertises and maps native ACP plan updates", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "plan",
+          entries: [
+            { content: "Inspect repository", priority: "high", status: "completed" },
+            { content: "Implement change", priority: "high", status: "in_progress" },
+          ],
+        },
+      });
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "complete" },
+        },
+      });
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  await runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) })).result;
+
+  const initialize = fake.calls.find((call) => call.method === "initialize")!.value as {
+    clientCapabilities: { plan?: object };
+  };
+  assert.deepEqual(initialize.clientCapabilities.plan, {});
+  assert.deepEqual(activities[0], {
+    type: "plan.updated",
+    plan: {
+      format: "items",
+      entries: [
+        { content: "Inspect repository", priority: "high", status: "completed" },
+        { content: "Implement change", priority: "high", status: "in_progress" },
+      ],
+    },
+    timestamp: activities[0]!.timestamp,
+  });
 });
 
 test("interrupt sends session/cancel and rejects the turn", async () => {
