@@ -100,15 +100,16 @@ This ensures routing and run dispatch use the current agent configuration. A 409
 ## Routing Rules
 
 - Only `@display-name:` with a colon assigns work. The display name is configurable; the internal id is never used in public markers.
-- `@all:` assigns work to all registered agents (sender excluded); it expands at route time into individual agent assignments, not a real agent profile.
 - Plain `@agent` mentions are references and do not trigger routing.
 - Unknown `@xx:` mentions are silently ignored (no error, no routing).
-- A message can assign work to multiple agents.
+- Direct mode routes to exactly one employee and never routes handoffs from employee replies.
+- Collaborative and supervised modes can assign work to multiple employees and route employee handoffs.
+- Supervised mode also enables the built-in supervisor for unassigned goals, progress checks, and failure recovery.
 - Each assigned agent receives the full channel message as context.
-- Agent replies can also contain assignments, but self-assignments are ignored.
+- Self-assignments are ignored in modes where employee handoffs are enabled.
 - Existing assignments in the same channel message are treated as already scheduled.
 
-This is not a general workflow engine. It is a lightweight team-channel routing model.
+The three mode rules are built into Orbit and apply to both built-in and custom teams. They do not depend on workspace prompts or rules.
 
 ### Route Depth
 
@@ -118,8 +119,8 @@ Agent-to-agent routing chains are capped at a fixed depth of 10. Each agent repl
 
 Each workspace can have workspace-level settings (`WorkspaceConfig`) that apply to all agent runs in all conversations within that workspace:
 
-- `systemPrompt` �?An employee instruction injected into every agent run, after Orbit's fixed rules and before channel history.
-- `rules` �?A list of rules rendered as bullet points in the agent context.
+- `systemPrompt`: Shared user-authored context injected into every employee run after Orbit's fixed mode rules.
+- `rules`: User-authored workspace rules rendered as bullet points in the employee context.
 
 Stored at `~/.orbit/workspaces/<workspaceId>/config.json`. Can be updated at runtime via `PUT /api/workspace-config`.
 
@@ -127,7 +128,7 @@ Stored at `~/.orbit/workspaces/<workspaceId>/config.json`. Can be updated at run
 
 The final agent prompt is assembled in this order:
 
-1. **Orbit fixed context** (agent identity, available agents, collaboration rules)
+1. **Orbit fixed context** (employee identity, available employees, and the current built-in interaction mode rules)
 2. **Final answer rules** (output format constraints)
 3. **Workspace system prompt** (from `WorkspaceConfig.systemPrompt`, if set)
 4. **Workspace rules** (from `WorkspaceConfig.rules`, if set)
@@ -135,7 +136,7 @@ The final agent prompt is assembled in this order:
 6. **Channel history** (scoped messages since agent's last completed run)
 7. **Current task** (the routed message content)
 
-This means workspace prompts inject shared context across all employees, while each employee retains its own task-specific instruction. Collaboration supervision uses a separate internal profile only while enabled for the conversation.
+Workspace prompts inject optional shared user context across all employees, while each employee retains its own task-specific instruction. They do not define or replace Orbit's three interaction modes. Complex collaboration uses a separate internal supervisor profile, and its persisted runtime session is retained when the conversation switches to another mode.
 
 `WorkspaceConfigStore` (`src/core/workspace-config-store.ts`) manages load/save with atomic writes and graceful fallback to defaults when the file is missing or corrupted.
 

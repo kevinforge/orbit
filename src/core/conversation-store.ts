@@ -3,7 +3,8 @@ import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
-import type { AgentRuntimeKind, Conversation, SupervisionMode } from "../shared/types.ts";
+import type { AgentId, AgentRuntimeKind, Conversation, InteractionMode } from "../shared/types.ts";
+import { isInteractionMode } from "../shared/types.ts";
 
 type ConversationData = {
   conversations: Conversation[];
@@ -37,7 +38,7 @@ export class ConversationStore {
       name,
       createdAt: now,
       lastOpenedAt: now,
-      supervisionMode: "off",
+      interactionMode: "collaborative",
     };
     data.conversations.push(conversation);
     this.saveData(workspaceId, data);
@@ -46,8 +47,9 @@ export class ConversationStore {
 
   update(workspaceId: string, conversationId: string, patch: {
     name?: string;
-    supervisionMode?: SupervisionMode;
+    interactionMode?: InteractionMode;
     supervisionRuntime?: AgentRuntimeKind | null;
+    lastDirectAgentId?: AgentId;
   }): Conversation {
     const data = this.loadData(workspaceId);
     const index = data.conversations.findIndex((c) => c.id === conversationId);
@@ -57,10 +59,11 @@ export class ConversationStore {
     data.conversations[index] = {
       ...data.conversations[index]!,
       ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.supervisionMode !== undefined ? { supervisionMode: patch.supervisionMode } : {}),
+      ...(patch.interactionMode !== undefined ? { interactionMode: patch.interactionMode } : {}),
       ...(patch.supervisionRuntime !== undefined
         ? patch.supervisionRuntime === null ? { supervisionRuntime: undefined } : { supervisionRuntime: patch.supervisionRuntime }
         : {}),
+      ...(patch.lastDirectAgentId !== undefined ? { lastDirectAgentId: patch.lastDirectAgentId } : {}),
     };
     this.saveData(workspaceId, data);
     return data.conversations[index]!;
@@ -129,7 +132,10 @@ export class ConversationStore {
         conversations: Array.isArray(parsed.conversations)
           ? parsed.conversations.map((conversation) => ({
               ...conversation,
-              supervisionMode: conversation.supervisionMode === "on" ? "on" : "off",
+              // 无旧格式兼容：非法/缺失的 interactionMode 一律回到默认 collaborative
+              interactionMode: isInteractionMode(conversation.interactionMode)
+                ? conversation.interactionMode
+                : "collaborative",
             }))
           : [],
       };

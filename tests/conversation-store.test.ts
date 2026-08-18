@@ -20,21 +20,50 @@ test("create returns a conversation with generated id and timestamps", () => {
   assert.equal(conv.name, "My Conversation");
   assert.ok(conv.createdAt);
   assert.ok(conv.lastOpenedAt);
-  assert.equal(conv.supervisionMode, "off");
+  assert.equal(conv.interactionMode, "collaborative");
 });
 
-test("supervision mode and runtime persist across repeated toggles", () => {
+test("interaction mode persists across repeated switches", () => {
   const dir = tmpDir();
   const store = new ConversationStore(dir);
-  const conv = store.create("ws1", "Supervised work");
+  const conv = store.create("ws1", "Mode switching");
 
-  store.update("ws1", conv.id, { supervisionMode: "on", supervisionRuntime: "codebuddy" });
-  store.update("ws1", conv.id, { supervisionMode: "off" });
-  store.update("ws1", conv.id, { supervisionMode: "on" });
+  store.update("ws1", conv.id, { interactionMode: "supervised", supervisionRuntime: "codebuddy" });
+  store.update("ws1", conv.id, { interactionMode: "direct" });
+  store.update("ws1", conv.id, { interactionMode: "supervised" });
 
   const reloaded = new ConversationStore(dir).get("ws1", conv.id)!;
-  assert.equal(reloaded.supervisionMode, "on");
+  assert.equal(reloaded.interactionMode, "supervised");
   assert.equal(reloaded.supervisionRuntime, "codebuddy");
+});
+
+test("last direct employee persists alongside mode switches away and back", () => {
+  const dir = tmpDir();
+  const store = new ConversationStore(dir);
+  const conv = store.create("ws1", "Direct chat");
+
+  store.update("ws1", conv.id, { interactionMode: "direct", lastDirectAgentId: "developer" });
+  // 切换到其他模式不清空普通对话目标员工
+  store.update("ws1", conv.id, { interactionMode: "collaborative" });
+
+  const reloaded = new ConversationStore(dir).get("ws1", conv.id)!;
+  assert.equal(reloaded.interactionMode, "collaborative");
+  assert.equal(reloaded.lastDirectAgentId, "developer");
+});
+
+test("invalid interaction mode falls back to collaborative on reload", () => {
+  const dir = tmpDir();
+  const store = new ConversationStore(dir);
+  const conv = store.create("ws1", "Legacy data");
+  // 直接写入脏数据（无需兼容旧格式：非法值重置为默认）
+  const file = path.join(dir, "conversations", "ws1", "conversations.json");
+  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { conversations: Array<{ id: string; interactionMode?: string }> };
+  const entry = raw.conversations.find((c) => c.id === conv.id)!;
+  entry.interactionMode = "supervision-on";
+  fs.writeFileSync(file, JSON.stringify(raw));
+
+  const reloaded = new ConversationStore(dir).get("ws1", conv.id)!;
+  assert.equal(reloaded.interactionMode, "collaborative");
 });
 
 test("list returns conversations for a workspace sorted by lastOpenedAt descending", () => {

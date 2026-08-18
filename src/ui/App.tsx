@@ -3,7 +3,7 @@ import { renderMarkdown } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
 import {
@@ -26,9 +26,24 @@ import { TaskDetailDrawer } from "./TaskDetailDrawer.tsx";
 
 const { Avatar, Button, Tooltip } = TDesign;
 
+/** 会话交互模式的展示元数据：顺序即菜单顺序，label/tooltip 均为产品文案。 */
+const INTERACTION_MODE_META: Array<{ mode: InteractionMode; label: string; tooltip: string }> = [
+  { mode: "direct", label: "普通对话", tooltip: "与一位数字员工持续交流，不会转交或指派其他员工。" },
+  { mode: "collaborative", label: "简单协作", tooltip: "数字员工可按需邀请或转交任务，不启用监工。" },
+  { mode: "supervised", label: "复杂协作", tooltip: "启用内置监工，自动拆解任务、调度员工、跟踪进度并推动闭环。" },
+];
+
+function interactionModeLabel(mode: InteractionMode): string {
+  return INTERACTION_MODE_META.find((meta) => meta.mode === mode)?.label ?? mode;
+}
+
+function interactionModeTooltip(mode: InteractionMode): string {
+  return INTERACTION_MODE_META.find((meta) => meta.mode === mode)?.tooltip ?? mode;
+}
+
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
-  conversation: { id: "", name: "", supervisionMode: "off" },
+  conversation: { id: "", name: "", interactionMode: "collaborative" },
   agents: [],
   messages: [],
   messageHistory: { hasOlderMessages: false, olderCursor: null },
@@ -119,7 +134,8 @@ export function App() {
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const [selectedTaskMessageId, setSelectedTaskMessageId] = useState<string | null>(null);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
-  const [isTogglingSupervision, setIsTogglingSupervision] = useState(false);
+  const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
+  const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
   const isNearBottomRef = useRef(true);
 
   useEffect(() => {
@@ -286,7 +302,10 @@ export function App() {
   );
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
-  const supervisionEnabled = state.conversation.supervisionMode === "on";
+  const interactionMode: InteractionMode = state.conversation.interactionMode ?? "collaborative";
+  const lastDirectAgentLabel = state.conversation.lastDirectAgentId
+    ? agentsById.get(state.conversation.lastDirectAgentId)?.label
+    : undefined;
   const scrollKey = useMemo(
     () =>
       state.messages
@@ -309,9 +328,6 @@ export function App() {
 
     const query = mentionDraft.query.toLowerCase();
     const matched = state.agents.filter((agent) => agent.label.toLocaleLowerCase().startsWith(query)).map((agent) => agent.id);
-    if ("all".startsWith(query) && !matched.includes("all")) {
-      matched.push("all" as AgentId);
-    }
     return matched;
   }, [agentIds, inputFocused, mentionDraft, state.agents]);
 
@@ -409,7 +425,7 @@ export function App() {
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = content.trim();
-    if (!trimmed || isSending) {
+    if (!trimmed || isSending || isSwitchingInteractionMode) {
       return;
     }
 
@@ -453,14 +469,18 @@ export function App() {
     }
   }
 
-  async function toggleSupervision() {
-    if (isTogglingSupervision) return;
-    setIsTogglingSupervision(true);
+  async function selectInteractionMode(mode: InteractionMode) {
+    setShowInteractionModeMenu(false);
+    if (isSwitchingInteractionMode || mode === interactionMode) return;
+    setIsSwitchingInteractionMode(true);
+    const label = interactionModeLabel(mode);
     try {
-      const mode = supervisionEnabled ? "off" : "on";
-      const runtime = state.conversation.supervisionRuntime ?? preferredSupervisionRuntime(state.runtimeAvailability);
+      // 复杂协作需要监工运行时：优先沿用会话已记录的运行时，否则按可用性选择
+      const runtime = mode === "supervised"
+        ? state.conversation.supervisionRuntime ?? preferredSupervisionRuntime(state.runtimeAvailability)
+        : undefined;
 
-      // 首次对话还没有会话：先创建一个会话，再切换协作监督，保证开关在首条消息前即可使用
+      // 首次对话还没有会话：先创建一个会话，再切换模式，保证菜单在首条消息前即可使用
       let conversationId = state.conversation.id;
       if (!conversationId) {
         if (!state.workspace.id) throw new Error("请先选择或创建工作区。");
@@ -475,18 +495,18 @@ export function App() {
         refreshConversations();
       }
 
-      const response = await fetch(`/api/conversations/${conversationId}/supervision`, {
+      const response = await fetch(`/api/conversations/${conversationId}/interaction-mode`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, runtime }),
+        body: JSON.stringify(runtime ? { mode, runtime } : { mode }),
       });
       const body = await response.json() as { conversation?: ConversationInfo; message?: string };
-      if (!response.ok || !body.conversation) throw new Error(body.message ?? "监督模式切换失败");
+      if (!response.ok || !body.conversation) throw new Error(body.message ?? `${label}切换失败`);
       setState((current) => ({ ...current, conversation: body.conversation! }));
     } catch (error) {
-      setState((current) => ({ ...current, messages: [...current.messages, createLocalSystemMessage(error instanceof Error ? error.message : "监督模式切换失败")] }));
+      setState((current) => ({ ...current, messages: [...current.messages, createLocalSystemMessage(error instanceof Error ? error.message : `${label}切换失败`)] }));
     } finally {
-      setIsTogglingSupervision(false);
+      setIsSwitchingInteractionMode(false);
     }
   }
 
@@ -866,12 +886,10 @@ export function App() {
       return;
     }
 
-    const agentName = agentId === "all" ? "all" : agentsById.get(agentId)?.label ?? agentId;
+    const agentName = agentsById.get(agentId)?.label ?? agentId;
     const nextContent = `${content.slice(0, mentionDraft.start)}@${agentName}: ${content.slice(mentionDraft.end)}`;
     const nextCursorIndex = mentionDraft.start + agentName.length + 3;
-    if (agentId !== "all") {
-      setSelectedAgent(agentId);
-    }
+    setSelectedAgent(agentId);
     setContent(nextContent);
     setCursorIndex(nextCursorIndex);
     window.setTimeout(() => {
@@ -1345,7 +1363,17 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : supervisionEnabled ? "直接输入消息，监督模式会自动协调数字员工" : hasEnabledAgent ? `@${agentsById.get(selectedAgent)?.label ?? selectedAgent}: 输入任务` : "先添加或启用数字员工"}
+              placeholder={!hasWorkspace
+                ? "先选择或创建工作区"
+                : !hasEnabledAgent
+                  ? "先添加或启用数字员工"
+                  : interactionMode === "direct"
+                    ? lastDirectAgentLabel
+                      ? `继续与 ${lastDirectAgentLabel} 对话，或 @其他员工切换`
+                      : "@一位数字员工开始对话"
+                    : interactionMode === "supervised"
+                      ? "输入目标，由监工协调数字员工"
+                      : "@一位数字员工发起协作"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1359,18 +1387,38 @@ export function App() {
               />
             ) : null}
             <div className="composerModeRow">
-              <Button
-                className={`supervisionToggle composerSupervisionToggle ${supervisionEnabled ? "active" : ""}`}
-                variant="text"
-                onClick={toggleSupervision}
-                loading={isTogglingSupervision}
-                disabled={!hasEnabledAgent}
-                aria-pressed={supervisionEnabled}
-                title={supervisionEnabled ? "关闭当前会话的监督模式" : "开启当前会话的监督模式"}
-              >
-                <span className="supervisionToggleDot" aria-hidden="true" />
-                监督模式 {supervisionEnabled ? "已开启" : "已关闭"}
-              </Button>
+              <div className="interactionModeControl">
+                <button
+                  type="button"
+                  className={`interactionModeTrigger ${interactionMode !== "collaborative" ? "accented" : ""}`}
+                  onClick={() => setShowInteractionModeMenu((open) => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={showInteractionModeMenu}
+                  title={interactionModeTooltip(interactionMode)}
+                >
+                  <UsergroupIcon className="interactionModeIcon" />
+                  <span>{interactionModeLabel(interactionMode)}</span>
+                  <span className="approvalModeChevron" aria-hidden="true">⌄</span>
+                </button>
+                {showInteractionModeMenu ? (
+                  <div className="interactionModeMenu" role="menu" aria-label="会话协作模式">
+                    {INTERACTION_MODE_META.map((meta) => (
+                      <button
+                        key={meta.mode}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={interactionMode === meta.mode}
+                        title={meta.tooltip}
+                        onClick={() => { void selectInteractionMode(meta.mode); }}
+                      >
+                        <InteractionModeIcon mode={meta.mode} />
+                        <span><strong>{meta.label}</strong><small>{meta.tooltip}</small></span>
+                        {interactionMode === meta.mode ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
               <div className="approvalModeControl">
                 <button
                   type="button"
@@ -1424,7 +1472,7 @@ export function App() {
                 {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
               </Button>
             ) : null}
-            <Button type="submit" theme="primary" icon={<SendIcon />} disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
+            <Button type="submit" theme="primary" icon={<SendIcon />} disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode}>
               {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
             </Button>
             </div>
@@ -1505,6 +1553,14 @@ export function App() {
 
 function ApprovalModeIcon({ mode }: { mode: ApprovalMode }) {
   return <SecuredIcon className={`approvalModeIcon ${mode === "full-access" ? "fullAccess" : "ask"}`} aria-hidden="true" />;
+}
+
+function InteractionModeIcon({ mode }: { mode: InteractionMode }) {
+  const icon =
+    mode === "direct" ? <ChatBubbleHistoryIcon /> :
+    mode === "supervised" ? <ChartIcon /> :
+    <UsergroupIcon />;
+  return <span className={`interactionModeIcon ${mode}`} aria-hidden="true">{icon}</span>;
 }
 
 function PermissionApprovalPanel(props: {
@@ -1721,7 +1777,6 @@ function MentionMenu(props: {
   return (
     <div className="mentionMenu" role="listbox" aria-label="Choose agent">
       {props.candidates.map((agentId, index) => {
-        const isAll = agentId === "all";
         const agent = props.agentsById.get(agentId);
         const status = agent?.status ?? "idle";
         return (
@@ -1735,10 +1790,10 @@ function MentionMenu(props: {
             onClick={() => props.onSelect(agentId)}
           >
             <span className="mentionName">
-              <span className={`mentionDot ${isAll ? "idle" : status}`} aria-hidden="true" />
-        <span>@{agent?.label ?? agentId}</span>
+              <span className={`mentionDot ${status}`} aria-hidden="true" />
+              <span>@{agent?.label ?? agentId}</span>
             </span>
-            <small>{isAll ? "all agents" : status}</small>
+            <small>{status}</small>
           </button>
         );
       })}

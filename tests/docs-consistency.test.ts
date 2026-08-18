@@ -216,7 +216,12 @@ test("repository documents public terminology and routing marker behavior", () =
   assert.match(terminology, /Digital employee/);
   assert.match(terminology, /Prefer \*\*digital employee\*\*/);
   assert.match(terminology, /@display-name:/);
-  assert.match(terminology, /@all:/);
+  assert.doesNotMatch(terminology, /@all:/);
+  assert.match(terminology, /Interaction mode/);
+  assert.match(terminology, /普通对话/);
+  assert.match(terminology, /简单协作/);
+  assert.match(terminology, /复杂协作/);
+  assert.match(terminology, /New conversations start in 简单协作/);
   assert.match(terminology, /Plain `@display-name` without a colon is a reference only/);
   assert.match(terminology, /Unknown `@display-name:` markers are ignored/);
   assert.match(terminology, /empty assignment/);

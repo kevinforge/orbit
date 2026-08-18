@@ -1,4 +1,4 @@
-import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type ChatMessage, type ChannelWatchTriggers } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type ChatMessage, type ChannelWatchTriggers, type InteractionMode } from "../shared/types.ts";
 import { assignmentPattern } from "./mention-router.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { AgentRegistry } from "./agent-registry.ts";
@@ -33,7 +33,6 @@ export class ChannelWatchService {
   ) {
     this.knownNames = new Set(profiles.map((p) => p.name.toLocaleLowerCase()));
     this.knownNames.add("user"); // @user: is the task-closure signal
-    this.knownNames.add("all");  // @all: is the broadcast signal
 
     for (const profile of profiles) {
       if (profile.triggers && hasActiveChannelWatchTriggers(profile.triggers)) {
@@ -68,8 +67,8 @@ export class ChannelWatchService {
         }
       } else if (event.type === "run.failed" && "agentId" in event) {
         // Issue #82: Trigger supervisor when an agent run fails
-        const failedEvent = event as { agentId: AgentId; runId: string; error?: string };
-        this.onAgentFailed(failedEvent.agentId, failedEvent.runId, failedEvent.error);
+        const failedEvent = event as { agentId: AgentId; runId: string; error?: string; interactionMode?: InteractionMode };
+        this.onAgentFailed(failedEvent.agentId, failedEvent.runId, failedEvent.error, failedEvent.interactionMode);
       }
     });
   }
@@ -98,8 +97,9 @@ export class ChannelWatchService {
     if (message.kind === "user") {
       const hasAssignment = hasAssignmentMarker(message.content, this.knownNames);
       for (const ctx of this.triggerContexts.values()) {
+        // 每条用户消息重置限流计数（无论模式），但只有复杂协作链的消息才触发监工。
         ctx.triggerCount = 0;
-        if (!hasAssignment && ctx.triggers.onUnassignedMessage) {
+        if (!hasAssignment && ctx.triggers.onUnassignedMessage && isSupervisedSnapshot(message.interactionMode)) {
           this.tryTrigger(ctx, message, { relaxIdleCheck: true });
         }
       }
@@ -109,6 +109,8 @@ export class ChannelWatchService {
   private onMessageUpdated(message: ChatMessage): void {
     // Listen for routeState transitions to "blocked" (published via message.updated)
     if (message.routeState === "blocked") {
+      // 只有复杂协作链的阻塞才需要监工介入；普通/简单协作的阻塞是面向用户的提示。
+      if (!isSupervisedSnapshot(message.interactionMode)) return;
       for (const ctx of this.triggerContexts.values()) {
         if (ctx.triggers.onAgentBlocked) {
           this.tryTrigger(ctx, message);
@@ -120,6 +122,9 @@ export class ChannelWatchService {
   private onAgentCompleted(agentId: AgentId, resultMessageId: string): void {
     const message = this.messages.get(resultMessageId);
     if (!message) return;
+
+    // 只有复杂协作链的完成才触发监工检查；链的模式快照不随全局模式切换改变。
+    if (!isSupervisedSnapshot(message.interactionMode)) return;
 
     // Check for assignment markers, but exclude @user: for non-supervisor agents.
     // @user: is only a closure signal when the SUPERVISOR says it, not when other agents do.
@@ -144,8 +149,9 @@ export class ChannelWatchService {
   /**
    * Issue #82: Handle agent run failure.
    * When an agent run fails, trigger supervisor if configured with onRunFailed.
+   * 只有复杂协作链的失败才会触发监工做恢复。
    */
-  private onAgentFailed(agentId: AgentId, runId: string, error?: string): void {
+  private onAgentFailed(agentId: AgentId, runId: string, error?: string, interactionMode?: InteractionMode): void {
     // Find supervisors that have onRunFailed trigger configured
     for (const ctx of this.triggerContexts.values()) {
       if (ctx.agentId === agentId) continue; // Don't trigger the failed agent itself
@@ -154,12 +160,17 @@ export class ChannelWatchService {
       const failedMessage = this.messages.list().find(
         (message) => message.kind === "agent" && message.agentId === agentId && message.runId === runId,
       );
+      // 链模式快照优先取失败消息记录；事件负载作为兜底。
+      const chainMode = failedMessage?.interactionMode ?? interactionMode;
+      if (!isSupervisedSnapshot(chainMode)) continue;
+
       const triggerMessage: ChatMessage = failedMessage ?? {
         id: `failure_${agentId}_${runId}_${Date.now()}`,
         kind: "system",
         content: `[Agent ${agentId} failed]\nRun ${runId} encountered an error: ${error ?? "Unknown error"}`,
         createdAt: new Date().toISOString(),
         status: "error",
+        interactionMode: "supervised",
       };
 
       // Trigger supervisor with relaxIdleCheck=true so it can run even when other agents are busy
@@ -206,6 +217,11 @@ export class ChannelWatchService {
 
     this.runManager.enqueue(ctx.agentId, prompt, sourceMessage, "supervisor");
   }
+}
+
+/** 只有模式快照为 supervised 的链才触发监工；其他模式（含缺失快照）一律不触发。 */
+function isSupervisedSnapshot(mode: InteractionMode | undefined): boolean {
+  return mode === "supervised";
 }
 
 function hasAssignmentMarker(content: string, knownNames: ReadonlySet<string>): boolean {

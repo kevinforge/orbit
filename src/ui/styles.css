@@ -1482,11 +1482,13 @@ button:active:not(:disabled) {
   padding: 0 8px 7px;
 }
 
-.approvalModeControl {
+.approvalModeControl,
+.interactionModeControl {
   position: relative;
 }
 
-.approvalModeTrigger {
+.approvalModeTrigger,
+.interactionModeTrigger {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1501,13 +1503,20 @@ button:active:not(:disabled) {
 }
 
 .approvalModeTrigger:hover,
-.approvalModeTrigger[aria-expanded="true"] {
+.approvalModeTrigger[aria-expanded="true"],
+.interactionModeTrigger:hover,
+.interactionModeTrigger[aria-expanded="true"] {
   color: var(--text-primary);
   background: var(--bg-hover);
 }
 
 .approvalModeTrigger.fullAccess {
   color: var(--secondary);
+}
+
+/* 会话模式与默认（简单协作）不同时，用主题色提示当前处于特殊模式 */
+.interactionModeTrigger.accented {
+  color: var(--accent);
 }
 
 .approvalModeIcon {
@@ -1527,7 +1536,8 @@ button:active:not(:disabled) {
   line-height: 1;
 }
 
-.approvalModeMenu {
+.approvalModeMenu,
+.interactionModeMenu {
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
@@ -1540,7 +1550,8 @@ button:active:not(:disabled) {
   box-shadow: var(--shadow-lg);
 }
 
-.approvalModeMenu button {
+.approvalModeMenu button,
+.interactionModeMenu button {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 20px;
   gap: 10px;
@@ -1554,11 +1565,13 @@ button:active:not(:disabled) {
   text-align: left;
 }
 
-.approvalModeMenu button:hover {
+.approvalModeMenu button:hover,
+.interactionModeMenu button:hover {
   background: var(--bg-hover);
 }
 
-.approvalModeMenu button[aria-checked="true"] {
+.approvalModeMenu button[aria-checked="true"],
+.interactionModeMenu button[aria-checked="true"] {
   color: var(--accent);
   background: var(--accent-subtle);
 }
@@ -1568,18 +1581,21 @@ button:active:not(:disabled) {
   background: var(--secondary-bg);
 }
 
-.approvalModeMenu button > span:nth-child(2) {
+.approvalModeMenu button > span:nth-child(2),
+.interactionModeMenu button > span:nth-child(2) {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 2px;
 }
 
-.approvalModeMenu strong {
+.approvalModeMenu strong,
+.interactionModeMenu strong {
   font-size: 14px;
 }
 
-.approvalModeMenu small {
+.approvalModeMenu small,
+.interactionModeMenu small {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 450;
@@ -4373,33 +4389,6 @@ button:active:not(:disabled) {
   gap: 8px;
 }
 
-.supervisionToggle.t-button {
-  min-height: 30px;
-  padding: 0 10px;
-  border-color: var(--border);
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.supervisionToggle.t-button.active {
-  border-color: rgba(0, 168, 112, 0.3);
-  background: rgba(0, 168, 112, 0.08);
-  color: #087f5b;
-}
-
-.supervisionToggleDot {
-  width: 7px;
-  height: 7px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-
-.supervisionToggle.active .supervisionToggleDot {
-  background: #00a870;
-  box-shadow: 0 0 0 3px rgba(0, 168, 112, 0.12);
-}
-
 .workspaceTitle {
   cursor: pointer;
   user-select: none;
@@ -6415,32 +6404,19 @@ button:active:not(:disabled) {
   gap: 4px;
 }
 
-.composerSupervisionToggle.t-button {
+/* 会话交互模式图标：TDesign 图标在 20px 网格列中对齐 */
+.interactionModeIcon {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 0;
-  min-height: 30px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 7px;
-  color: var(--text-secondary);
-  background: transparent;
-  font-size: 13px;
-  font-weight: 650;
+  justify-content: center;
+  width: 20px;
+  flex: 0 0 20px;
+  color: currentcolor;
 }
 
-.composerSupervisionToggle.t-button:hover:not(:disabled),
-.composerSupervisionToggle.t-button.active {
-  color: #087f5b;
-  background: rgba(0, 168, 112, 0.08);
-}
-
-.composerSupervisionToggle .supervisionToggleDot {
-  display: inline-block;
-  flex: 0 0 7px;
-  margin-right: 5px;
-  vertical-align: middle;
+.interactionModeIcon > svg {
+  width: 16px;
+  height: 16px;
 }
 
 .approvalModeTrigger {

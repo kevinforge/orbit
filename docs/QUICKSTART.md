@@ -13,9 +13,11 @@ software development team contains four employees:
 - `@蔡一平:` edits files, runs commands, and verifies changes.
 - `@田小坑:` validates behavior and reports regressions.
 
-Collaboration supervision is a per-conversation mode. It adds an internal
-coordinator backed by the selected runtime and is not configured as a fifth
-employee.
+Every conversation has an interaction mode, selected from the composer:
+普通对话 (direct chat with one employee), 简单协作 (lightweight collaboration,
+the default for new conversations), and 复杂协作 (supervised collaboration).
+复杂协作 adds an internal supervisor backed by the selected runtime; it is not
+configured as a fifth employee.
 
 For the complete public terminology and routing rules, see
 [Terminology And Routing](TERMINOLOGY_AND_ROUTING.md).
@@ -81,15 +83,26 @@ To send independent work in parallel:
 @蔡一平: Implement the fix. @田小坑: Prepare the regression checklist.
 ```
 
-Plain mentions without a colon are references and do not start work. Use
-`@all:` to send one task to every enabled employee.
+Plain mentions without a colon are references and do not start work. In 简单协作
+and 复杂协作 a message may assign several employees; in 普通对话 it may assign
+exactly one.
 
-## Step 5: Use Collaboration Supervision
+## Step 5: Switch Interaction Modes
 
-Turn on collaboration supervision in the conversation composer when you want
-Orbit to coordinate unassigned user messages and follow-up work. You can turn
-it off and on again across the same conversation; the supervision runtime and
-internal context are managed per conversation.
+Use the mode menu in the conversation composer to switch between the three
+interaction modes at any time:
+
+- 普通对话: talk to exactly one employee. `@display-name:` picks the employee;
+  later messages without a marker continue with the same employee. Handoff
+  markers in replies are plain text and never start other employees.
+- 简单协作: assign work with `@display-name:`; employees hand off to each other
+  only when genuinely needed.
+- 复杂协作: describe a goal without a marker and the built-in supervisor
+  decomposes, schedules, tracks, and drives it to closure.
+
+Switching only affects the next message you send; runs already in progress keep
+their own mode. Digital employee sessions are shared across modes, so switching
+never loses conversation memory.
 
 ## Troubleshooting
 

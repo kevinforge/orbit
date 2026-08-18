@@ -25,10 +25,9 @@ test("plain mentions and internal ids do not route", () => {
   assert.equal(routeMention("@agent2: please help", agents).kind, "none");
 });
 
-test("all expands to all available employees and excludes the sender", () => {
-  const result = routeMention("@all: review everything", agents, "agent1");
-  assert.equal(result.kind, "assignments");
-  if (result.kind === "assignments") assert.deepEqual(result.agentIds, ["agent2"]);
+test("@all is no longer an assignment marker and routes to no one", () => {
+  assert.equal(routeMention("@all: review everything", agents).kind, "none");
+  assert.equal(routeMention("@all: review everything", agents, "agent1").kind, "none");
 });
 
 test("unknown names are ignored while known names still route", () => {
@@ -41,8 +40,4 @@ test("empty assignments are blocked", () => {
   const result = routeMention("@甄架构:", agents);
   assert.equal(result.kind, "empty_assignment");
   if (result.kind === "empty_assignment") assert.equal(result.agentId, "agent1");
-});
-
-test("all with no task content is blocked", () => {
-  assert.equal(routeMention("@all:", agents).kind, "empty_assignment");
 });

@@ -22,7 +22,8 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { ApprovalMode, ConversationInfo, ElicitationResponse, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import type { ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import { isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { ConversationContext } from "./conversation-context.ts";
@@ -36,7 +37,23 @@ const requestedPort = Number(process.env.ORBIT_PORT ?? DEFAULT_PORT);
 let activePort = requestedPort;
 const UNTITLED_CONVERSATION_NAME = "新会话";
 const EMPTY_WORKSPACE: WorkspaceInfo = { id: "", name: "", path: "" };
-const EMPTY_CONVERSATION: ConversationInfo = { id: "", name: "", supervisionMode: "off" };
+const EMPTY_CONVERSATION: ConversationInfo = { id: "", name: "", interactionMode: "collaborative" };
+
+function toActiveConversation(conversation: Conversation | {
+  id: string;
+  name: string;
+  interactionMode?: InteractionMode;
+  lastDirectAgentId?: ConversationInfo["lastDirectAgentId"];
+  supervisionRuntime?: ConversationInfo["supervisionRuntime"];
+}): ConversationInfo {
+  return {
+    id: conversation.id,
+    name: conversation.name,
+    interactionMode: conversation.interactionMode ?? "collaborative",
+    lastDirectAgentId: conversation.lastDirectAgentId,
+    supervisionRuntime: conversation.supervisionRuntime,
+  };
+}
 const execFileAsync = promisify(execFile);
 
 // --- Shared singletons ---
@@ -258,8 +275,21 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
     workspaceStore,
     workspaceConfig,
     globalConfig: globalConfigStore.load(),
-    supervisionMode: conversation?.supervisionMode,
+    interactionMode: conversation?.interactionMode,
     supervisionRuntime: conversation?.supervisionRuntime,
+    lastDirectAgentId: conversation?.lastDirectAgentId,
+    onConversationPatch: (patch) => {
+      try {
+        const store = workspaceId === activeWorkspaceId ? conversationStore : new ConversationStore();
+        const updated = store.update(workspaceId, conversationId, patch);
+        if (workspaceId === activeWorkspaceId && conversationId === activeConversationId) {
+          activeConversation = toActiveConversation(updated);
+          publishContextSwitched();
+        }
+      } catch {
+        // 持久化失败不阻断路由流程；模式仍在本会话上下文中生效
+      }
+    },
   });
 }
 
@@ -314,15 +344,10 @@ function initActiveContext(): void {
   }
 }
 
-function activateConversation(conversation: { id: string; name: string; supervisionMode?: ConversationInfo["supervisionMode"]; supervisionRuntime?: ConversationInfo["supervisionRuntime"] }, shouldTouchLastOpened = true): void {
+function activateConversation(conversation: Conversation, shouldTouchLastOpened = true): void {
   // No dispose of old context — it stays alive in the map for parallel execution
   activeConversationId = conversation.id;
-  activeConversation = {
-    id: conversation.id,
-    name: conversation.name,
-    supervisionMode: conversation.supervisionMode ?? "off",
-    supervisionRuntime: conversation.supervisionRuntime,
-  };
+  activeConversation = toActiveConversation(conversation);
 
   // Issue #77: Only touch lastOpenedAt when creating a conversation or first opening it,
   // not when switching between existing conversations. This prevents the conversation
@@ -1015,34 +1040,34 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "PUT" && url.pathname.startsWith("/api/conversations/") && url.pathname.endsWith("/supervision")) {
+    if (req.method === "PUT" && url.pathname.startsWith("/api/conversations/") && url.pathname.endsWith("/interaction-mode")) {
       const parts = url.pathname.split("/");
       const convId = parts[3];
       if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
       if (convId !== activeConversationId || !activeWorkspaceId) {
-        sendJson(res, 409, { ok: false, message: "Only the active conversation can change collaboration supervision." });
+        sendJson(res, 409, { ok: false, message: "Only the active conversation can change the interaction mode." });
         return;
       }
       const input = (await readJson(req)) as { mode?: unknown; runtime?: unknown };
-      const mode = input.mode === "on" ? "on" : input.mode === "off" ? "off" : null;
-      if (!mode) { sendJson(res, 400, { ok: false, message: "A valid supervision mode is required." }); return; }
+      if (!isInteractionMode(input.mode)) {
+        sendJson(res, 400, { ok: false, message: "A valid interaction mode (direct | collaborative | supervised) is required." });
+        return;
+      }
+      const mode = input.mode;
       const ctx = getActiveContext();
       if (!ctx) { sendJson(res, 409, { ok: false, message: "No active conversation context." }); return; }
       try {
         const current = conversationStore.get(activeWorkspaceId, activeConversationId);
         if (!current) throw new Error("Conversation not found.");
         const runtime = typeof input.runtime === "string" ? input.runtime as import("../shared/types.ts").AgentRuntimeKind : current.supervisionRuntime;
-        if (mode === "on" && (!runtime || !runtimeAvailable(runtimeKindToCliKey(runtime)))) {
-          sendJson(res, 409, { ok: false, message: "Choose an available runtime before enabling collaboration supervision." });
+        if (mode === "supervised" && (!runtime || !runtimeAvailable(runtimeKindToCliKey(runtime)))) {
+          sendJson(res, 409, { ok: false, message: "Choose an available runtime before enabling supervised collaboration." });
           return;
         }
-        ctx.setSupervisionMode(mode, runtime);
-        const updated = conversationStore.update(activeWorkspaceId, activeConversationId, {
-          supervisionMode: mode,
-          supervisionRuntime: mode === "on" ? runtime : undefined,
-        });
-        activeConversation = { id: updated.id, name: updated.name, supervisionMode: updated.supervisionMode, supervisionRuntime: updated.supervisionRuntime };
-        publishContextSwitched();
+        // setInteractionMode 通过 onConversationPatch 持久化并广播 context.switched
+        ctx.setInteractionMode(mode, runtime);
+        const updated = conversationStore.get(activeWorkspaceId, activeConversationId) ?? current;
+        activeConversation = toActiveConversation(updated);
         sendJson(res, 200, { ok: true, conversation: updated });
       } catch (error) {
         sendJson(res, 409, { ok: false, message: error instanceof Error ? error.message : String(error) });
@@ -1062,7 +1087,7 @@ const server = http.createServer(async (req, res) => {
         const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
         const conv = store.update(wsId, convId, { name });
         if (convId === activeConversationId && wsId === activeWorkspaceId) {
-          activeConversation = { id: conv.id, name: conv.name, supervisionMode: conv.supervisionMode, supervisionRuntime: conv.supervisionRuntime };
+          activeConversation = toActiveConversation(conv);
           publishContextSwitched();
         }
         sendJson(res, 200, conv);
@@ -1286,14 +1311,14 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   if (!context) {
     const conversation = conversationStore.create(activeWorkspaceId, conversationTitle(content));
     activeConversationId = conversation.id;
-    activeConversation = { id: conversation.id, name: conversation.name, supervisionMode: conversation.supervisionMode, supervisionRuntime: conversation.supervisionRuntime };
+    activeConversation = toActiveConversation(conversation);
     conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
     context = getOrCreateContext(activeWorkspaceId, activeConversationId);
     saveLastActive(activeWorkspaceId, activeConversationId);
     publishContextSwitched();
   } else if (activeConversation.name === UNTITLED_CONVERSATION_NAME) {
     const renamed = conversationStore.update(activeWorkspaceId, activeConversationId, { name: conversationTitle(content) });
-    activeConversation = { id: renamed.id, name: renamed.name, supervisionMode: renamed.supervisionMode, supervisionRuntime: renamed.supervisionRuntime };
+    activeConversation = toActiveConversation(renamed);
     publishContextSwitched();
   }
 
@@ -1324,7 +1349,16 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     });
   }
 
-  const userMessage = context.messages.add({ kind: "user", content, status: "sent", attachments, approvalMode });
+  // 模式快照：每条用户消息在发送时记录当轮 interaction mode，
+  // 后续员工运行、转交、监工检查都继承该值，不读取执行时的全局模式。
+  const userMessage = context.messages.add({
+    kind: "user",
+    content,
+    status: "sent",
+    attachments,
+    approvalMode,
+    interactionMode: activeConversation.interactionMode ?? "collaborative",
+  });
   eventBus.publish({ type: "message.created", conversationId: activeConversationId, message: userMessage });
   context.messageRouter.process(userMessage);
 

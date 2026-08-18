@@ -17,27 +17,19 @@ export function routeMention(content: string, availableAgents: readonly AgentPro
   });
   if (rawAssignments.length === 0) return { kind: "none", message: `Use ${formatAssignmentList(availableAgents)} to assign work to an employee.` };
 
-  for (const assignment of rawAssignments) {
-    if (assignment.name.toLocaleLowerCase() === "all" && !content.slice(assignment.end, findNextMarkerEnd(assignment.end, rawAssignments)).trim()) {
-      return { kind: "empty_assignment", agentId: "all", message: "Add task content after @all:." };
-    }
-  }
-
+  // @all 已移除：不再展开，也没有对应的员工，因此 @all: 会被当作未知名称忽略。
   const byName = new Map(availableAgents.map((agent) => [agent.name.toLocaleLowerCase(), agent]));
-  const expanded: AssignmentMarker[] = [];
-  for (const assignment of rawAssignments) {
-    if (assignment.name.toLocaleLowerCase() === "all") {
-      for (const agent of availableAgents) expanded.push({ ...assignment, name: agent.name, agentId: agent.id });
-    } else {
+  const known = rawAssignments
+    .map((assignment) => {
       const agent = byName.get(assignment.name.toLocaleLowerCase());
-      if (agent) expanded.push({ ...assignment, agentId: agent.id });
-    }
-  }
-  const known = expanded.filter((assignment) => assignment.agentId && assignment.agentId !== senderAgentId) as Array<AssignmentMarker & { agentId: AgentId }>;
+      return agent && agent.id !== senderAgentId
+        ? { ...assignment, agentId: agent.id }
+        : null;
+    })
+    .filter((assignment): assignment is AssignmentMarker & { agentId: AgentId } => assignment !== null);
   if (known.length === 0) return { kind: "none", message: `Use ${formatAssignmentList(availableAgents)} to assign work to an employee.` };
 
   for (const assignment of known) {
-    if (rawAssignments.some((raw) => raw.name.toLocaleLowerCase() === "all" && raw.start === assignment.start)) continue;
     if (!content.slice(assignment.end, findNextMarkerEnd(assignment.end, known)).trim()) {
       return { kind: "empty_assignment", agentId: assignment.agentId, message: `Add task content after @${assignment.name}:.` };
     }

@@ -14,17 +14,19 @@ import type { AgentId, AgentProfile, AgentStatus, ChatMessage, RunResult } from 
 // Test helpers
 // ---------------------------------------------------------------------------
 
-function createUserMessage(content: string): ChatMessage {
+// 监工链的消息统一带 supervised 模式快照；非 supervised 快照不触发监工。
+function createUserMessage(content: string, interactionMode: "supervised" | "collaborative" | "direct" = "supervised"): ChatMessage {
   return {
     id: `msg_user_${Date.now()}`,
     kind: "user",
     content,
     createdAt: new Date().toISOString(),
     status: "sent",
+    interactionMode,
   };
 }
 
-function createBlockedMessage(agentId: AgentId): ChatMessage {
+function createBlockedMessage(agentId: AgentId, interactionMode: "supervised" | "collaborative" | "direct" = "supervised"): ChatMessage {
   return {
     id: `msg_blocked_${Date.now()}`,
     kind: "agent",
@@ -33,6 +35,7 @@ function createBlockedMessage(agentId: AgentId): ChatMessage {
     createdAt: new Date().toISOString(),
     status: "error",
     routeState: "blocked",
+    interactionMode,
   };
 }
 
@@ -161,7 +164,7 @@ test("run.completed without @agent: triggers supervisor when channel idle", asyn
     content: "Done implementing the feature.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -203,7 +206,7 @@ test("run.completed with @agent: does NOT trigger supervisor", async () => {
     content: "API done. @tester: please verify.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -245,7 +248,7 @@ test("run.completed at max route depth still triggers supervisor wrap-up", async
     content: "Deepest delegation done.",
     status: "done",
     runId: "run_deep",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
     routeDepth: 10,
   });
 
@@ -354,7 +357,7 @@ test("user message resets trigger count", async () => {
       content: "Done.",
       status: "done",
       runId: `run_${i}`,
-      runStatus: "completed",
+      runStatus: "completed", interactionMode: "supervised",
     });
 
     // Need to advance time past debounce for each trigger
@@ -378,7 +381,7 @@ test("user message resets trigger count", async () => {
     content: "Extra.",
     status: "done",
     runId: "run_extra",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   await sleep(settleMs);
@@ -408,7 +411,7 @@ test("user message resets trigger count", async () => {
     content: "Done with new task.",
     status: "done",
     runId: "run_after_reset",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   await sleep(settleMs);
@@ -454,7 +457,7 @@ test("isChannelTrulyIdle returns false when another agent is running", async () 
     content: "Tests pass.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -495,7 +498,7 @@ test("isChannelTrulyIdle returns false when runs are queued", async () => {
     content: "Done.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -535,7 +538,7 @@ test("supervisor not idle → skip trigger", async () => {
     content: "Done.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -576,7 +579,7 @@ test("debounce coalesces rapid triggers", async () => {
     content: "Part 1 done.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -593,7 +596,7 @@ test("debounce coalesces rapid triggers", async () => {
     content: "Part 2 done.",
     status: "done",
     runId: "run_2",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -634,7 +637,7 @@ test("supervisor completing does not trigger itself (self-trigger prevention)", 
     content: "All tasks are complete.",
     status: "done",
     runId: "run_supervisor_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -679,7 +682,7 @@ test("trigger count caps at MAX_TRIGGERS and final prompt indicates last", async
       content: "Done.",
       status: "done",
       runId: `run_${i}`,
-      runStatus: "completed",
+      runStatus: "completed", interactionMode: "supervised",
     });
 
     await sleep(settleMs);
@@ -728,7 +731,7 @@ test("dispose cleans up subscriptions", async () => {
     content: "Done after dispose.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -916,7 +919,7 @@ test("hasAssignmentMarker only matches known agent IDs — @agent: reference tex
     content: "The @agent: convention is used for assigning work to specific agents.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -961,7 +964,7 @@ test("custom display names suppress supervisor follow-up assignments", async () 
     content: "已完成基础实现，@田小坑: 请继续检查边界条件。",
     status: "done",
     runId: "run_custom_name",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -1000,7 +1003,7 @@ test("suppressed run.completed (suppressFollowupRouting=true) does NOT trigger s
     content: "Done implementing. Need review.",
     status: "done",
     runId: "run_suppressed",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -1042,7 +1045,7 @@ test("hasAssignmentMarker matches @user: as known ID — @user: in reply suppres
     content: "@user: Login feature is complete. All tasks done.",
     status: "done",
     runId: "run_sup",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -1210,6 +1213,181 @@ function sleep(ms: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 三种交互模式：只有 supervised 模式快照的消息才触发监工
+// ---------------------------------------------------------------------------
+
+test("unassigned user message in collaborative or direct mode does NOT trigger supervisor", async () => {
+  for (const mode of ["collaborative", "direct"] as const) {
+    const eventBus = new EventBus();
+    const messages = new MessageStore();
+    const { agentRegistry, runManager, enqueueCalls } = createMocks({
+      agentStatuses: { supervisor: "idle", dev: "idle" },
+    });
+    const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+    const service = new ChannelWatchService("conv-1", agentRegistry as any, runManager as any, messages, eventBus, profiles);
+
+    eventBus.publish({
+      type: "message.created",
+      conversationId: "conv-1",
+      message: createUserMessage("Build a login feature.", mode),
+    });
+
+    assert.equal(enqueueCalls.length, 0, `${mode} unassigned message must not trigger the supervisor`);
+    service.dispose();
+  }
+});
+
+test("agent completion in a collaborative or direct chain does NOT trigger supervisor", async () => {
+  for (const mode of ["collaborative", "direct"] as const) {
+    const eventBus = new EventBus();
+    const messages = new MessageStore();
+    const { agentRegistry, runManager, enqueueCalls } = createMocks({
+      agentStatuses: { supervisor: "idle", dev: "idle" },
+    });
+    const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+    const service = new ChannelWatchService("conv-1", agentRegistry as any, runManager as any, messages, eventBus, profiles);
+
+    const reply = messages.add({
+      kind: "agent",
+      agentId: "dev",
+      content: "Done implementing.",
+      status: "done",
+      runId: `run_${mode}`,
+      runStatus: "completed",
+      interactionMode: mode,
+    });
+
+    eventBus.publish({
+      type: "run.completed",
+      conversationId: "conv-1",
+      agentId: "dev",
+      runId: `run_${mode}`,
+      resultMessageId: reply.id,
+    });
+
+    assert.equal(enqueueCalls.length, 0, `${mode} completion must not trigger the supervisor`);
+    service.dispose();
+  }
+});
+
+test("blocked message in a collaborative chain does NOT trigger supervisor", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", dev: "idle" },
+  });
+  const profiles = [makeSupervisorProfile("supervisor"), makePlainAgentProfile("dev")];
+  const service = new ChannelWatchService("conv-1", agentRegistry as any, runManager as any, messages, eventBus, profiles);
+
+  eventBus.publish({
+    type: "message.updated",
+    conversationId: "conv-1",
+    message: createBlockedMessage("dev", "collaborative"),
+  });
+
+  assert.equal(enqueueCalls.length, 0);
+  service.dispose();
+});
+
+test("run.failed in a non-supervised chain does NOT trigger supervisor recovery", async () => {
+  const eventBus = new EventBus();
+  const messages = new MessageStore();
+  const { agentRegistry, runManager, enqueueCalls } = createMocks({
+    agentStatuses: { supervisor: "idle", developer: "error" },
+  });
+  const supervisorProfile: AgentProfile = {
+    id: "supervisor",
+    name: "Supervisor",
+    runtime: "claude-code",
+    cwd: "/tmp",
+    systemPrompt: "You are a supervisor.",
+    triggers: { onRunFailed: true },
+  };
+  const profiles = [supervisorProfile, makePlainAgentProfile("developer")];
+  const service = new ChannelWatchService("conv-1", agentRegistry as any, runManager as any, messages, eventBus, profiles);
+
+  // 失败消息的模式快照是 collaborative：不触发监工恢复
+  const failedRun = messages.add({
+    kind: "agent",
+    agentId: "developer",
+    content: "developer failed",
+    status: "error",
+    runId: "run_collab_fail",
+    runStatus: "failed",
+    interactionMode: "collaborative",
+  });
+
+  eventBus.publish({
+    type: "run.failed",
+    conversationId: "conv-1",
+    agentId: "developer",
+    runId: "run_collab_fail",
+    error: "boom",
+    interactionMode: "collaborative",
+  });
+
+  assert.equal(enqueueCalls.length, 0);
+  assert.ok(failedRun);
+  service.dispose();
+});
+
+test("run.failed event payload fallback triggers recovery only for supervised snapshot", async () => {
+  const supervisorProfile: AgentProfile = {
+    id: "supervisor",
+    name: "Supervisor",
+    runtime: "claude-code",
+    cwd: "/tmp",
+    systemPrompt: "You are a supervisor.",
+    triggers: { onRunFailed: true },
+  };
+  const profiles = [supervisorProfile, makePlainAgentProfile("developer")];
+
+  // 消息不可查（未持久化）时使用事件负载中的模式快照：supervised 触发恢复
+  const supervisedCase = createMocks({ agentStatuses: { supervisor: "idle", developer: "error" } });
+  const supervisedBus = new EventBus();
+  const supervisedService = new ChannelWatchService(
+    "conv-1",
+    supervisedCase.agentRegistry as any,
+    supervisedCase.runManager as any,
+    new MessageStore(),
+    supervisedBus,
+    profiles,
+  );
+  supervisedBus.publish({
+    type: "run.failed",
+    conversationId: "conv-1",
+    agentId: "developer",
+    runId: "run_missing_message",
+    error: "boom",
+    interactionMode: "supervised",
+  });
+  assert.equal(supervisedCase.enqueueCalls.length, 1, "supervised snapshot in the event payload should trigger recovery");
+  supervisedService.dispose();
+
+  // collaborative 快照不触发（独立服务实例，避免 debounce 干扰断言）
+  const collaborativeCase = createMocks({ agentStatuses: { supervisor: "idle", developer: "error" } });
+  const collaborativeBus = new EventBus();
+  const collaborativeService = new ChannelWatchService(
+    "conv-1",
+    collaborativeCase.agentRegistry as any,
+    collaborativeCase.runManager as any,
+    new MessageStore(),
+    collaborativeBus,
+    profiles,
+  );
+  collaborativeBus.publish({
+    type: "run.failed",
+    conversationId: "conv-1",
+    agentId: "developer",
+    runId: "run_missing_message_2",
+    error: "boom",
+    interactionMode: "collaborative",
+  });
+  assert.equal(collaborativeCase.enqueueCalls.length, 0, "collaborative snapshot must not trigger recovery");
+  collaborativeService.dispose();
+});
+
+// ---------------------------------------------------------------------------
 // Issue #80: @user: from non-supervisor should NOT suppress supervisor trigger
 // ---------------------------------------------------------------------------
 
@@ -1239,7 +1417,7 @@ test("Issue #80: agent reply with @user: should NOT suppress supervisor trigger"
     content: "I've implemented the feature. I'll let @user: know about the completion.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -1282,7 +1460,7 @@ test("supervisor's own @user: should suppress further supervisor triggers", asyn
     content: "@user: All tasks are complete. The feature has been implemented and tested.",
     status: "done",
     runId: "run_1",
-    runStatus: "completed",
+    runStatus: "completed", interactionMode: "supervised",
   });
 
   eventBus.publish({
@@ -1339,7 +1517,7 @@ test("Issue #82: run.failed triggers supervisor with onRunFailed configured", as
     content: "developer failed",
     status: "error",
     runId: "run_1",
-    runStatus: "failed",
+    runStatus: "failed", interactionMode: "supervised",
     parentMessageId: source.id,
     completedAt: new Date().toISOString(),
   });

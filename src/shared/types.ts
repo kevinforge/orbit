@@ -2,7 +2,14 @@ export type AgentId = string;
 
 export type ApprovalMode = "ask" | "full-access";
 
-export type SupervisionMode = "off" | "on";
+/** 会话交互模式：普通对话 / 简单协作 / 复杂协作（内置监工）。 */
+export type InteractionMode = "direct" | "collaborative" | "supervised";
+
+export const INTERACTION_MODES: readonly InteractionMode[] = ["direct", "collaborative", "supervised"];
+
+export function isInteractionMode(value: unknown): value is InteractionMode {
+  return value === "direct" || value === "collaborative" || value === "supervised";
+}
 
 export type PermissionDecision = "allow" | "reject";
 
@@ -204,6 +211,8 @@ export type ChatMessage = {
   parentMessageId?: string;
   routeState?: MessageRouteState;
   routeDepth?: number;
+  /** 模式快照：用户消息在发送时记录当轮 interaction mode，派生运行/转交/监工检查继承该值。 */
+  interactionMode?: InteractionMode;
   activity?: AgentActivityEvent[];
   startedAt?: string;
   completedAt?: string;
@@ -309,7 +318,7 @@ export type RuntimeEvent =
   | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "terminal.chunk"; conversationId: string; agentId: AgentId; runId?: string; text: string }
   | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string; suppressFollowupRouting?: boolean }
-  | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string }
+  | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string; interactionMode?: InteractionMode }
   | { type: "run.cancelled"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
   | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
   | { type: "permission.requested"; conversationId: string; permission: PendingPermission }
@@ -336,7 +345,10 @@ export type Workspace = WorkspaceInfo & {
 export type ConversationInfo = {
   id: string;
   name: string;
-  supervisionMode?: SupervisionMode;
+  interactionMode?: InteractionMode;
+  /** 普通对话模式下最近一位直接对话员工；切换到其他模式不清除，切回后继续。 */
+  lastDirectAgentId?: AgentId;
+  /** 内部字段：复杂协作（监工）使用的运行时，不对用户展示、不可由用户直接配置。 */
   supervisionRuntime?: AgentRuntimeKind;
 };
 

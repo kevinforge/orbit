@@ -50,7 +50,8 @@ Orbit requires Node.js 22 or newer and at least one supported runtime:
 
 ## Features
 
-- One built-in software development team template with four configurable digital employees; collaboration supervision is enabled per conversation and is not a user-configured employee
+- Three built-in interaction modes for every team: direct conversation, lightweight collaboration, and supervised collaboration with an internal supervisor
+- One built-in software development team template with four configurable digital employees, plus support for custom teams
 - Custom digital employee creation and configuration via UI
 - Per-message approval modes: ask before ACP tool operations or auto-approve them for the current task
 - Workspace templates for blank or multi-employee collaboration setups

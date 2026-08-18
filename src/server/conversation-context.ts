@@ -16,17 +16,23 @@ import {
   type AgentId,
   type AgentProfile,
   type GlobalRuntimeConfig,
+  type InteractionMode,
   type PendingElicitation,
   type PendingPermission,
   type PermissionDecision,
   type WorkspaceRuntimeConfig,
   type AgentRuntimeKind,
-  type ConversationInfo,
 } from "../shared/types.ts";
 import { DEFAULT_WORKSPACE_CONFIG, DEFAULT_GLOBAL_CONFIG } from "../shared/types.ts";
 import { createSupervisorProfile, INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 
 const MAX_ROUTE_DEPTH = 10;
+
+export type ConversationContextPatch = {
+  interactionMode?: InteractionMode;
+  supervisionRuntime?: AgentRuntimeKind | null;
+  lastDirectAgentId?: AgentId;
+};
 
 export type ConversationContextOptions = {
   workspaceId: string;
@@ -37,8 +43,11 @@ export type ConversationContextOptions = {
   workspaceStore: WorkspaceStore;
   workspaceConfig?: WorkspaceRuntimeConfig;
   globalConfig?: GlobalRuntimeConfig;
-  supervisionMode?: ConversationInfo["supervisionMode"];
+  interactionMode?: InteractionMode;
   supervisionRuntime?: AgentRuntimeKind;
+  lastDirectAgentId?: AgentId;
+  /** 会话记录变更回调（如普通对话目标员工变化），由服务层负责持久化。 */
+  onConversationPatch?: (patch: ConversationContextPatch) => void;
 };
 
 export class ConversationContext {
@@ -52,7 +61,8 @@ export class ConversationContext {
   private _profiles: readonly AgentProfile[];
   private _workspaceConfig: WorkspaceRuntimeConfig;
   private _globalConfig: GlobalRuntimeConfig;
-  private _supervisionMode: ConversationInfo["supervisionMode"];
+  private _interactionMode: InteractionMode;
+  private _lastDirectAgentId?: AgentId;
   private _supervisionRuntime?: AgentRuntimeKind;
   private readonly eventBus: EventBus;
   private readonly unsubscribe: () => void;
@@ -63,7 +73,8 @@ export class ConversationContext {
     // can update it at runtime without recreating the context.
     this._workspaceConfig = options.workspaceConfig ?? structuredClone(DEFAULT_WORKSPACE_CONFIG);
     this._globalConfig = options.globalConfig ?? structuredClone(DEFAULT_GLOBAL_CONFIG);
-    this._supervisionMode = options.supervisionMode ?? "off";
+    this._interactionMode = options.interactionMode ?? "collaborative";
+    this._lastDirectAgentId = options.lastDirectAgentId;
     this._supervisionRuntime = options.supervisionRuntime;
     this._profiles = profiles.filter((profile) => !profile.internal);
     this.eventBus = eventBus;
@@ -108,19 +119,8 @@ export class ConversationContext {
       agents: this.agents,
       messages: this.messages,
       eventBus,
-      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
-        const history = buildHistoryForAgent(agentId, self.messages.list(), {
-          excludeMessageId: sourceMessageId,
-          ...(agentId === INTERNAL_SUPERVISOR_ID ? { maxTurns: SUPERVISOR_HISTORY_TURNS } : {}),
-        });
-        return buildAgentContext({
-          agentId,
-          profiles: agentId === INTERNAL_SUPERVISOR_ID ? self.channelProfiles() : self._profiles,
-          agentMessage: prompt,
-          history,
-          workspaceConfig: self._workspaceConfig,
-        });
-      },
+      buildPrompt: (agentId, prompt, sourceMessageId, imagePaths, interactionMode) =>
+        self.buildRuntimePrompt(agentId, prompt, sourceMessageId, imagePaths, interactionMode),
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
       },
@@ -188,19 +188,8 @@ export class ConversationContext {
       agents: newAgents,
       messages: this.messages,
       eventBus,
-      buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => {
-        const history = buildHistoryForAgent(agentId, self.messages.list(), {
-          excludeMessageId: sourceMessageId,
-          ...(agentId === INTERNAL_SUPERVISOR_ID ? { maxTurns: SUPERVISOR_HISTORY_TURNS } : {}),
-        });
-        return buildAgentContext({
-          agentId,
-          profiles: agentId === INTERNAL_SUPERVISOR_ID ? self.channelProfiles() : self._profiles,
-          agentMessage: prompt,
-          history,
-          workspaceConfig: self._workspaceConfig,
-        });
-      },
+      buildPrompt: (agentId, prompt, sourceMessageId, imagePaths, interactionMode) =>
+        self.buildRuntimePrompt(agentId, prompt, sourceMessageId, imagePaths, interactionMode),
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
       },
@@ -227,34 +216,75 @@ export class ConversationContext {
     });
   }
 
-  supervisionMode(): ConversationInfo["supervisionMode"] {
-    return this._supervisionMode;
+  interactionMode(): InteractionMode {
+    return this._interactionMode;
+  }
+
+  lastDirectAgentId(): AgentId | undefined {
+    return this._lastDirectAgentId;
   }
 
   supervisionRuntime(): AgentRuntimeKind | undefined {
     return this._supervisionRuntime;
   }
 
-  setSupervisionMode(mode: ConversationInfo["supervisionMode"], runtime?: AgentRuntimeKind): void {
-    if (mode === "on") {
+  /**
+   * 切换会话交互模式。只影响下一条用户消息：运行中/排队任务及其后续链沿用
+   * 各自的模式快照，不因切换而取消或改变行为。
+   *
+   * 监工策略：一旦设置过 supervisionRuntime，监工会话保持注册——切换到普通/
+   * 简单协作不删除其持久化 session（再次开启复杂协作时原样恢复），且仍在执行
+   * 的复杂协作链完成时仍可触发监工收尾（由 ChannelWatch 按消息模式快照门控）。
+   */
+  setInteractionMode(mode: InteractionMode, runtime?: AgentRuntimeKind): void {
+    if (mode === "supervised") {
       const selectedRuntime = runtime ?? this._supervisionRuntime;
-      if (!selectedRuntime) throw new Error("A runtime is required to enable collaboration supervision.");
-      const needsSupervisorReset = !this.agents.has(INTERNAL_SUPERVISOR_ID)
-        || this._supervisionMode !== "on"
-        || this._supervisionRuntime !== selectedRuntime;
-      if (needsSupervisorReset) {
+      if (!selectedRuntime) throw new Error("A runtime is required to enable supervised collaboration.");
+      // 切换监工 runtime 是对监工自身的重建操作：取消其排队/运行中的检查。
+      if (!this.agents.has(INTERNAL_SUPERVISOR_ID) || this._supervisionRuntime !== selectedRuntime) {
         this.runManager.cancelAgentRuns(INTERNAL_SUPERVISOR_ID);
         this.agents.remove(INTERNAL_SUPERVISOR_ID);
         this.agents.add(createSupervisorProfile(this.cwd(), selectedRuntime));
       }
       this._supervisionRuntime = selectedRuntime;
-    } else {
-      this.runManager.cancelAgentRuns(INTERNAL_SUPERVISOR_ID);
-      this.agents.remove(INTERNAL_SUPERVISOR_ID);
-      this._supervisionRuntime = undefined;
     }
-    this._supervisionMode = mode;
+    // direct/collaborative：保留监工注册与 runtime 记录（不取消其运行、不清 session）。
+    this._interactionMode = mode;
+    this.options.onConversationPatch?.({
+      interactionMode: mode,
+      ...(mode === "supervised" && this._supervisionRuntime
+        ? { supervisionRuntime: this._supervisionRuntime }
+        : {}),
+    });
     this.rebuildCoordinationLayer();
+  }
+
+  private buildRuntimePrompt(
+    agentId: AgentId,
+    prompt: string,
+    sourceMessageId?: string,
+    imagePaths?: string[],
+    interactionMode?: InteractionMode,
+  ): string {
+    const history = buildHistoryForAgent(agentId, this.messages.list(), {
+      excludeMessageId: sourceMessageId,
+      ...(agentId === INTERNAL_SUPERVISOR_ID ? { maxTurns: SUPERVISOR_HISTORY_TURNS } : {}),
+    });
+    return buildAgentContext({
+      agentId,
+      profiles: agentId === INTERNAL_SUPERVISOR_ID ? this.channelProfiles() : this._profiles,
+      agentMessage: prompt,
+      // 运行继承源消息的模式快照；缺失时回退当前模式。
+      interactionMode: interactionMode ?? this._interactionMode,
+      history,
+      workspaceConfig: this._workspaceConfig,
+    });
+  }
+
+  private handleLastDirectAgentChange(agentId: AgentId): void {
+    if (this._lastDirectAgentId === agentId) return;
+    this._lastDirectAgentId = agentId;
+    this.options.onConversationPatch?.({ lastDirectAgentId: agentId });
   }
 
   private cwd(): string {
@@ -263,7 +293,9 @@ export class ConversationContext {
 
   private buildActiveProfiles(profiles: readonly AgentProfile[]): AgentProfile[] {
     const normalProfiles = profiles.filter((profile) => !profile.internal);
-    if (this._supervisionMode !== "on" || !this._supervisionRuntime) return [...normalProfiles];
+    // 监工注册条件是"设置过 supervisionRuntime"而非当前模式：切换到普通/简单协作
+    // 后，仍在执行的复杂协作链仍可能需要监工检查，且其 session 需要保持可恢复。
+    if (!this._supervisionRuntime) return [...normalProfiles];
     return [...normalProfiles, createSupervisorProfile(this.cwdFrom(profiles), this._supervisionRuntime)];
   }
 
@@ -272,7 +304,7 @@ export class ConversationContext {
   }
 
   private channelProfiles(profiles = this._profiles): AgentProfile[] {
-    if (this._supervisionMode !== "on" || !this._supervisionRuntime) return [...profiles];
+    if (!this._supervisionRuntime) return [...profiles];
     return profiles.some((profile) => profile.id === INTERNAL_SUPERVISOR_ID)
       ? [...profiles]
       : [...profiles, createSupervisorProfile(this.cwdFrom(profiles), this._supervisionRuntime)];
@@ -297,7 +329,9 @@ export class ConversationContext {
     return new MessageRouter({
       availableAgents: _profiles.filter((profile) => !profile.internal),
       maxRouteDepth: MAX_ROUTE_DEPTH,
-      hasActiveSupervisor: this._supervisionMode === "on",
+      getInteractionMode: () => this._interactionMode,
+      getLastDirectAgentId: () => this._lastDirectAgentId,
+      setLastDirectAgentId: (agentId) => this.handleLastDirectAgentChange(agentId),
       createSystemMessage: (content, parentMessageId) => {
         const msg = self.messages.add({ kind: "system", content, status: "done", parentMessageId });
         self.eventBus.publish({ type: "message.created", conversationId: self.options.conversationId, message: msg });

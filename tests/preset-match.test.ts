@@ -33,6 +33,6 @@ test("partial match (same prompt, different rules) returns null", () => {
   const presets = getWorkspacePresets();
   const dev = presets.find((p) => p.id === PRESET_IDS.softwareDevelopment);
   assert.ok(dev);
-  const result = matchPreset(dev.systemPrompt, [], presets);
+  const result = matchPreset(dev.systemPrompt, ["不同的自定义规则"], presets);
   assert.equal(result, null);
 });

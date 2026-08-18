@@ -3,6 +3,7 @@ import type {
   AgentId,
   ApprovalMode,
   ChatMessage,
+  InteractionMode,
   MessageAttachment,
   NewChatMessage,
   RunResult,
@@ -41,6 +42,8 @@ export type ManagedRun = {
   suppressFollowupRouting?: boolean;
   /** Who initiated this run: a user message, an agent's @mention, or the supervisor. */
   origin?: RunOrigin;
+  /** 模式快照：继承自源消息，决定提示词规则与完成后的路由/监工行为，不受执行中切换全局模式影响。 */
+  interactionMode?: InteractionMode;
   /** Image attachments from the source message, passed to the runtime. */
   sourceAttachments?: MessageAttachment[];
 };
@@ -50,7 +53,7 @@ export type RunManagerOptions = {
   agents: AgentRunner;
   messages: MessageStore;
   eventBus: EventBus;
-  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => string;
+  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[], interactionMode?: InteractionMode) => string;
   onRunCompleted: (message: ChatMessage) => void;
   /** Resolves a user-facing display name for an agent id (defaults to the raw id). */
   getAgentLabel?: (agentId: AgentId) => string;
@@ -124,6 +127,7 @@ export class RunManager {
       status: "running",
       parentMessageId: sourceMessage.id,
       routeDepth,
+      interactionMode: sourceMessage.interactionMode,
       activity,
       approvalMode: sourceMessage.approvalMode ?? "ask",
     } satisfies NewChatMessage);
@@ -140,6 +144,7 @@ export class RunManager {
       startedAt: isBusy ? undefined : now,
       activity,
       origin: resolvedOrigin,
+      interactionMode: sourceMessage.interactionMode,
       sourceAttachments: sourceMessage.attachments?.length ? sourceMessage.attachments : undefined,
     };
     this.runs.set(run.id, run);
@@ -288,7 +293,7 @@ export class RunManager {
     // Keep that source message in conversation history so the supervisor can see the
     // employee result or user request it is expected to coordinate.
     const excludedSourceMessageId = run.origin === "supervisor" ? undefined : run.sourceMessage.id;
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths);
+    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths, run.interactionMode);
     let result: Promise<RunResult>;
     try {
       result = this.options.agents.get(run.agentId).send(
@@ -375,7 +380,7 @@ export class RunManager {
       startedAt: run.startedAt,
     });
     this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
-    this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary });
+    this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary, interactionMode: run.interactionMode });
     this.startNext(run.agentId);
   }
 
