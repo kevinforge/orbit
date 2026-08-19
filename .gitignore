@@ -18,11 +18,6 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Local research notes (not for repo)
-coze-local-agent-groupchat-study.md
-loop-local-agent-study.md
-orbit-coze-loop-comparison.md
-
 # Local screenshots (not for repo)
 orbit-ui-*.png
 
