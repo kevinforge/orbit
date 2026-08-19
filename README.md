@@ -27,6 +27,19 @@ Client Protocol (ACP). Orbit owns the workspace, conversation history, routing,
 queues, approvals, session continuity, and UI; each vendor runtime remains
 responsible for its own model access and tool execution.
 
+## See it in action
+
+Orbit can turn one unassigned goal into a supervised multi-agent workflow:
+the supervisor decomposes the work, specialists investigate in parallel, a
+verification employee checks the deliverables, and the supervisor produces the
+final synthesis in the same conversation.
+
+![Orbit supervised multi-agent collaboration demo](assets/orbit-complex-collaboration-demo.gif)
+
+This demo was recorded from a real ACP/model run with Claude Code, Codex, and
+CodeBuddy in the `复杂协作` mode. The demonstration project is isolated from
+the Orbit source tree and contains no private workspace information.
+
 ## Why use it
 
 - **One conversation, several specialists.** Keep requirements, design,

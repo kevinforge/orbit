@@ -14,7 +14,7 @@ This is the canonical project instruction file. Codex loads it directly; `CLAUDE
 
 - `AGENTS.md` owns shared standing orders for every coding agent.
 - `CLAUDE.md` and `CODEBUDDY.md` are compatibility entry points that import this file. Do not maintain a second copy of shared rules there.
-- `.agents/README.md` explains the project-local agent workflow and future Skill or decision-record layout.
+- `.agents/README.md` explains the project-local agent workflow and Skill layout.
 - `docs/ARCHITECTURE.md` owns the current runtime map and detailed subsystem behavior; link to it instead of copying its module inventory into agent instructions.
 - `README.md` and `README.zh-CN.md` own product setup and user-facing quickstart material.
 - `docs/RELEASE_DECISIONS.md` owns release-specific decisions; do not put temporary release research in `AGENTS.md`.
@@ -31,7 +31,8 @@ tests/         behavior and integration tests
 scripts/       build, smoke, packaging, and release checks
 docs/          architecture, setup, data, terminology, and release references
 .agents/       agent instruction layout and project-local workflows
-.claude/       ignored local Claude Code state; never commit it
+.claude/       Claude Code adapters; only reviewed project Skills are tracked
+.codebuddy/    CodeBuddy adapters; only reviewed project Skills are tracked
 dist/          generated build output; never edit by hand
 ```
 
@@ -95,15 +96,16 @@ request or issue -> task branch -> local verification -> commit -> push -> draft
 - Put standing rules in this file, current architecture in `docs/ARCHITECTURE.md`, data layout in `docs/DATA_DIRECTORY.md`, public terms in `docs/TERMINOLOGY_AND_ROUTING.md`, and release decisions in `docs/RELEASE_DECISIONS.md`.
 - Keep durable prose in the repository's current-state voice. Do not narrate the coding session, review conversation, or temporary plan in a lasting instruction or architecture document.
 - When a rule is needed only for one subtree, add a scoped `AGENTS.md` at that subtree instead of enlarging this file.
-- Orbit does not currently define project-local Skills. If one is added, keep one canonical workflow source, document each host's discovery path in `.agents/README.md`, and use thin host adapters rather than duplicating the full workflow. A Skill must state when it applies, what evidence it requires, and where its detailed references live. Skills describe workflows; they do not replace source-code or product documentation.
+- Project-local Skills live canonically under `.agents/skills/<skill-name>/SKILL.md`. Codex can discover this project path. Claude Code and CodeBuddy use native `.claude/skills/` and `.codebuddy/skills/` paths, so their adapter entry points must load the canonical Skill instead of duplicating its body. A Skill must state when it applies, what evidence it requires, and where its detailed references live. Skills describe workflows; they do not replace source-code or product documentation.
 - If a change creates a durable architecture decision that is not adequately owned by an existing document, add a focused decision document under `docs/` and link it from the owning architecture or workflow page. Do not create a duplicate fact in this file.
 
 ## Claude Code, Codex, and CodeBuddy
 
 - Claude Code starts from `CLAUDE.md`, which imports this file with `@AGENTS.md`.
 - Codex starts from `AGENTS.md` and applies the nearest nested file for the target subtree.
-- CodeBuddy starts from `CODEBUDDY.md`, which imports this file with `@AGENTS.md`; its project-specific rules and Skills belong under `.codebuddy/` only when Orbit needs them.
+- CodeBuddy starts from `CODEBUDDY.md`, which imports this file with `@AGENTS.md`; its native project Skills belong under `.codebuddy/skills/` and must remain thin adapters.
 - These entry points share one source of truth. Add a tool-specific instruction only when that tool has a behavior the other two do not share, and keep it in the corresponding adapter file.
+- When a task matches a project Skill, read the canonical file under `.agents/skills/` before acting. Do not assume that a host's native Skill directory is automatically synchronized with `.agents/skills/`.
 - When changing a runtime adapter, verify the adapter's focused tests and the shared ACP tests. When changing agent prompts, routing, or user-visible output, verify the relevant message, routing, and UI behavior tests.
 
 ## Verification and handoff

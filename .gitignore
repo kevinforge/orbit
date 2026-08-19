@@ -2,8 +2,10 @@ node_modules/
 dist/
 output/
 .local/
-.claude/
+/.claude/*
+!/.claude/skills
 .playwright-mcp/
+.playwright-cli/
 .env
 .env.*
 *.log

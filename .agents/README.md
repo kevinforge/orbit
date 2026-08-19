@@ -4,4 +4,8 @@
 
 Add a nested `AGENTS.md` only when a subtree has rules that do not apply to the rest of the repository. A nested file supplements the nearest parent instructions and links back to the owning documents instead of repeating repository-wide rules.
 
-Orbit does not currently define project-local Skills. When one is introduced, keep one canonical workflow source, document the discovery paths for Claude Code, Codex, and CodeBuddy here, and add only thin host adapters where needed. A Skill is an actionable workflow with an explicit trigger, scope, verification evidence, and links to its detailed references. Product contracts and architecture decisions belong in source or `docs/`, not only in a Skill.
+Project-local Skills have one canonical source under `.agents/skills/<skill-name>/SKILL.md`. Codex can discover this project path. Claude Code and CodeBuddy use native `.claude/skills/` and `.codebuddy/skills/` paths, so their adapters must point agents to the canonical Skill rather than duplicate its body. A Skill is an actionable workflow with an explicit trigger, scope, verification evidence, and links to its detailed references. Product contracts and architecture decisions belong in source or `docs/`, not only in a Skill.
+
+Current Skill:
+
+- `record-browser-gif` — records and verifies truthful Orbit browser demos for the README, documentation, release notes, and GUI pull requests.
