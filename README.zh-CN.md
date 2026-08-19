@@ -20,6 +20,14 @@ Orbit 可以把一个本地项目目录变成一个数字员工协作工作台�
 
 员工通过 Agent Client Protocol（ACP）连接 Claude Code、Codex 或 CodeBuddy。Orbit 负责工作区、会话历史、任务路由、任务队列、审批、会话连续性和 UI；具体的模型访问与工具执行仍由用户选择的运行时负责。
 
+## 实际协作演示
+
+Orbit 可以把一个未指定员工的目标交给内部监工，自动组织复杂协作：监工拆解任务，多个专业员工并行调研，核验员工复核交付物，最后由监工在同一会话中完成汇总。
+
+![Orbit 复杂协作演示](assets/orbit-complex-collaboration-demo.gif)
+
+该 GIF 来自一次真实的 ACP/模型运行，使用了 Claude Code、Codex 和 CodeBuddy 的数字员工，并开启“复杂协作”模式。演示工程与 Orbit 源码隔离，画面中不包含个人工作区信息。
+
 ## 为什么使用 Orbit
 
 - **一个会话，多个专业角色。** 需求、设计、实现和验证都在同一条可见的工作流中完成。
