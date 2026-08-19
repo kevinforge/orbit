@@ -1,181 +1,120 @@
-# Agent Workflow
+# AGENTS.md — Orbit project instructions
 
-This file defines the required workflow for any agent working in this repository.
+This is the canonical project instruction file. Codex loads it directly; `CLAUDE.md` and `CODEBUDDY.md` import it. Keep shared rules here and keep those adapter files thin.
 
-## Core Rule
+## Read before changing
 
-Do not work directly on `main`.
+- Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing runtime composition, ACP adapters, routing, persistence, or agent lifecycle behavior.
+- Read [docs/DATA_DIRECTORY.md](docs/DATA_DIRECTORY.md) before changing files under `~/.orbit`, workspace isolation, retention, sessions, messages, attachments, or transcripts.
+- Read [docs/TERMINOLOGY_AND_ROUTING.md](docs/TERMINOLOGY_AND_ROUTING.md) before changing user-visible product terms, `@agent:` routing, or collaboration modes.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for contributor workflow and release-sensitive verification.
+- Read the nearest nested `AGENTS.md` when one exists. A nested file adds rules for its subtree; it does not repeat root rules.
 
-Every change must go through:
+## Instruction ownership and references
+
+- `AGENTS.md` owns shared standing orders for every coding agent.
+- `CLAUDE.md` and `CODEBUDDY.md` are compatibility entry points that import this file. Do not maintain a second copy of shared rules there.
+- `.agents/README.md` explains the project-local agent workflow and future Skill or decision-record layout.
+- `docs/ARCHITECTURE.md` owns the current runtime map and detailed subsystem behavior; link to it instead of copying its module inventory into agent instructions.
+- `README.md` and `README.zh-CN.md` own product setup and user-facing quickstart material.
+- `docs/RELEASE_DECISIONS.md` owns release-specific decisions; do not put temporary release research in `AGENTS.md`.
+- Use relative Markdown links for repository references. Give each durable fact one home and link to that home from other files.
+
+## Repository layout
 
 ```text
-issue or request -> feature branch -> local verification -> commit -> push -> pull request -> CI -> human merge
+src/core/      shared runtime, routing, persistence, sessions, and digital employees
+src/server/    local HTTP server and SSE transport
+src/ui/        React user interface and presentation state
+src/shared/    shared runtime and API types
+tests/         behavior and integration tests
+scripts/       build, smoke, packaging, and release checks
+docs/          architecture, setup, data, terminology, and release references
+.agents/       agent instruction layout and project-local workflows
+.claude/       ignored local Claude Code state; never commit it
+dist/          generated build output; never edit by hand
 ```
 
-For the current private repository, branch protection may not be enforced by GitHub. Agents must still follow this process.
+Orbit is a local-first chat control surface that coordinates multiple digital employees through Claude Code ACP, Codex ACP, and CodeBuddy ACP. The product's digital employees are runtime data configured by Orbit; they are not the same thing as Claude Code, Codex, or CodeBuddy instruction files.
 
-## Think Before Coding
-
-Before writing or changing code, make sure you understand the task:
-
-- **State your assumptions.** If you are guessing about intent, data shapes, or behavior, say what you are assuming. If a guess could change the outcome, ask first.
-- **Surface tradeoffs.** If more than one approach is reasonable, name them and recommend one. If the request is harder or riskier than it looks, say so before starting.
-- **Push back when warranted.** If the request would break existing behavior, add complexity for no user gain, or contradict how Orbit works, flag it instead of silently complying.
-- **Stop and ask when something is unclear.** Naming what is confusing is more useful than plowing ahead and getting it wrong.
-
-## Engineering Principles
-
-Apply to every change, large or small.
-
-- **Smallest correct change.** Write the minimum code that solves the stated problem. No speculative features, no "flexibility" or configurability nobody asked for, no abstractions for single-use code, no error handling for impossible states. If 50 lines can replace 200, rewrite.
-- **Surgical edits.** Touch only what the task requires. Do not reformat, "improve," or refactor adjacent code that is not broken. Match the surrounding style even if you would write it differently. If you spot unrelated dead code, mention it — do not delete it. Clean up only the orphans your own change creates.
-- **Every changed line traces to the request.** If a line does not, it should not be in the diff.
-- **Reuse before you create.** Read the existing code first and reuse its utilities and patterns (see the module map in `CLAUDE.md`). Do not add a new helper, dependency, or convention when an existing one already fits.
-
-## Product Principles
-
-Orbit is a product people use, not just code that runs. Keep the user in mind.
-
-- **Lead with user value.** Be able to answer "what does the user gain?" for any change. If a change is purely internal, say so and confirm it is wanted before doing it.
-- **Never break the user's flow.** Orbit runs long agent tasks. Do not silently swallow errors, and never leave an agent stuck — queued forever, spinning, or with no feedback. Interruption, cancellation, and failure must always leave clear, recoverable state.
-- **Local-first is a promise.** Orbit runs on the user's machine and persists to `~/.orbit`. Treat data loss (messages, sessions, agent configs, workspace settings) as a serious bug. File writes must not corrupt on crash; respect the data-directory layout.
-- **Speak the user's language.** User-facing strings use the product's terms (数字员工, not internal jargon) and stay consistent across both UI languages (EN/ZH). Never leak internal codewords (`run`, `supervisor`, `routeState`, etc.) into messages the user sees.
-- **Flag UX cost.** If a change adds friction — an extra step, a new modal, a slower path — name that cost before implementing.
-
-## Start Of Task
-
-1. Read the user's request and identify the smallest useful scope.
-2. Inspect the current repository state:
+## Commands
 
 ```powershell
-git status --short --branch
-git branch --show-current
-```
-
-3. If already on a feature branch for the same request, continue there.
-4. If starting new work, create a branch from latest `main`:
-
-```powershell
-git checkout main
-git pull
-git checkout -b feature/short-description
-```
-
-Use these prefixes:
-
-- `feature/` for product changes
-- `fix/` for bugs
-- `refactor/` for internal restructuring
-- `docs/` for documentation-only changes
-
-## During Development
-
-- Keep changes scoped to the request.
-- Do not rewrite unrelated code.
-- Do not remove user changes.
-- Add or update tests for changed behavior where practical.
-- Update `README.md`, `README.zh-CN.md`, or `docs/ARCHITECTURE.md` when behavior, setup, or architecture changes.
-- Keep temporary research, screenshots, competitor analysis, and local notes out of the repository.
-
-## Verification
-
-Turn the task into a verifiable goal before coding:
-
-- **Bug:** write a test that reproduces it, then make it pass.
-- **Feature:** write tests for the expected behavior, then implement until they pass.
-- **Refactor:** confirm tests pass before and after.
-
-Strong success criteria let you work independently; "make it work" is not one. Then, before committing, run:
-
-```powershell
+npm install
+npm run dev
 npm run test
 npm run build
+npm run build:all
+npm run smoke:start
+npm run smoke:port-conflict
+npm run release:check
 ```
 
-If either fails, fix it before opening or updating a PR. Report exactly what passed and what did not — never mark a task done while a check fails or was skipped.
+Use `npm run test` and `npm run build` before claiming a change is complete. For focused iteration, run a specific test with `node --test --import tsx tests/<file>.test.ts`. Changes to startup, packaging, dependency metadata, release workflows, or public setup also require the additional checks listed in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Commit And Pull Request
+`npm run build` type-checks the source, builds the Vite UI, and creates the standalone binary. It writes generated output under `dist/`; do not edit that output by hand. See [docs/standalone-build.md](docs/standalone-build.md) for packaging details.
 
-After verification passes:
+## Scope and change discipline
 
-```powershell
-git add -A
-git commit -m "Short imperative message"
-git push -u origin <branch-name>
-```
+- Do not work directly on `main`. Respect the user's existing task branch; if it already matches the request, continue there and do not create or switch branches. Otherwise use a task branch, keep the diff scoped, and preserve unrelated user changes.
+- Use `feature/` for product changes, `fix/` for bugs, `refactor/` for internal restructuring, and `docs/` for documentation-only work; a host-created `codex/` branch is also valid when the agent environment requires it.
+- State assumptions before implementing non-trivial work. Surface tradeoffs and stop when an ambiguity could change the result.
+- Make the smallest correct change. Reuse existing utilities and patterns before adding helpers, dependencies, or abstractions.
+- Every changed line must serve the request. Do not reformat or clean up unrelated code.
+- Update tests when behavior changes. Update the owning README or architecture document when setup, behavior, or architecture changes.
+- Do not commit logs, screenshots, credentials, generated output, or machine-specific configuration.
 
-### Commit Message Rules
+## Product and runtime invariants
 
-- The first commit message line must be the real subject, for example:
-  `fix: allow agent handoff final answers (#38)`.
-- Never use routing markers or placeholders such as `@`, `@agent`, `@agent:`,
-  `wip`, or `temp` as the commit subject.
-- When using multiple `-m` flags, the first `-m` is the subject. Put the
-  detailed body in later `-m` flags only.
-- Before pushing, verify the latest subject:
+- Orbit must not silently break the user's flow. Cancellation, interruption, permission requests, runtime failure, and process shutdown must leave clear recoverable state.
+- Treat data under `~/.orbit` as user data. File writes must be atomic where the store already provides atomic replacement; migrations and retention must not discard active data.
+- Keep runtime adapters isolated behind the shared ACP runtime contract. Runtime-specific protocol or CLI behavior belongs in the corresponding adapter, not in routing or UI code.
+- All three runtimes use ACP v1 through newline-delimited JSON-RPC. Preserve the shared event mapping and keep backend-specific differences inside the adapter.
+- The message store is the durable conversation source for Orbit's UI. Runtime session restoration must not replace or rewrite the channel history.
+- Per-agent execution is serialized by `RunManager`. Do not introduce concurrent runs for one employee without updating the queue, lifecycle, persistence, and UI behavior together.
+- User-visible strings use Orbit's product terms consistently in English and Simplified Chinese. Do not expose internal names such as `run`, `supervisor`, or `routeState` in the UI.
+- Only `@display-name:` with a colon assigns work. Plain `@agent` text is a reference, not a route. Preserve the route-depth and self-assignment safeguards.
+- When changing the UI, use the existing CSS custom properties and keep styles in `src/ui/styles.css`; do not hardcode new colors or move UI styling into unrelated modules.
 
-```powershell
-git log -1 --format=%s
-```
+## GitHub workflow and permissions
 
-If the subject is wrong, fix it before pushing:
-
-```powershell
-git commit --amend -m "Correct imperative subject"
-```
-
-For a PR branch with several bad local commits, rewrite or squash them into
-clean commits before pushing. Do not leave commit headlines like `@`.
-
-Create a draft PR:
-
-```powershell
-gh pr create --draft --base main --head <branch-name> --title "Short title" --body "..."
-```
-
-The PR body must include:
-
-- what changed
-- how it was verified
-- any known limitations or follow-up work
-
-## CI And Review
-
-Agents may:
-
-- inspect CI status
-- inspect CI logs
-- push fixes to the same branch
-- mark the PR ready when implementation and verification are complete
-
-Agents must not:
-
-- merge a PR into `main`
-- force push to `main`
-- delete `main`
-- bypass CI
-- auto-merge without explicit user approval
-
-## Human Merge
-
-The user owns the final merge decision.
-
-Recommended merge method:
+The normal change path is:
 
 ```text
-Squash and merge
+request or issue -> task branch -> local verification -> commit -> push -> draft PR -> CI -> human merge
 ```
 
-After merge, the user or agent may clean up:
+- Agents may create issues, branches, commits, pushes, draft PRs, and CI fixes.
+- Agents must not merge into `main`, push directly to `main`, force-push, delete `main`, bypass CI, or enable auto-merge without explicit user approval.
+- The user owns the final merge decision; the recommended merge method is squash and merge.
+- Commit subjects must be real imperative summaries. Do not use `@`, `@agent`, `@agent:`, `wip`, or `temp` as the subject. Check the final subject with `git log -1 --format=%s` before pushing.
+- A PR body must state what changed, how it was verified, and known limitations or follow-up work.
 
-```powershell
-git checkout main
-git pull
-git branch -d <branch-name>
-```
+## Documentation and agent workflow
 
-## GitHub Automation Boundary
+- Put standing rules in this file, current architecture in `docs/ARCHITECTURE.md`, data layout in `docs/DATA_DIRECTORY.md`, public terms in `docs/TERMINOLOGY_AND_ROUTING.md`, and release decisions in `docs/RELEASE_DECISIONS.md`.
+- Keep durable prose in the repository's current-state voice. Do not narrate the coding session, review conversation, or temporary plan in a lasting instruction or architecture document.
+- When a rule is needed only for one subtree, add a scoped `AGENTS.md` at that subtree instead of enlarging this file.
+- Orbit does not currently define project-local Skills. If one is added, keep one canonical workflow source, document each host's discovery path in `.agents/README.md`, and use thin host adapters rather than duplicating the full workflow. A Skill must state when it applies, what evidence it requires, and where its detailed references live. Skills describe workflows; they do not replace source-code or product documentation.
+- If a change creates a durable architecture decision that is not adequately owned by an existing document, add a focused decision document under `docs/` and link it from the owning architecture or workflow page. Do not create a duplicate fact in this file.
 
-The current no-cost setup allows agents to automate issue, branch, commit, push, PR, and CI-fix workflows.
+## Claude Code, Codex, and CodeBuddy
 
-Automatic merge to `main` is intentionally disabled until the repository has enforced branch protection or the user explicitly changes this policy.
+- Claude Code starts from `CLAUDE.md`, which imports this file with `@AGENTS.md`.
+- Codex starts from `AGENTS.md` and applies the nearest nested file for the target subtree.
+- CodeBuddy starts from `CODEBUDDY.md`, which imports this file with `@AGENTS.md`; its project-specific rules and Skills belong under `.codebuddy/` only when Orbit needs them.
+- These entry points share one source of truth. Add a tool-specific instruction only when that tool has a behavior the other two do not share, and keep it in the corresponding adapter file.
+- When changing a runtime adapter, verify the adapter's focused tests and the shared ACP tests. When changing agent prompts, routing, or user-visible output, verify the relevant message, routing, and UI behavior tests.
+
+## Verification and handoff
+
+Before committing:
+
+1. Inspect `git status --short --branch` and confirm the branch and diff are scoped.
+2. Run the smallest relevant focused tests while iterating.
+3. Run `npm run test` and `npm run build` for the final change.
+4. Run the additional release or smoke checks required by the changed surface.
+5. Run `git diff --check` and inspect the final diff.
+6. Commit with a real imperative subject, push the task branch, and open a draft PR when the repository workflow requires one.
+
+Report exactly which checks ran, which were skipped, and any known limitation. Do not claim a check passed when it was not run.
