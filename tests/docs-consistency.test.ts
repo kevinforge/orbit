@@ -15,9 +15,33 @@ test("CLAUDE.md documents the current multi-runtime architecture", () => {
   assert.match(doc, /All three runtimes run as ACP v1 child processes/);
   assert.match(doc, /claude-agent-acp/);
   assert.match(doc, /codebuddy --acp/);
-  assert.doesNotMatch(doc, /CLI-backed digital employees/);
+  assert.match(doc, /sessions\/\{workspaceId\}\/\{runtime\}\/\{conversationId\}\/\{agentId\}\.json/);
+  assert.doesNotMatch(doc, /CLI-backed/);
+  assert.doesNotMatch(doc, /\{channelId\}/);
   assert.doesNotMatch(doc, /multiple Claude Code CLI agents/);
   assert.doesNotMatch(doc, /claude CLI \(stream-json\)/);
+});
+
+test("current-facing docs avoid CLI-backed wording and stale session paths", () => {
+  const currentDocs = [
+    "README.md",
+    "README.zh-CN.md",
+    "docs/QUICKSTART.md",
+    "docs/QUICKSTART.zh-CN.md",
+    "docs/TERMINOLOGY_AND_ROUTING.md",
+    "docs/ARCHITECTURE.md",
+    "docs/DATA_DIRECTORY.md",
+  ];
+
+  for (const relativePath of currentDocs) {
+    const doc = readRepoFile(relativePath);
+    assert.doesNotMatch(doc, /CLI-backed/, `${relativePath} still describes employees as CLI-backed`);
+    assert.doesNotMatch(doc, /CLI 后端/, `${relativePath} still describes employees as CLI 后端`);
+  }
+
+  const dataDirectory = readRepoFile("docs/DATA_DIRECTORY.md");
+  assert.match(dataDirectory, /sessions\/<workspace-id>\/<runtime>\/<conversation-id>\/<agent-id>\.json/);
+  assert.doesNotMatch(dataDirectory, /<channel-id>/);
 });
 
 test("CLAUDE.md keeps routing and startup verification guidance current", () => {

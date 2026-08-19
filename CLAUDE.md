@@ -224,7 +224,7 @@ Users can rename employees, edit prompts, add or remove employees (`PUT /api/age
 │   └── <attachmentId>.<ext>   (committed image attachments)
 ├── transcripts/{workspaceId}/{conversationId}/{agentId}/
 │   └── YYYY-MM-DD-<sequence>.log
-├── sessions/{workspaceId}/{runtime}/{channelId}/{conversationId}/{agentId}.json
+├── sessions/{workspaceId}/{runtime}/{conversationId}/{agentId}.json
 │   ({runtime} is claude-code | codex | codebuddy; stores ACP session ids and transport metadata)
 ├── tmp/attachments/{workspaceId}/{conversationId}/
 │   └── <draftId>.<ext>        (upload drafts pending send)

@@ -11,7 +11,7 @@ Use these terms in docs, issues, PRs, screenshots, and user-facing copy.
 - **Conversation**: a chat thread inside one workspace. Conversations can keep
   running digital employee work in the background while you view another
   conversation.
-- **Digital employee**: an enabled CLI-backed worker configured in Orbit. Each
+- **Digital employee**: an enabled worker configured in Orbit. Each
   digital employee has an internal id, a user-configurable display name, a
   runtime, a system prompt, and optional triggers.
 - **Runtime**: the command-line tool that powers a digital employee. Orbit

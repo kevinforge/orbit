@@ -33,7 +33,7 @@ The data directory is organized by data type and workspace id:
   conversations/<workspace-id>/<conversation-id>/messages/manifest.json
   conversations/<workspace-id>/<conversation-id>/messages/<YYYY-MM-DD>.ndjson
   conversations/<workspace-id>/<conversation-id>/attachments/<attachment-id>.<ext>
-  sessions/<workspace-id>/<runtime>/<channel-id>/<conversation-id>/<agent-id>.json
+  sessions/<workspace-id>/<runtime>/<conversation-id>/<agent-id>.json
   transcripts/<workspace-id>/<conversation-id>/<agent-id>/<YYYY-MM-DD>-<sequence>.log
   tmp/attachments/<workspace-id>/<conversation-id>/<draft-id>.<ext>
   last-active.json
