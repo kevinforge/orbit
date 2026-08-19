@@ -10,7 +10,7 @@ see [SUPPORT.md](./SUPPORT.md).
 
 ## Requirements
 
-- Node.js 20 or newer.
+- Node.js 22 or newer, as required by `package.json`.
 - npm from the active Node.js installation.
 - Bun for standalone binary builds. The GitHub release workflow currently uses
   the latest Bun available from `oven-sh/setup-bun`.

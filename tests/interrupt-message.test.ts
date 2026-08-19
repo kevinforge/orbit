@@ -62,8 +62,8 @@ describe("interrupt produces no system message (#70)", () => {
   });
 
   test("interrupt button tooltip is user-friendly", () => {
-    const tooltipMatch = appSource.match(/title="([^"]*停止[^"]*协作[^"]*)"/);
-    assert.ok(tooltipMatch, "Interrupt button must have a tooltip containing '停止' and '协作'");
+    const tooltipMatch = appSource.match(/title="([^"]*停止[^"]*任务[^"]*)"/);
+    assert.ok(tooltipMatch, "Interrupt button must have a tooltip containing '停止' and '任务'");
 
     const tooltip = tooltipMatch[1];
     const forbiddenTerms = ["run", "supervisor", "自动触发", "数字员工", "协作链", "指派"];
@@ -106,6 +106,31 @@ describe("interrupt produces no system message (#70)", () => {
     assert.ok(
       stylesSource.includes("interruptToast"),
       "styles.css must have .interruptToast styles",
+    );
+  });
+});
+
+describe("stop button surfaces while internal supervisor is running", () => {
+  test("hasRunningOrQueued accounts for messages with runStatus === 'running'", () => {
+    // 修复：监工（internal）被 AgentRegistry.states() 过滤，state.agents 不含监工。
+    // 新建会话第一条无 @ 消息只触发监工 → state.agents 全 idle、无 queued 消息，
+    // 旧逻辑 hasRunningOrQueued=false → 不渲染停止按钮。修复后必须通过 messages 上的
+    // runStatus==='running' 判定覆盖该场景。
+    assert.ok(
+      appSource.includes('m.runStatus === "running"'),
+      "App.tsx must check messages' runStatus === 'running' when computing hasRunningOrQueued",
+    );
+
+    // 同时保留对 queued 的判断（不能丢）
+    assert.ok(
+      appSource.includes('m.runStatus === "queued"'),
+      "App.tsx must still check messages' runStatus === 'queued'",
+    );
+
+    // hasRunningOrQueued 必须由 messages 上的 active run 计算（与 isAnyAgentRunning 取或）
+    assert.ok(
+      appSource.includes("hasRunningOrQueued"),
+      "App.tsx must still expose hasRunningOrQueued for the interrupt button gating",
     );
   });
 });

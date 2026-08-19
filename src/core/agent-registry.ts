@@ -1,48 +1,39 @@
-import type { AgentId, AgentProfile, AgentState } from "../shared/types.ts";
+import type { AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
 import { AgentSession } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
-import { claudeCodeRuntime } from "./claude-cli-runtime.ts";
-import { codexRuntime } from "./codex-cli-runtime.ts";
-import { codeBuddyRuntime } from "./codebuddy-cli-runtime.ts";
+import { DEFAULT_AGENT_RUNTIMES } from "./acp-runner-registry.ts";
 import { EventBus } from "./event-bus.ts";
 import type { SessionStore } from "./session-store.ts";
 
-const DEFAULT_RUNTIMES = new Map<AgentRuntime["kind"], AgentRuntime>([
-  [claudeCodeRuntime.kind, claudeCodeRuntime],
-  [codexRuntime.kind, codexRuntime],
-  [codeBuddyRuntime.kind, codeBuddyRuntime],
-]);
-
 export class AgentRegistry {
   private readonly sessions = new Map<AgentId, AgentSession>();
+  private profilesById: AgentProfile[];
 
   constructor(
-    private readonly profiles: readonly AgentProfile[],
-    eventBus: EventBus,
-    sessionStore: SessionStore,
-    conversationId: string,
-    runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_RUNTIMES,
+    profiles: readonly AgentProfile[],
+    private readonly eventBus: EventBus,
+    private readonly sessionStore: SessionStore,
+    private readonly conversationId: string,
+    private readonly runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_AGENT_RUNTIMES,
   ) {
+    this.profilesById = [...profiles];
     for (const profile of profiles) {
-      const runtime = runtimes.get(profile.runtime);
-      if (!runtime) {
-        throw new Error(`No runtime configured for ${profile.runtime}`);
-      }
-
-      this.sessions.set(
-        profile.id,
-        new AgentSession({
-          id: profile.id,
-          label: profile.name,
-          cwd: profile.cwd,
-          permissionProfile: profile.permissionProfile,
-          runtime,
-          eventBus,
-          sessionStore,
-          conversationId,
-        }),
-      );
+      this.createSession(profile);
     }
+  }
+
+  private createSession(profile: AgentProfile): void {
+    const runtime = this.runtimes.get(profile.runtime);
+    if (!runtime) throw new Error(`No runtime configured for ${profile.runtime}`);
+    this.sessions.set(profile.id, new AgentSession({
+      id: profile.id,
+      label: profile.name,
+      cwd: profile.cwd,
+      runtime,
+      eventBus: this.eventBus,
+      sessionStore: this.sessionStore,
+      conversationId: this.conversationId,
+    }));
   }
 
   startAll(): void {
@@ -64,19 +55,67 @@ export class AgentRegistry {
   }
 
   ids(): AgentId[] {
-    return this.profiles.map((profile) => profile.id);
+    return this.profilesById.filter((profile) => !profile.internal).map((profile) => profile.id);
+  }
+
+  allIds(): AgentId[] {
+    return this.profilesById.map((profile) => profile.id);
+  }
+
+  hasRunningAgent(): boolean {
+    return [...this.sessions.values()].some((session) => session.getStatus() === "running");
   }
 
   states(): AgentState[] {
-    return this.profiles.map((profile, index) => ({
+    return this.profilesById.filter((profile) => !profile.internal).map((profile, index) => ({
       id: profile.id,
       label: profile.name,
       runtime: profile.runtime,
-      role: profile.role,
       triggers: profile.triggers,
       status: this.get(profile.id).getStatus(),
       selected: index === 0,
     }));
+  }
+
+  add(profile: AgentProfile): void {
+    if (this.sessions.has(profile.id)) return;
+    this.profilesById.push(profile);
+    this.createSession(profile);
+    this.sessions.get(profile.id)?.start();
+  }
+
+  remove(agentId: AgentId): void {
+    const session = this.sessions.get(agentId);
+    if (!session) return;
+    session.stop();
+    this.sessions.delete(agentId);
+    this.profilesById = this.profilesById.filter((profile) => profile.id !== agentId);
+  }
+
+  pendingPermissions(): PendingPermission[] {
+    return [...this.sessions.values()].flatMap((session) => session.pendingPermissions());
+  }
+
+  pendingElicitations(): PendingElicitation[] {
+    return [...this.sessions.values()].flatMap((session) => session.pendingElicitations());
+  }
+
+  resolvePermission(requestId: string, decision: PermissionDecision): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.resolvePermission(requestId, decision)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  resolveElicitation(requestId: string, response: ElicitationResponse): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.resolveElicitation(requestId, response)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   stopAll(): void {

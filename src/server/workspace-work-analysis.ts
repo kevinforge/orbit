@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import type { AgentConfigStore } from "../core/agent-config-store.ts";
 import type { ConversationStore } from "../core/conversation-store.ts";
 import { MessageStore } from "../core/message-store.ts";
@@ -33,6 +34,9 @@ export function buildWorkspaceWorkAnalysis(options: {
   const agentLabels = new Map(
     options.agentConfigStore.load(options.workspaceId).map((config) => [config.id, config.name]),
   );
+  // The built-in supervisor is not stored in AgentConfigStore; expose its display
+  // name so work-analysis renders 监工 instead of falling back to the raw id.
+  agentLabels.set(INTERNAL_SUPERVISOR_ID, "监工");
 
   return buildWorkAnalysis({
     workspaceId: options.workspaceId,

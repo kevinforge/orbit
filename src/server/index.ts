@@ -6,7 +6,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { configsToProfiles } from "../core/agent-profiles.ts";
-import { AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
+import { disposeAcpConnectionPool } from "../core/acp-runtime.ts";
+import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
 import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { WorkspaceConfigStore } from "../core/workspace-config-store.ts";
@@ -21,7 +22,8 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { ConversationInfo, MessagePage, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import type { ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import { isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { ConversationContext } from "./conversation-context.ts";
@@ -35,7 +37,23 @@ const requestedPort = Number(process.env.ORBIT_PORT ?? DEFAULT_PORT);
 let activePort = requestedPort;
 const UNTITLED_CONVERSATION_NAME = "新会话";
 const EMPTY_WORKSPACE: WorkspaceInfo = { id: "", name: "", path: "" };
-const EMPTY_CONVERSATION: ConversationInfo = { id: "", name: "" };
+const EMPTY_CONVERSATION: ConversationInfo = { id: "", name: "", interactionMode: "collaborative" };
+
+function toActiveConversation(conversation: Conversation | {
+  id: string;
+  name: string;
+  interactionMode?: InteractionMode;
+  lastDirectAgentId?: ConversationInfo["lastDirectAgentId"];
+  supervisionRuntime?: ConversationInfo["supervisionRuntime"];
+}): ConversationInfo {
+  return {
+    id: conversation.id,
+    name: conversation.name,
+    interactionMode: conversation.interactionMode ?? "collaborative",
+    lastDirectAgentId: conversation.lastDirectAgentId,
+    supervisionRuntime: conversation.supervisionRuntime,
+  };
+}
 const execFileAsync = promisify(execFile);
 
 // --- Shared singletons ---
@@ -106,6 +124,7 @@ function runtimeAvailable(runtime: string): boolean {
 
 // Forward all events to SSE clients (single global subscriber)
 eventBus.subscribe((event) => {
+  if (event.type === "runtime.activity") return;
   sseHub.publish(event);
   // After agent.status events, push running.updated if summaries changed
   if (event.type === "agent.status") {
@@ -246,6 +265,7 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
   const profiles = configsToProfiles(enabledConfigs, ws!.path);
   const sessStore = new SessionStore(workspaceStore.sessionsDir(workspaceId));
   const workspaceConfig = workspaceConfigStore.load(workspaceId);
+  const conversation = conversationStore.get(workspaceId, conversationId);
   return new ConversationContext({
     workspaceId,
     conversationId,
@@ -255,6 +275,21 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
     workspaceStore,
     workspaceConfig,
     globalConfig: globalConfigStore.load(),
+    interactionMode: conversation?.interactionMode,
+    supervisionRuntime: conversation?.supervisionRuntime,
+    lastDirectAgentId: conversation?.lastDirectAgentId,
+    onConversationPatch: (patch) => {
+      try {
+        const store = workspaceId === activeWorkspaceId ? conversationStore : new ConversationStore();
+        const updated = store.update(workspaceId, conversationId, patch);
+        if (workspaceId === activeWorkspaceId && conversationId === activeConversationId) {
+          activeConversation = toActiveConversation(updated);
+          publishContextSwitched();
+        }
+      } catch {
+        // 持久化失败不阻断路由流程；模式仍在本会话上下文中生效
+      }
+    },
   });
 }
 
@@ -309,10 +344,10 @@ function initActiveContext(): void {
   }
 }
 
-function activateConversation(conversation: { id: string; name: string }, shouldTouchLastOpened = true): void {
+function activateConversation(conversation: Conversation, shouldTouchLastOpened = true): void {
   // No dispose of old context — it stays alive in the map for parallel execution
   activeConversationId = conversation.id;
-  activeConversation = { id: conversation.id, name: conversation.name };
+  activeConversation = toActiveConversation(conversation);
 
   // Issue #77: Only touch lastOpenedAt when creating a conversation or first opening it,
   // not when switching between existing conversations. This prevents the conversation
@@ -416,8 +451,6 @@ function currentAgentStates() {
       id: config.id,
       label: config.name,
       runtime: config.runtime,
-      role: config.role,
-      triggers: config.triggers,
       status: "idle" as const,
       selected: index === 0,
       runtimeAvailable: runtimeAvailable(config.runtime),
@@ -453,6 +486,8 @@ const server = http.createServer(async (req, res) => {
         terminal: ctx?.transcripts.all() ?? {},
         runningSummaries: buildRunningSummaries(),
         runtimeAvailability: getRuntimeAvailabilityArray(),
+        pendingPermissions: ctx?.pendingPermissions() ?? [],
+        pendingElicitations: ctx?.pendingElicitations() ?? [],
       });
       return;
     }
@@ -489,6 +524,42 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/messages") {
       await handlePostMessage(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/permissions/resolve") {
+      const input = (await readJson(req)) as { requestId?: unknown; decision?: unknown };
+      const requestId = typeof input.requestId === "string" ? input.requestId : "";
+      const decision = input.decision === "allow" || input.decision === "reject"
+        ? input.decision as PermissionDecision
+        : null;
+      if (!requestId || !decision) {
+        sendJson(res, 400, { ok: false, message: "A valid requestId and decision are required." });
+        return;
+      }
+      const ctx = getActiveContext();
+      if (!ctx?.resolvePermission(requestId, decision)) {
+        sendJson(res, 404, { ok: false, message: "Permission request is no longer pending." });
+        return;
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/elicitations/resolve") {
+      const input = await readJson(req);
+      const requestId = isRecord(input) && typeof input.requestId === "string" ? input.requestId : "";
+      const response = parseElicitationResponse(input);
+      if (!requestId || !response) {
+        sendJson(res, 400, { ok: false, message: "A valid requestId and elicitation response are required." });
+        return;
+      }
+      const ctx = getActiveContext();
+      if (!ctx?.resolveElicitation(requestId, response)) {
+        sendJson(res, 404, { ok: false, message: "Elicitation request is no longer pending." });
+        return;
+      }
+      sendJson(res, 200, { ok: true });
       return;
     }
 
@@ -671,6 +742,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/agent-teams") {
+      sendJson(res, 200, AGENT_TEAM_TEMPLATES);
+      return;
+    }
+
     if (req.method === "PUT" && url.pathname === "/api/agents") {
       await handlePutAgents(req, res);
       return;
@@ -687,6 +763,30 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       allConfigs = configStore.reset(activeWorkspaceId);
+      refreshEnabledAgents();
+      sendJson(res, 200, allConfigs);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/agents/apply-team") {
+      if (!activeWorkspaceId) {
+        sendJson(res, 409, { ok: false, message: "Create or select a workspace before applying a team." });
+        return;
+      }
+      const ctx = getActiveContext();
+      if (ctx?.hasRunningAgent()) {
+        sendJson(res, 409, { ok: false, message: "Cannot change the team while an agent is running." });
+        return;
+      }
+      const input = (await readJson(req)) as { teamId?: unknown };
+      const template = AGENT_TEAM_TEMPLATES.find((item) => item.id === input.teamId);
+      if (!template) {
+        sendJson(res, 400, { ok: false, message: "Unknown team template." });
+        return;
+      }
+      // 数字员工尽量使用本地实际可用的不同运行时（按 AGENT_RUNTIME_PRIORITY 轮流分配）。
+      allConfigs = initialAgentConfigsForWorkspacePreset(template.id, getRuntimeAvailabilityArray()) ?? [];
+      configStore.save(activeWorkspaceId, allConfigs);
       refreshEnabledAgents();
       sendJson(res, 200, allConfigs);
       return;
@@ -815,7 +915,12 @@ const server = http.createServer(async (req, res) => {
             systemPrompt: preset.systemPrompt,
             rules: preset.rules,
           });
-          configStore.save(ws.id, initialAgentConfigsForWorkspacePreset(preset.id, getRuntimeAvailabilityArray()));
+          // 预置数字员工团队：仅当模板关联了团队时写入；空白工作区不写 agents.json，
+          // 加载时回落到全禁用的默认配置，即"没有数字员工"。
+          const agentConfigs = initialAgentConfigsForWorkspacePreset(preset.id, getRuntimeAvailabilityArray());
+          if (agentConfigs) {
+            configStore.save(ws.id, agentConfigs);
+          }
         }
         sendJson(res, 200, ws);
       } catch (error) {
@@ -935,6 +1040,41 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "PUT" && url.pathname.startsWith("/api/conversations/") && url.pathname.endsWith("/interaction-mode")) {
+      const parts = url.pathname.split("/");
+      const convId = parts[3];
+      if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
+      if (convId !== activeConversationId || !activeWorkspaceId) {
+        sendJson(res, 409, { ok: false, message: "Only the active conversation can change the interaction mode." });
+        return;
+      }
+      const input = (await readJson(req)) as { mode?: unknown; runtime?: unknown };
+      if (!isInteractionMode(input.mode)) {
+        sendJson(res, 400, { ok: false, message: "A valid interaction mode (direct | collaborative | supervised) is required." });
+        return;
+      }
+      const mode = input.mode;
+      const ctx = getActiveContext();
+      if (!ctx) { sendJson(res, 409, { ok: false, message: "No active conversation context." }); return; }
+      try {
+        const current = conversationStore.get(activeWorkspaceId, activeConversationId);
+        if (!current) throw new Error("Conversation not found.");
+        const runtime = typeof input.runtime === "string" ? input.runtime as import("../shared/types.ts").AgentRuntimeKind : current.supervisionRuntime;
+        if (mode === "supervised" && (!runtime || !runtimeAvailable(runtimeKindToCliKey(runtime)))) {
+          sendJson(res, 409, { ok: false, message: "Choose an available runtime before enabling supervised collaboration." });
+          return;
+        }
+        // setInteractionMode 通过 onConversationPatch 持久化并广播 context.switched
+        ctx.setInteractionMode(mode, runtime);
+        const updated = conversationStore.get(activeWorkspaceId, activeConversationId) ?? current;
+        activeConversation = toActiveConversation(updated);
+        sendJson(res, 200, { ok: true, conversation: updated });
+      } catch (error) {
+        sendJson(res, 409, { ok: false, message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+
     if (req.method === "PUT" && url.pathname.startsWith("/api/conversations/")) {
       const parts = url.pathname.split("/");
       const convId = parts[3];
@@ -947,7 +1087,7 @@ const server = http.createServer(async (req, res) => {
         const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
         const conv = store.update(wsId, convId, { name });
         if (convId === activeConversationId && wsId === activeWorkspaceId) {
-          activeConversation = { id: conv.id, name: conv.name };
+          activeConversation = toActiveConversation(conv);
           publishContextSwitched();
         }
         sendJson(res, 200, conv);
@@ -1151,8 +1291,10 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   const input = (await readJson(req)) as {
     content?: unknown;
     draftAttachments?: unknown;
+    approvalMode?: unknown;
   };
   const content = typeof input.content === "string" ? input.content.trim() : "";
+  const approvalMode: ApprovalMode = input.approvalMode === "full-access" ? "full-access" : "ask";
 
   if (!content) {
     sendJson(res, 400, { ok: false, message: "Message cannot be empty." });
@@ -1169,14 +1311,14 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   if (!context) {
     const conversation = conversationStore.create(activeWorkspaceId, conversationTitle(content));
     activeConversationId = conversation.id;
-    activeConversation = { id: conversation.id, name: conversation.name };
+    activeConversation = toActiveConversation(conversation);
     conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
     context = getOrCreateContext(activeWorkspaceId, activeConversationId);
     saveLastActive(activeWorkspaceId, activeConversationId);
     publishContextSwitched();
   } else if (activeConversation.name === UNTITLED_CONVERSATION_NAME) {
     const renamed = conversationStore.update(activeWorkspaceId, activeConversationId, { name: conversationTitle(content) });
-    activeConversation = { id: renamed.id, name: renamed.name };
+    activeConversation = toActiveConversation(renamed);
     publishContextSwitched();
   }
 
@@ -1207,7 +1349,16 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     });
   }
 
-  const userMessage = context.messages.add({ kind: "user", content, status: "sent", attachments });
+  // 模式快照：每条用户消息在发送时记录当轮 interaction mode，
+  // 后续员工运行、转交、监工检查都继承该值，不读取执行时的全局模式。
+  const userMessage = context.messages.add({
+    kind: "user",
+    content,
+    status: "sent",
+    attachments,
+    approvalMode,
+    interactionMode: activeConversation.interactionMode ?? "collaborative",
+  });
   eventBus.publish({ type: "message.created", conversationId: activeConversationId, message: userMessage });
   context.messageRouter.process(userMessage);
 
@@ -1215,6 +1366,38 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
 }
 
 const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseElicitationResponse(input: unknown): ElicitationResponse | null {
+  if (!isRecord(input) || typeof input.action !== "string") return null;
+  if (input.action === "decline") return { action: "decline" };
+  if (input.action === "cancel") return { action: "cancel" };
+  if (input.action !== "accept") return null;
+
+  if (input.content === undefined) return { action: "accept" };
+  if (!isRecord(input.content)) return null;
+
+  const content: Record<string, string | number | boolean | string[]> = {};
+  for (const [key, value] of Object.entries(input.content)) {
+    if (typeof value === "string" || typeof value === "boolean") {
+      content[key] = value;
+      continue;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      content[key] = value;
+      continue;
+    }
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+      content[key] = value;
+      continue;
+    }
+    return null;
+  }
+  return { action: "accept", content };
+}
 
 function readJson(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -1381,6 +1564,7 @@ function shutdown(): void {
   }
   contextMap.clear();
   contextLru.length = 0;
+  disposeAcpConnectionPool();
   const forceExitTimer = setTimeout(() => {
     process.exit(0);
   }, SHUTDOWN_FORCE_EXIT_MS);

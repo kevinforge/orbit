@@ -9,12 +9,12 @@ test("empty prompt + empty rules matches 'empty' preset", () => {
   assert.equal(result, PRESET_IDS.empty);
 });
 
-test("multi-agent-collaboration content matches its preset", () => {
+test("software-development content matches its preset", () => {
   const presets = getWorkspacePresets();
-  const mac = presets.find((p) => p.id === PRESET_IDS.multiAgentCollaboration);
-  assert.ok(mac);
-  const result = matchPreset(mac.systemPrompt, [...mac.rules], presets);
-  assert.equal(result, PRESET_IDS.multiAgentCollaboration);
+  const dev = presets.find((p) => p.id === PRESET_IDS.softwareDevelopment);
+  assert.ok(dev);
+  const result = matchPreset(dev.systemPrompt, [...dev.rules], presets);
+  assert.equal(result, PRESET_IDS.softwareDevelopment);
 });
 
 test("whitespace-only prompt and rules normalize to match 'empty'", () => {
@@ -31,8 +31,8 @@ test("custom content does not match any preset", () => {
 
 test("partial match (same prompt, different rules) returns null", () => {
   const presets = getWorkspacePresets();
-  const mac = presets.find((p) => p.id === PRESET_IDS.multiAgentCollaboration);
-  assert.ok(mac);
-  const result = matchPreset(mac.systemPrompt, [], presets);
+  const dev = presets.find((p) => p.id === PRESET_IDS.softwareDevelopment);
+  assert.ok(dev);
+  const result = matchPreset(dev.systemPrompt, ["不同的自定义规则"], presets);
   assert.equal(result, null);
 });

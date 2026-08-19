@@ -1,14 +1,83 @@
 export type AgentId = string;
 
-export type AgentRole = "pm" | "architect" | "developer" | "tester" | "general" | "coordinator";
+export type ApprovalMode = "ask" | "full-access";
 
-export type PermissionProfile = {
-  canReadFiles: boolean;
-  canWriteFiles: boolean;
-  canRunCommands: boolean;
-  canInstallDependencies: boolean;
-  canGitCommit: boolean;
-  allowedDirectories: string[];
+/** 会话交互模式：普通对话 / 简单协作 / 复杂协作（内置监工）。 */
+export type InteractionMode = "direct" | "collaborative" | "supervised";
+
+export const INTERACTION_MODES: readonly InteractionMode[] = ["direct", "collaborative", "supervised"];
+
+export function isInteractionMode(value: unknown): value is InteractionMode {
+  return value === "direct" || value === "collaborative" || value === "supervised";
+}
+
+export type PermissionDecision = "allow" | "reject";
+
+export type AgentPermissionRequest = {
+  id: string;
+  title: string;
+  kind?: string;
+  input?: string;
+  locations?: string[];
+};
+
+export type ElicitationFieldSchema = {
+  type: "string" | "number" | "integer" | "boolean" | "array" | string;
+  title?: string | null;
+  description?: string | null;
+  default?: string | number | boolean | string[] | null;
+  enum?: string[] | null;
+  oneOf?: Array<{ const: string; title: string; description?: string | null }> | null;
+  minimum?: number | null;
+  maximum?: number | null;
+  minLength?: number | null;
+  maxLength?: number | null;
+  minItems?: number | null;
+  maxItems?: number | null;
+  items?: { type?: string; enum?: string[]; anyOf?: Array<{ const: string; title: string; description?: string | null }> };
+};
+
+export type ElicitationSchema = {
+  type?: "object";
+  title?: string | null;
+  description?: string | null;
+  properties?: Record<string, ElicitationFieldSchema>;
+  required?: string[] | null;
+};
+
+export type AgentElicitationRequest = {
+  id?: string;
+  message: string;
+  mode: "form" | "url" | string;
+  requestedSchema?: ElicitationSchema;
+  elicitationId?: string;
+  url?: string;
+  sessionId?: string;
+  toolCallId?: string | null;
+};
+
+export type ElicitationContent = Record<string, string | number | boolean | string[]>;
+
+export type ElicitationResponse =
+  | { action: "accept"; content?: ElicitationContent }
+  | { action: "decline" }
+  | { action: "cancel" };
+
+export type PendingElicitation = Omit<AgentElicitationRequest, "id"> & {
+  id: string;
+  conversationId: string;
+  agentId: AgentId;
+  runId: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type PendingPermission = AgentPermissionRequest & {
+  conversationId: string;
+  agentId: AgentId;
+  runId: string;
+  createdAt: string;
+  expiresAt: string;
 };
 
 export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
@@ -32,33 +101,34 @@ export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): 
   );
 }
 
-export type AgentConfigUi = {
-  label?: string;
-};
-
 export type AgentConfig = {
   id: AgentId;
   name: string;
   description?: string;
-  role: AgentRole;
   runtime: AgentRuntimeKind;
   systemPrompt: string;
-  permissionProfile?: PermissionProfile;
   enabled: boolean;
-  ui?: AgentConfigUi;
   triggers?: ChannelWatchTriggers;
+};
+
+export type AgentTemplate = Omit<AgentConfig, "enabled" | "triggers">;
+
+export type AgentTeamTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  members: AgentTemplate[];
 };
 
 export type AgentProfile = {
   id: AgentId;
   name: string;
   description?: string;
-  role: AgentRole;
   runtime: AgentRuntimeKind;
   cwd: string;
   systemPrompt: string;
-  permissionProfile: PermissionProfile;
   triggers?: ChannelWatchTriggers;
+  internal?: boolean;
 };
 
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
@@ -68,7 +138,6 @@ export type AgentState = {
   label: string;
   runtime: AgentRuntimeKind;
   status: AgentStatus;
-  role: AgentRole;
   triggers?: ChannelWatchTriggers;
   selected?: boolean;
   runtimeAvailable?: boolean;
@@ -106,15 +175,28 @@ export const ATTACHMENT_LIMITS = {
 
 export type ChatMessageKind = "user" | "agent" | "system";
 
-export type ChatMessageStatus = "sent" | "running" | "done" | "error" | "cancelled";
+export type ChatMessageStatus = "sent" | "running" | "cancelling" | "done" | "error" | "cancelled";
 
 export type MessageRouteState = "unprocessed" | "ignored" | "routed" | "blocked";
+
+export type AgentPlanEntry = {
+  content: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
+};
+
+export type AgentPlanSnapshot =
+  | { id?: string; format: "items"; entries: AgentPlanEntry[] }
+  | { id: string; format: "markdown"; content: string }
+  | { id: string; format: "file"; uri: string };
 
 export type AgentActivityEvent =
   | { type: "status"; text: string; timestamp: string }
   | { type: "tool.started"; name: string; input?: string; timestamp: string }
   | { type: "tool.completed"; name: string; summary?: string; timestamp: string }
   | { type: "tool.failed"; name: string; summary?: string; timestamp: string }
+  | { type: "plan.updated"; plan: AgentPlanSnapshot; timestamp: string }
+  | { type: "plan.removed"; planId: string; timestamp: string }
   | { type: "error"; message: string; timestamp: string };
 
 export type ChatMessage = {
@@ -125,16 +207,21 @@ export type ChatMessage = {
   createdAt: string;
   status?: ChatMessageStatus;
   runId?: string;
-  runStatus?: "queued" | "running" | "completed" | "failed" | "cancelled";
+  runStatus?: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   parentMessageId?: string;
   routeState?: MessageRouteState;
   routeDepth?: number;
+  /** 模式快照：用户消息在发送时记录当轮 interaction mode，派生运行/转交/监工检查继承该值。 */
+  interactionMode?: InteractionMode;
   activity?: AgentActivityEvent[];
   startedAt?: string;
   completedAt?: string;
   sessionId?: string;
   runIndex?: number;
   attachments?: MessageAttachment[];
+  approvalMode?: ApprovalMode;
+  /** 排队任务被全局停止时标记：前端据此过滤，不渲染该消息。仅 interruptAll 丢弃排队任务时设置。 */
+  discarded?: boolean;
 };
 
 export type RunResult = {
@@ -229,12 +316,17 @@ export type RuntimeEvent =
   | { type: "message.created"; conversationId: string; message: ChatMessage }
   | { type: "message.updated"; conversationId: string; message: ChatMessage }
   | { type: "agent.status"; conversationId: string; agentId: AgentId; status: AgentStatus }
+  | { type: "runtime.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "terminal.chunk"; conversationId: string; agentId: AgentId; runId?: string; text: string }
   | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string; suppressFollowupRouting?: boolean }
-  | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string }
+  | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string; interactionMode?: InteractionMode }
   | { type: "run.cancelled"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
   | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
+  | { type: "permission.requested"; conversationId: string; permission: PendingPermission }
+  | { type: "permission.resolved"; conversationId: string; requestId: string }
+  | { type: "elicitation.requested"; conversationId: string; elicitation: PendingElicitation }
+  | { type: "elicitation.resolved"; conversationId: string; requestId: string }
   | { type: "running.updated"; summaries: RunningSummary[] }
   | { type: "runtime.availability.updated"; availability: RuntimeAvailability[] }
   | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
@@ -255,6 +347,11 @@ export type Workspace = WorkspaceInfo & {
 export type ConversationInfo = {
   id: string;
   name: string;
+  interactionMode?: InteractionMode;
+  /** 普通对话模式下最近一位直接对话员工；切换到其他模式不清除，切回后继续。 */
+  lastDirectAgentId?: AgentId;
+  /** 内部字段：复杂协作（监工）使用的运行时，不对用户展示、不可由用户直接配置。 */
+  supervisionRuntime?: AgentRuntimeKind;
 };
 
 export type Conversation = ConversationInfo & {
@@ -274,6 +371,8 @@ export type WorkspacePreset = {
   description: string;
   systemPrompt: string;
   rules: string[];
+  /** 关联的数字员工团队模板 id（对应 AGENT_TEAM_TEMPLATES）。设置后创建该模板工作区时会预置整个团队；未设置（如空白工作区）则不预置数字员工。 */
+  teamId?: string;
   recommended?: boolean;
 };
 
@@ -318,4 +417,6 @@ export type AppState = {
   terminal: TerminalState;
   runningSummaries: RunningSummary[];
   runtimeAvailability: RuntimeAvailability[];
+  pendingPermissions: PendingPermission[];
+  pendingElicitations: PendingElicitation[];
 };

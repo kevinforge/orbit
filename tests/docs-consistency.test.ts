@@ -9,22 +9,55 @@ function readRepoFile(relativePath: string): string {
   return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 }
 
-test("CLAUDE.md documents the current multi-runtime architecture", () => {
-  const doc = readRepoFile("CLAUDE.md");
+test("shared agent instructions keep one source and current multi-runtime references", () => {
+  const agents = readRepoFile("AGENTS.md");
+  const claude = readRepoFile("CLAUDE.md");
+  const codebuddy = readRepoFile("CODEBUDDY.md");
+  const architecture = readRepoFile("docs/ARCHITECTURE.md");
 
-  assert.match(doc, /CLI-backed digital employees/);
-  assert.match(doc, /Codex, Claude Code, and CodeBuddy CLI/);
-  assert.doesNotMatch(doc, /multiple Claude Code CLI agents/);
-  assert.doesNotMatch(doc, /claude CLI \(stream-json\)/);
+  assert.match(agents, /canonical project instruction file/);
+  assert.match(claude, /^# Claude Code project instructions\n\n@AGENTS\.md\s*$/);
+  assert.match(codebuddy, /^# CodeBuddy project instructions\n\n@AGENTS\.md\s*$/);
+  assert.match(architecture, /All three runtimes use ACP v1 over newline-delimited JSON-RPC/);
+  assert.match(architecture, /claude-agent-acp/);
+  assert.match(architecture, /codebuddy --acp/);
+  assert.match(readRepoFile("docs/DATA_DIRECTORY.md"), /sessions\/<workspace-id>\/<runtime>\/<conversation-id>\/<agent-id>\.json/);
+  assert.doesNotMatch(architecture, /CLI-backed/);
+  assert.doesNotMatch(architecture, /\{channelId\}/);
+  assert.doesNotMatch(architecture, /multiple Claude Code CLI agents/);
+  assert.doesNotMatch(architecture, /claude CLI \(stream-json\)/);
 });
 
-test("CLAUDE.md keeps routing and startup verification guidance current", () => {
-  const doc = readRepoFile("CLAUDE.md");
+test("current-facing docs avoid CLI-backed wording and stale session paths", () => {
+  const currentDocs = [
+    "README.md",
+    "README.zh-CN.md",
+    "docs/QUICKSTART.md",
+    "docs/QUICKSTART.zh-CN.md",
+    "docs/TERMINOLOGY_AND_ROUTING.md",
+    "docs/ARCHITECTURE.md",
+    "docs/DATA_DIRECTORY.md",
+  ];
+
+  for (const relativePath of currentDocs) {
+    const doc = readRepoFile(relativePath);
+    assert.doesNotMatch(doc, /CLI-backed/, `${relativePath} still describes employees as CLI-backed`);
+    assert.doesNotMatch(doc, /CLI 后端/, `${relativePath} still describes employees as CLI 后端`);
+  }
+
+  const dataDirectory = readRepoFile("docs/DATA_DIRECTORY.md");
+  assert.match(dataDirectory, /sessions\/<workspace-id>\/<runtime>\/<conversation-id>\/<agent-id>\.json/);
+  assert.doesNotMatch(dataDirectory, /<channel-id>/);
+});
+
+test("shared agent instructions keep routing and startup verification guidance current", () => {
+  const doc = readRepoFile("AGENTS.md");
+  const terminology = readRepoFile("docs/TERMINOLOGY_AND_ROUTING.md");
 
   assert.match(doc, /npm run smoke:start/);
   assert.match(doc, /npm run smoke:port-conflict/);
-  assert.match(doc, /delegation chains capped at depth 10/);
-  assert.doesNotMatch(doc, /delegation chains capped at depth 5/);
+  assert.match(terminology, /routing depth 10/);
+  assert.doesNotMatch(terminology, /routing depth 5/);
 });
 
 test("open source readiness no longer tracks completed Claude-only architecture cleanup", () => {
@@ -48,7 +81,7 @@ test("repository exposes open source contribution and release guidance", () => {
   const readiness = readRepoFile("docs/OPEN_SOURCE_READINESS.md");
   const support = readRepoFile("SUPPORT.md");
 
-  assert.match(contributing, /Node\.js 20 or newer/);
+  assert.match(contributing, /Node\.js 22 or newer/);
   assert.match(contributing, /npm audit --audit-level=moderate/);
   assert.match(contributing, /npm run smoke:start/);
   assert.match(contributing, /npm run smoke:port-conflict/);
@@ -215,10 +248,15 @@ test("repository documents public terminology and routing marker behavior", () =
 
   assert.match(terminology, /Digital employee/);
   assert.match(terminology, /Prefer \*\*digital employee\*\*/);
-  assert.match(terminology, /@developer:/);
-  assert.match(terminology, /@all:/);
-  assert.match(terminology, /Plain `@id` without a colon is a reference only/);
-  assert.match(terminology, /Unknown `@id:` markers are ignored/);
+  assert.match(terminology, /@display-name:/);
+  assert.match(terminology, /@all:` is deprecated\. It no longer expands/);
+  assert.match(terminology, /Interaction mode/);
+  assert.match(terminology, /普通对话/);
+  assert.match(terminology, /简单协作/);
+  assert.match(terminology, /复杂协作/);
+  assert.match(terminology, /New conversations start in 简单协作/);
+  assert.match(terminology, /Plain `@display-name` without a colon is a reference only/);
+  assert.match(terminology, /Unknown `@display-name:` markers are ignored/);
   assert.match(terminology, /empty assignment/);
   assert.match(terminology, /routing depth 10/);
   assert.match(terminology, /Handoffs/);

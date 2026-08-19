@@ -50,7 +50,7 @@ test("buildWorkAnalysis groups downstream employee runs into one task", () => {
   const analysis = buildWorkAnalysis({
     workspaceId: "ws-1",
     conversations: [{ conversation, messages }],
-    agentLabels: new Map([["pm", "产品经理"], ["developer", "开发工程师"], ["tester", "测试工程师"]]),
+    agentLabels: new Map([["pm", "范同经"], ["developer", "蔡一平"], ["tester", "田小坑"]]),
     days: 30,
     now: new Date("2026-06-20T12:00:00.000Z"),
   });
@@ -59,7 +59,7 @@ test("buildWorkAnalysis groups downstream employee runs into one task", () => {
   assert.equal(analysis.summary.participatingAgents, 3);
   assert.equal(analysis.summary.multiAgentRate, 1);
   assert.equal(analysis.summary.medianDurationMs, 4 * 60 * 1000);
-  assert.deepEqual(analysis.tasks[0].agents.map((agent) => agent.label), ["产品经理", "开发工程师", "测试工程师"]);
+  assert.deepEqual(analysis.tasks[0].agents.map((agent) => agent.label), ["范同经", "蔡一平", "田小坑"]);
   assert.equal(analysis.tasks[0].title, "实现登录功能");
 });
 
@@ -113,6 +113,33 @@ test("buildWorkAnalysis reports failed and cancelled tasks without counting them
     multiAgentRate: 0,
     medianDurationMs: 0,
   });
+});
+
+test("buildWorkAnalysis excludes discarded queued runs", () => {
+  const messages: ChatMessage[] = [
+    user("discarded-root", "已停止的任务", "2026-06-19T10:00:00.000Z"),
+    {
+      ...run({
+        id: "discarded-run",
+        parentMessageId: "discarded-root",
+        agentId: "developer",
+        status: "cancelled",
+        completedAt: "2026-06-19T10:00:01.000Z",
+      }),
+      discarded: true,
+    },
+  ];
+
+  const analysis = buildWorkAnalysis({
+    workspaceId: "ws-1",
+    conversations: [{ conversation, messages }],
+    agentLabels: new Map(),
+    days: 7,
+    now: new Date("2026-06-20T12:00:00.000Z"),
+  });
+
+  assert.equal(analysis.summary.totalTasks, 0);
+  assert.equal(analysis.tasks.length, 0);
 });
 
 test("buildWorkAnalysis ignores a cancelled queued branch when later work completes", () => {

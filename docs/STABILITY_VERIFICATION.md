@@ -107,7 +107,7 @@ orbit
 
 1. Open a workspace with at least two enabled digital employees.
 2. Send a task that starts one employee and queues another. Use explicit
-   assignment markers such as `@developer:` and a follow-up handoff if needed.
+   assignment markers such as `@蔡一平:` and a follow-up handoff if needed.
 3. While one employee is running and another is queued, kill the Orbit server
    process from the operating system.
 4. Restart Orbit.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Record Orbit Browser GIF"
+  short_description: "Record and verify a truthful Orbit UI demo GIF"
+  default_prompt: "Use $record-browser-gif to record this Orbit browser flow as a verified GIF."

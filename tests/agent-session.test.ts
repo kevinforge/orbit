@@ -18,14 +18,6 @@ function makeSession(store: SessionStore): AgentSession {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime: {
       kind: "claude-code",
       run() {
@@ -150,14 +142,6 @@ test("different conversations use independent sessions", () => {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime: controllableRuntime("unused").runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -168,14 +152,6 @@ test("different conversations use independent sessions", () => {
     id: "developer",
     label: "Developer",
     cwd: process.cwd(),
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime: controllableRuntime("unused").runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -220,14 +196,6 @@ test("send executes through configured runtime and passes resume session", async
     id: "developer",
     label: "Developer",
     cwd: "D:/workspace",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -247,6 +215,28 @@ test("send executes through configured runtime and passes resume session", async
   assert.equal(store.load("codebuddy", "default", "developer")!.sessionId, "next-sess");
 });
 
+test("send persists ACP transport metadata", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const controlled = controllableRuntime("clean final", "acp-session");
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    runtime: { ...controlled.runtime, transport: "acp", protocolVersion: 1 },
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  session.start();
+  await session.send("run-1", "hello");
+
+  const record = store.load("codebuddy", "default", "developer");
+  assert.equal(record?.transport, "acp");
+  assert.equal(record?.protocolVersion, 1);
+});
+
 test("send accepts agent handoff final answer", async () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
@@ -255,14 +245,6 @@ test("send accepts agent handoff final answer", async () => {
     id: "developer",
     label: "Developer",
     cwd: "D:/workspace",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -311,14 +293,6 @@ test("resume failure clears stale session and retries without resume", async () 
     id: "developer",
     label: "Developer",
     cwd: "D:/workspace",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -370,14 +344,6 @@ test("Claude API deserialize failure clears stale resume session and retries wit
     id: "developer",
     label: "Developer",
     cwd: "D:/workspace",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -437,14 +403,6 @@ test("interrupt does NOT clear session — preserves conversation context", asyn
     id: "developer",
     label: "Developer",
     cwd: "D:/workspace",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -502,14 +460,6 @@ test("error case (rate limit) still persists sessionId if one was generated", as
     id: "developer",
     label: "Developer",
     cwd: "D:/workspace",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -564,14 +514,6 @@ test("interrupt followed by result reject should NOT change status to error", as
     id: "developer",
     label: "Developer",
     cwd: "D:/workspace",
-    permissionProfile: {
-      canReadFiles: true,
-      canWriteFiles: true,
-      canRunCommands: true,
-      canInstallDependencies: true,
-      canGitCommit: false,
-      allowedDirectories: ["."],
-    },
     runtime,
     eventBus: new EventBus(),
     sessionStore: store,
@@ -589,8 +531,9 @@ test("interrupt followed by result reject should NOT change status to error", as
   assert.equal(interrupted, true);
   assert.equal(interruptCalled, true);
 
-  // Status should be idle after interrupt
-  assert.equal(session.getStatus(), "idle", "status should be idle immediately after interrupt");
+  // Cancellation is asynchronous: the active run remains occupied until the
+  // runtime promise settles, so a queued task cannot start too early.
+  assert.equal(session.getStatus(), "running", "status should remain running while cancellation is pending");
 
   // Simulate what happens when the killed process exits: result promise rejects
   deferredResult.reject(new Error("Process killed: exit code 137"));
@@ -606,4 +549,235 @@ test("interrupt followed by result reject should NOT change status to error", as
   // CRITICAL: Status should STILL be idle, NOT error
   // This is the bug we're testing for - catch() should not overwrite idle status
   assert.equal(session.getStatus(), "idle", "status should remain idle after interrupt-induced reject, not become error");
+});
+
+test("publishes and resolves runtime permission requests", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  const events: Array<{ type: string }> = [];
+  eventBus.subscribe((event) => events.push(event));
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const result = new Promise<string>((resolve) => { finishRun = resolve; });
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result,
+        sessionId: Promise.resolve("permission-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+  session.start();
+  const sendPromise = session.send("run-approval", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(runOptions!.approvalMode, "ask");
+  const decisionPromise = runOptions!.requestPermission!({ id: "tool-1", title: "Run tests", kind: "execute" });
+  const pending = session.pendingPermissions();
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0]!.id, "run-approval:tool-1");
+  assert.ok(events.some((event) => event.type === "permission.requested"));
+
+  assert.equal(session.resolvePermission(pending[0]!.id, "allow"), true);
+  assert.equal(await decisionPromise, "allow");
+  assert.equal(session.pendingPermissions().length, 0);
+  assert.ok(events.some((event) => event.type === "permission.resolved"));
+
+  finishRun("clean final");
+  await sendPromise;
+});
+
+test("keeps parallel runtime permission requests isolated", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: new Promise<string>((resolve) => { finishRun = resolve; }),
+        sessionId: Promise.resolve("parallel-permission-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+  session.start();
+  const sendPromise = session.send("run-parallel", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const first = runOptions!.requestPermission!({ id: "tool-1", title: "Read file" });
+  const second = runOptions!.requestPermission!({ id: "tool-2", title: "Run tests" });
+  assert.deepEqual(session.pendingPermissions().map((permission) => permission.id), [
+    "run-parallel:tool-1",
+    "run-parallel:tool-2",
+  ]);
+
+  assert.equal(session.resolvePermission("run-parallel:tool-1", "allow"), true);
+  assert.equal(session.resolvePermission("run-parallel:tool-2", "reject"), true);
+  assert.equal(await first, "allow");
+  assert.equal(await second, "reject");
+  assert.equal(session.pendingPermissions().length, 0);
+
+  finishRun("clean final");
+  await sendPromise;
+});
+
+test("publishes and resolves runtime elicitation requests", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  const events: Array<{ type: string }> = [];
+  eventBus.subscribe((event) => events.push(event));
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const result = new Promise<string>((resolve) => { finishRun = resolve; });
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result,
+        sessionId: Promise.resolve("elicitation-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+  session.start();
+  const sendPromise = session.send("run-elicitation", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const responsePromise = runOptions!.requestElicitation!({
+    message: "Choose a strategy",
+    mode: "form",
+    requestedSchema: { type: "object", properties: { strategy: { type: "string" } } },
+  });
+  const pending = session.pendingElicitations();
+  assert.equal(pending.length, 1);
+  assert.ok(events.some((event) => event.type === "elicitation.requested"));
+
+  assert.equal(session.resolveElicitation(pending[0]!.id, { action: "accept", content: { strategy: "safe" } }), true);
+  assert.deepEqual(await responsePromise, { action: "accept", content: { strategy: "safe" } });
+  assert.equal(session.pendingElicitations().length, 0);
+  assert.ok(events.some((event) => event.type === "elicitation.resolved"));
+
+  finishRun("clean final");
+  await sendPromise;
+});
+
+test("expires pending permission requests and clears their UI state", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  const events: Array<{ type: string }> = [];
+  eventBus.subscribe((event) => events.push(event));
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: new Promise<string>((resolve) => { finishRun = resolve; }),
+        sessionId: Promise.resolve("permission-expiry-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+    interactionTimeoutMs: 10,
+  });
+  session.start();
+  const sendPromise = session.send("run-expiry", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const decision = runOptions!.requestPermission!({ id: "tool-1", title: "Run tests" });
+  assert.ok(session.pendingPermissions()[0]!.expiresAt);
+  assert.equal(await decision, "reject");
+  assert.equal(session.pendingPermissions().length, 0);
+  assert.ok(events.filter((event) => event.type === "permission.resolved").length === 1);
+
+  finishRun("clean final");
+  await sendPromise;
+});
+
+test("expires pending elicitation requests and ignores late responses", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  let runOptions: AgentRuntimeRunOptions | null = null;
+  let finishRun!: (value: string) => void;
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      runOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: new Promise<string>((resolve) => { finishRun = resolve; }),
+        sessionId: Promise.resolve("elicitation-expiry-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+    interactionTimeoutMs: 10,
+  });
+  session.start();
+  const sendPromise = session.send("run-expiry", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const response = runOptions!.requestElicitation!({ message: "Choose", mode: "form" });
+  const requestId = session.pendingElicitations()[0]!.id;
+  assert.deepEqual(await response, { action: "cancel" });
+  assert.equal(session.pendingElicitations().length, 0);
+  assert.equal(session.resolveElicitation(requestId, { action: "decline" }), false);
+
+  finishRun("clean final");
+  await sendPromise;
 });

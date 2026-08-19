@@ -1,96 +1,45 @@
 # Orbit Quickstart
 
-This guide is for first-time Orbit users. Follow the steps in order.
+This guide is for first-time Orbit users.
 
 ## What Orbit Does
 
-Orbit is a local-first workspace for coordinating CLI-backed agents. The sidebar uses Chinese display names with stable ids in parentheses:
+Orbit is a local-first workspace for coordinating digital employees powered by
+Claude Code, Codex, or CodeBuddy through the Agent Client Protocol (ACP).
+The sidebar shows each employee's configurable display name. The built-in
+software development team contains four employees:
 
-- 产品经理（pm）
-- 架构师（architect）
-- 开发（developer）
-- 测试（tester）
-- 监督者（supervisor）
+- `@范同经:` clarifies goals, scope, and acceptance criteria.
+- `@甄架构:` designs solutions and evaluates implementation risk.
+- `@蔡一平:` edits files, runs commands, and verifies changes.
+- `@田小坑:` validates behavior and reports regressions.
 
-Message routing still uses the fixed `@id:` marker:
-
-- `@pm:` asks the product manager to clarify requirements and scope.
-- `@architect:` asks the architect to inspect code, design a plan, and review risk.
-- `@developer:` asks the developer to edit code, run commands, and verify changes.
-- `@tester:` asks the tester to validate behavior and report issues.
-- `@supervisor:` asks the supervisor to coordinate the conversation toward completion.
-- `@all:` sends a task to all currently enabled agents.
+Every conversation has an interaction mode, selected from the composer:
+普通对话 (direct chat with one employee), 简单协作 (lightweight collaboration,
+the default for new conversations), and 复杂协作 (supervised collaboration).
+复杂协作 adds an internal supervisor backed by the selected runtime; it is not
+configured as a fifth employee.
 
 For the complete public terminology and routing rules, see
 [Terminology And Routing](TERMINOLOGY_AND_ROUTING.md).
 
-For first-time use, choose the multi-agent collaboration workspace template. Orbit will enable a useful default set of agents for collaborative development.
-
 ## Step 0: Check Prerequisites
 
-First check whether Node.js and at least one agent runtime are already installed. If they are already available, you can skip the matching install steps.
-
-Open PowerShell or your terminal:
+Orbit requires Node.js 22 or newer and at least one supported runtime:
 
 ```powershell
 node --version
 npm --version
 ```
 
-If `node --version` prints `v20.x.x` or newer, and `npm --version` prints a version, Node.js and npm are ready.
+Install the vendor runtime you plan to use. Orbit includes the ACP adapters it
+needs and does not require users to install protocol adapters separately.
+Orbit will show the vendor setup guide for a missing runtime in the employee
+settings panel.
 
-If Node.js is missing or older than 20:
+## Step 1: Start Orbit
 
-1. Open https://nodejs.org/
-2. Download the LTS version. Use Node.js 20 or newer.
-3. Install it with the default options.
-4. Close your terminal and open a new one.
-5. Run `node --version` and `npm --version` again.
-
-Orbit provides the web workspace. The actual work is performed by CLI runtimes. You only need at least one runtime to start; you do not need to install all three up front.
-
-Check your runtimes:
-
-```powershell
-claude --version
-codex --version
-codebuddy --version
-```
-
-If at least one command prints a version, you can continue. Missing runtimes can be installed later from the Orbit UI prompts.
-
-If none of the commands work, install at least one runtime:
-
-| Runtime | Common use | Install |
-| --- | --- | --- |
-| Claude Code | Development and supervision | `npm install -g @anthropic-ai/claude-code` |
-| OpenAI Codex | Product, architecture, general work | `npm install -g @openai/codex` |
-| CodeBuddy | Testing or custom agents | `npm install -g @tencent-ai/codebuddy-code` |
-
-Orbit shows the same install command in the agent settings panel when a runtime is missing. You can copy that command from the UI, install the CLI in a terminal, complete the CLI's own login flow, and then re-detect the runtime in Orbit.
-
-If npm installs hang, time out, or cannot download packages, your network may not be able to reach the npm registry reliably. Use a network/proxy that can access npm, or temporarily switch to a mirror:
-
-```powershell
-npm config set registry https://registry.npmmirror.com
-```
-
-If you are on a company proxy, configure npm or your shell proxy settings before running `npm install -g ...`.
-
-After installing a runtime, run the version check again, for example `codebuddy --version`. Then run that CLI directly in your terminal and complete its own login or authorization flow. Orbit can only use CLIs that already work on your machine.
-
-## Step 1: Install Orbit
-
-Use a release package that matches your operating system. Open PowerShell or
-your terminal in the directory containing the file. Windows x64 users run:
-
-```powershell
-npm install -g .\orbit-<version>-windows-x64.tgz
-```
-
-On Linux or macOS, use the corresponding `.tgz` package from the release.
-
-You can also run Orbit from a source checkout:
+From the project directory:
 
 ```powershell
 npm ci
@@ -98,109 +47,83 @@ npm run build
 npm run dev
 ```
 
-Do not install `orbit` directly from the public npm registry. The public
-`orbit` package is unrelated to this project unless this project explicitly
-announces npm ownership. If you already ran `npm install -g orbit` and it fails with
-`ERR_PACKAGE_PATH_NOT_EXPORTED` for `uuid/v1`, uninstall that package and then
-install the Orbit release tarball:
+Open `http://localhost:4317`.
 
-```powershell
-npm uninstall -g orbit
-npm install -g .\orbit-<version>-windows-x64.tgz
-```
+## Step 2: Create A Workspace
 
-## Step 2: Start Orbit
+1. Choose **New workspace**.
+2. Select the local project directory.
+3. Choose the **software development team** template.
+4. After creation, the workspace and a new conversation appear in the sidebar.
 
-Run:
+The template enables the four built-in employees and assigns available
+runtimes. You can rename, disable, remove, or add employees from settings.
 
-```powershell
-orbit
-```
+## Step 3: Check Employees And Runtimes
 
-When Orbit starts successfully, it prints a browser URL. Open:
+1. Open the digital employee settings from the sidebar.
+2. Confirm each enabled employee has a unique display name.
+3. Confirm the selected runtime is available.
+4. Rename an employee when a name better fits your workflow.
+5. Save the configuration.
 
-```text
-http://localhost:4317
-```
+Only the display name is used in public assignment markers. Internal ids are
+used only for persistence and runtime bookkeeping.
 
-## Step 3: Create Your First Workspace
+## Step 4: Send Your First Task
 
-A workspace is the local project folder you want Orbit to work on.
-
-1. Open the Orbit page.
-2. Click the `+` next to Workspace in the sidebar.
-3. Choose a local project folder.
-4. If Orbit asks you to choose a template, first-time users should choose multi-agent collaboration.
-5. After creation, the workspace and a new conversation appear in the sidebar.
-
-The multi-agent collaboration template enables 架构师（architect）, 开发（developer）, 测试（tester）, and 监督者（supervisor） by default, and assigns them to an available runtime. A blank workspace keeps agents disabled so you can configure them yourself.
-
-The collaboration template also tells the supervisor to assign dependent work in sequence: wait for the prerequisite employee to finish before assigning the next one. Independent work can still be assigned in parallel.
-
-## Step 4: Check Agents and Runtimes
-
-If no agents are enabled:
-
-1. Click the `+` next to Agents.
-2. Turn on the agents you need.
-3. New users should enable at least 开发（developer）; for collaborative flow, also enable 架构师（architect）, 测试（tester）, and 监督者（supervisor）.
-4. Check that each agent runtime is available.
-5. Click Save.
-
-If Orbit says a runtime is missing, copy the install command shown in the UI or open the install link next to it. After installation or login, return to Orbit and click re-detect runtime environment.
-
-## Step 5: Send Your First Task
-
-Type a message with an `@agent-id:` marker and press Enter. Use the id in parentheses, not the display name.
-
-Example:
+Type an assignment with the exact display name shown in the sidebar:
 
 ```text
-@architect: Please inspect this project structure, explain what it does in beginner-friendly language, and tell me where to start if I want to add a feature.
+@甄架构: Please inspect this project structure and propose a small implementation plan.
 ```
 
-Or ask the developer to make a small change:
+To send independent work in parallel:
 
 ```text
-@developer: Please add local startup steps to the README. Keep the change small, run relevant checks, and tell me which files changed.
+@蔡一平: Implement the fix. @田小坑: Prepare the regression checklist.
 ```
 
-If the supervisor is enabled, you can also describe the goal without an explicit agent:
+Plain mentions without a colon are references and do not start work. In 简单协作
+and 复杂协作 a message may assign several employees; in 普通对话 it may assign
+exactly one.
 
-```text
-Please add login form validation to this project. Evaluate the plan first, then implement, then test.
-```
+## Step 5: Switch Interaction Modes
 
-Open **协作洞察** at the bottom of the sidebar to review completed and in-progress tasks, participating employees, execution timelines, and end-to-end duration.
+Use the mode menu in the conversation composer to switch between the three
+interaction modes at any time:
+
+- 普通对话: talk to exactly one employee. `@display-name:` picks the employee;
+  later messages without a marker continue with the same employee. Handoff
+  markers in replies are plain text and never start other employees.
+- 简单协作: assign work with `@display-name:`; employees hand off to each other
+  only when genuinely needed.
+- 复杂协作: describe a goal without a marker and the built-in supervisor
+  decomposes, schedules, tracks, and drives it to closure.
+
+Switching only affects the next message you send; runs already in progress keep
+their own mode. Digital employee sessions are shared across modes, so switching
+never loses conversation memory.
 
 ## Troubleshooting
 
-### There Is No `.orbit` Directory
-
-Orbit creates `~/.orbit` automatically when it needs to store local data. If the
-directory does not exist yet, start Orbit once and create a workspace.
-
 ### A Runtime Is Missing
 
-Check the CLI in your terminal:
+Install the command shown in the settings panel, complete that runtime's own
+login flow, then click **re-detect runtime environment**.
 
-```powershell
-claude --version
-codex --version
-codebuddy --version
-```
+### An Assignment Does Not Start
 
-You only need to check the runtime you use. If the command is missing, use the install command shown in Orbit for that runtime. After installing or logging in, return to Orbit and click re-detect runtime environment.
+Check that the marker uses an enabled employee's exact display name and ends
+with `:`. Check that task text follows the marker.
 
-### Where Does Orbit Store Data?
+### A Collaboration Chain Stops
 
-Orbit stores local data under `~/.orbit`, including workspaces, conversations,
-messages, run records, agent settings, attachments, and transcripts. On Windows
-this is usually:
+Orbit limits automatic handoff depth to protect the conversation from loops.
+Send a new explicit assignment to continue after the depth limit.
 
-```text
-C:\Users\YourName\.orbit
-```
+## Further Reading
 
-For the full data layout, backup, restore, and reset guidance, see
-[Local Data Directory](DATA_DIRECTORY.md).
+- [Terminology And Routing](TERMINOLOGY_AND_ROUTING.md)
+- [Architecture](ARCHITECTURE.md)
+- [Local Data](DATA_DIRECTORY.md)

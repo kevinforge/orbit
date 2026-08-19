@@ -41,6 +41,7 @@ if (binary) {
     cwd: process.cwd(),
     env: {
       ...process.env,
+      ORBIT_PACKAGE_ROOT: process.env.ORBIT_PACKAGE_ROOT ?? root,
       ORBIT_UI_DIR: process.env.ORBIT_UI_DIR ?? path.join(root, "dist", "ui"),
     },
   }).on("exit", (code) => process.exit(code ?? 1));
@@ -54,6 +55,7 @@ if (binary) {
     cwd: process.cwd(),
     env: {
       ...process.env,
+      ORBIT_PACKAGE_ROOT: process.env.ORBIT_PACKAGE_ROOT ?? root,
       ORBIT_DIST_UI: path.join(root, "dist", "ui"),
     },
   }).on("exit", (code) => process.exit(code ?? 1));

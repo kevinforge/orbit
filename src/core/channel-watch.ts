@@ -1,4 +1,4 @@
-import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type ChatMessage, type ChannelWatchTriggers } from "../shared/types.ts";
+import { hasActiveChannelWatchTriggers, type AgentId, type AgentProfile, type ChatMessage, type ChannelWatchTriggers, type InteractionMode } from "../shared/types.ts";
 import { assignmentPattern } from "./mention-router.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { AgentRegistry } from "./agent-registry.ts";
@@ -19,8 +19,7 @@ type TriggerContext = {
 
 export class ChannelWatchService {
   private readonly triggerContexts: Map<AgentId, TriggerContext> = new Map();
-  private readonly knownIds: Set<string>;
-  private readonly agentRoles: Map<AgentId, string>; // Issue #91: Map agentId -> role
+  private readonly knownNames: Set<string>;
   private readonly unsubscribe: () => void;
   private disposed = false;
 
@@ -32,12 +31,8 @@ export class ChannelWatchService {
     eventBus: EventBus,
     profiles: readonly AgentProfile[],
   ) {
-    this.knownIds = new Set(profiles.map((p) => p.id));
-    this.knownIds.add("user"); // @user: is the task-closure signal
-    this.knownIds.add("all");  // @all: is the broadcast signal
-
-    // Issue #91: Initialize agentId -> role mapping
-    this.agentRoles = new Map(profiles.map((p) => [p.id, p.role]));
+    this.knownNames = new Set(profiles.map((p) => p.name.toLocaleLowerCase()));
+    this.knownNames.add("user"); // @user: is the task-closure signal
 
     for (const profile of profiles) {
       if (profile.triggers && hasActiveChannelWatchTriggers(profile.triggers)) {
@@ -72,8 +67,8 @@ export class ChannelWatchService {
         }
       } else if (event.type === "run.failed" && "agentId" in event) {
         // Issue #82: Trigger supervisor when an agent run fails
-        const failedEvent = event as { agentId: AgentId; runId: string; error?: string };
-        this.onAgentFailed(failedEvent.agentId, failedEvent.runId, failedEvent.error);
+        const failedEvent = event as { agentId: AgentId; runId: string; error?: string; interactionMode?: InteractionMode };
+        this.onAgentFailed(failedEvent.agentId, failedEvent.runId, failedEvent.error, failedEvent.interactionMode);
       }
     });
   }
@@ -100,10 +95,16 @@ export class ChannelWatchService {
 
   private onMessageCreated(message: ChatMessage): void {
     if (message.kind === "user") {
-      const hasAssignment = hasAssignmentMarker(message.content, this.knownIds);
+      const hasAssignment = hasAssignmentMarker(message.content, this.knownNames);
       for (const ctx of this.triggerContexts.values()) {
+        // 每条用户消息重置限流计数（无论模式），但只有复杂协作链的消息才触发监工。
         ctx.triggerCount = 0;
-        if (!hasAssignment && ctx.triggers.onUnassignedMessage) {
+        if (!hasAssignment && ctx.triggers.onUnassignedMessage && isSupervisedSnapshot(message.interactionMode)) {
+          // 通道非空闲（其他数字员工正在工作）时不触发监工：当前任务完成后
+          // onAgentCompleted 会自动触发监工，监工通过 buildHistoryForAgent 看到
+          // 用户消息并评估。通道空闲时仍传 relaxIdleCheck: true，以保留用户消息
+          // 恢复 error 状态监工的语义（issue #82）。
+          if (!this.isChannelTrulyIdle(ctx.agentId)) continue;
           this.tryTrigger(ctx, message, { relaxIdleCheck: true });
         }
       }
@@ -113,6 +114,8 @@ export class ChannelWatchService {
   private onMessageUpdated(message: ChatMessage): void {
     // Listen for routeState transitions to "blocked" (published via message.updated)
     if (message.routeState === "blocked") {
+      // 只有复杂协作链的阻塞才需要监工介入；普通/简单协作的阻塞是面向用户的提示。
+      if (!isSupervisedSnapshot(message.interactionMode)) return;
       for (const ctx of this.triggerContexts.values()) {
         if (ctx.triggers.onAgentBlocked) {
           this.tryTrigger(ctx, message);
@@ -125,16 +128,18 @@ export class ChannelWatchService {
     const message = this.messages.get(resultMessageId);
     if (!message) return;
 
+    // 只有复杂协作链的完成才触发监工检查；链的模式快照不随全局模式切换改变。
+    if (!isSupervisedSnapshot(message.interactionMode)) return;
+
     // Check for assignment markers, but exclude @user: for non-supervisor agents.
     // @user: is only a closure signal when the SUPERVISOR says it, not when other agents do.
     // Other agents might mention @user: in their responses (e.g., "I'll let @user: know"),
     // which should NOT suppress supervisor triggers.
-    // Issue #91: Use role-based check instead of hardcoded ID
-    const agentRole = this.agentRoles.get(agentId);
+    // The internal supervisor is identified by its reserved runtime ID.
     const hasAssignment = hasAssignmentMarkerExcludingUserForNonSupervisor(
       message.content,
-      this.knownIds,
-      agentRole,
+      this.knownNames,
+      agentId === "supervisor",
     );
     if (hasAssignment) return;
 
@@ -149,8 +154,9 @@ export class ChannelWatchService {
   /**
    * Issue #82: Handle agent run failure.
    * When an agent run fails, trigger supervisor if configured with onRunFailed.
+   * 只有复杂协作链的失败才会触发监工做恢复。
    */
-  private onAgentFailed(agentId: AgentId, runId: string, error?: string): void {
+  private onAgentFailed(agentId: AgentId, runId: string, error?: string, interactionMode?: InteractionMode): void {
     // Find supervisors that have onRunFailed trigger configured
     for (const ctx of this.triggerContexts.values()) {
       if (ctx.agentId === agentId) continue; // Don't trigger the failed agent itself
@@ -159,12 +165,17 @@ export class ChannelWatchService {
       const failedMessage = this.messages.list().find(
         (message) => message.kind === "agent" && message.agentId === agentId && message.runId === runId,
       );
+      // 链模式快照优先取失败消息记录；事件负载作为兜底。
+      const chainMode = failedMessage?.interactionMode ?? interactionMode;
+      if (!isSupervisedSnapshot(chainMode)) continue;
+
       const triggerMessage: ChatMessage = failedMessage ?? {
         id: `failure_${agentId}_${runId}_${Date.now()}`,
         kind: "system",
         content: `[Agent ${agentId} failed]\nRun ${runId} encountered an error: ${error ?? "Unknown error"}`,
         createdAt: new Date().toISOString(),
         status: "error",
+        interactionMode: "supervised",
       };
 
       // Trigger supervisor with relaxIdleCheck=true so it can run even when other agents are busy
@@ -213,11 +224,16 @@ export class ChannelWatchService {
   }
 }
 
-function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): boolean {
+/** 只有模式快照为 supervised 的链才触发监工；其他模式（含缺失快照）一律不触发。 */
+function isSupervisedSnapshot(mode: InteractionMode | undefined): boolean {
+  return mode === "supervised";
+}
+
+function hasAssignmentMarker(content: string, knownNames: ReadonlySet<string>): boolean {
   const pattern = new RegExp(assignmentPattern.source, "g");
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(content)) !== null) {
-    if (knownIds.has(m[1])) return true;
+    if (knownNames.has(m[1].toLocaleLowerCase())) return true;
   }
   return false;
 }
@@ -225,31 +241,27 @@ function hasAssignmentMarker(content: string, knownIds: ReadonlySet<string>): bo
 /**
  * Check for assignment markers, but exclude @user: for non-supervisor agents.
  *
- * Issue #80: When non-supervisor agents (e.g., developer) include @user: in their
- * responses, it should NOT suppress supervisor triggers. @user: is only a closure
- * signal when the supervisor itself says it.
- *
- * Issue #91: Use role-based check instead of hardcoded agent ID.
+ * When a regular digital employee includes @user: in its response, that is not
+ * a closure signal and must not suppress the supervisor follow-up.
  *
  * @param content - Message content to check
- * @param knownIds - Set of known agent IDs
- * @param fromAgentRole - Role of the agent that sent this message
+ * @param knownNames - Set of known employee names
+ * @param fromSupervisor - Whether the sender is the internal supervisor
  * @returns true if there's an assignment marker that should suppress triggers
  */
 function hasAssignmentMarkerExcludingUserForNonSupervisor(
   content: string,
-  knownIds: ReadonlySet<string>,
-  fromAgentRole: string | undefined,
+  knownNames: ReadonlySet<string>,
+  fromSupervisor: boolean,
 ): boolean {
   const pattern = new RegExp(assignmentPattern.source, "g");
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(content)) !== null) {
-    const mentionedId = m[1];
-    // Issue #91: Skip @user: for non-coordinator agents (role-based check)
-    if (mentionedId === "user" && fromAgentRole !== "coordinator") {
+    const mentionedName = m[1];
+    if (mentionedName.toLocaleLowerCase() === "user" && !fromSupervisor) {
       continue;
     }
-    if (knownIds.has(mentionedId)) return true;
+    if (knownNames.has(mentionedName.toLocaleLowerCase())) return true;
   }
   return false;
 }
@@ -268,7 +280,7 @@ function buildSupervisorPrompt(agentId: AgentId, count: number, isLast: boolean,
   return (
     `[Supervisor Check #${count}/${maxTriggers}]\n\n` +
     `Evaluate the current state of the conversation. ` +
-    `If the overall task needs more work, assign tasks using @agent: markers. ` +
+    `If the overall task needs more work, assign tasks using an exact name from the available employees, such as @employee-name: . ` +
     `If all work is complete, conclude with @user: and a final summary.`
   );
 }

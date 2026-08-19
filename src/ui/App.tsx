@@ -1,24 +1,64 @@
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown-renderer.ts";
-import { permissionProfile } from "../core/agent-profiles.ts";
+import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
-import { matchPreset, PRESET_IDS } from "../core/workspace-presets.ts";
-import { hasActiveChannelWatchTriggers, type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRole, type AgentRuntimeKind, type AgentState, type AppState, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type MessagePage, type PermissionProfile, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { matchPreset } from "../core/workspace-presets.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
+import * as TDesign from "tdesign-react";
+import {
+  AddIcon,
+  ChartIcon,
+  CheckIcon,
+  ChatBubbleHistoryIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CopyIcon,
+  EditIcon,
+  FolderIcon,
+  MoreIcon,
+  ArrowDownIcon,
+  SecuredIcon,
+  SendIcon,
+  SettingIcon,
+  StopCircleIcon,
+  UsergroupIcon,
+} from "tdesign-icons-react";
+import { TaskDetailDrawer } from "./TaskDetailDrawer.tsx";
+
+const { Avatar, Button, Tooltip } = TDesign;
+
+/** 会话交互模式的展示元数据：顺序即菜单顺序，label/tooltip 均为产品文案。 */
+const INTERACTION_MODE_META: Array<{ mode: InteractionMode; label: string; tooltip: string }> = [
+  { mode: "direct", label: "普通对话", tooltip: "与一位数字员工持续交流，不会转交或指派其他员工。" },
+  { mode: "collaborative", label: "简单协作", tooltip: "数字员工可按需邀请或转交任务，不启用监工。" },
+  { mode: "supervised", label: "复杂协作", tooltip: "启用内置监工，自动拆解任务、调度员工、跟踪进度并推动闭环。" },
+];
+
+function interactionModeLabel(mode: InteractionMode): string {
+  return INTERACTION_MODE_META.find((meta) => meta.mode === mode)?.label ?? mode;
+}
+
+function interactionModeTooltip(mode: InteractionMode): string {
+  return INTERACTION_MODE_META.find((meta) => meta.mode === mode)?.tooltip ?? mode;
+}
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
-  conversation: { id: "", name: "" },
+  conversation: { id: "", name: "", interactionMode: "collaborative" },
   agents: [],
   messages: [],
   messageHistory: { hasOlderMessages: false, olderCursor: null },
   terminal: {},
   runningSummaries: [],
   runtimeAvailability: [],
+  pendingPermissions: [],
+  pendingElicitations: [],
 };
 
 type ActiveView = "conversation" | "analysis";
 const ACTIVE_VIEW_STORAGE_KEY = "orbit.activeView";
+const APPROVAL_MODE_STORAGE_KEY = "orbit.approvalMode";
 
 export function resolveActiveView(storedView: string | null): ActiveView {
   return storedView === "analysis" ? "analysis" : "conversation";
@@ -32,11 +72,27 @@ function loadActiveView(): ActiveView {
   }
 }
 
+export function resolveApprovalMode(storedMode: string | null): ApprovalMode {
+  return storedMode === "full-access" ? "full-access" : "ask";
+}
+
+function loadApprovalMode(): ApprovalMode {
+  try {
+    return resolveApprovalMode(window.localStorage.getItem(APPROVAL_MODE_STORAGE_KEY));
+  } catch {
+    return "ask";
+  }
+}
+
 export function App() {
   const [state, setState] = useState<AppState>(initialState);
   const [activeView, setActiveView] = useState<ActiveView>(loadActiveView);
   const [content, setContent] = useState("");
-  const [selectedAgent, setSelectedAgent] = useState<AgentId>("pm");
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(loadApprovalMode);
+  const [showApprovalModeMenu, setShowApprovalModeMenu] = useState(false);
+  const [resolvingPermissionIds, setResolvingPermissionIds] = useState<string[]>([]);
+  const [resolvingElicitationIds, setResolvingElicitationIds] = useState<string[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<AgentId>("");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [isSending, setIsSending] = useState(false);
   const [isInterrupting, setIsInterrupting] = useState(false);
@@ -75,11 +131,13 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
+  const [selectedTaskMessageId, setSelectedTaskMessageId] = useState<string | null>(null);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
+  const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
+  const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
   const isNearBottomRef = useRef(true);
 
   useEffect(() => {
@@ -90,15 +148,28 @@ export function App() {
     }
   }, [activeView]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(APPROVAL_MODE_STORAGE_KEY, approvalMode);
+    } catch {
+      // Approval mode still applies to this tab when storage is unavailable.
+    }
+  }, [approvalMode]);
+
   const isAnyAgentRunning = state.agents.some((a) => a.status === "running");
-  const hasAnyQueuedRun = state.messages.some((m) => m.runStatus === "queued");
-  const hasRunningOrQueued = isAnyAgentRunning || hasAnyQueuedRun;
+  // messages 上的 runStatus 覆盖被 AgentRegistry.states() 过滤的 internal 监工：
+  // 新建会话第一条无 @ 消息只触发监工，state.agents 全 idle 且无 queued 时，
+  // 仍需通过 messages 上的 runStatus==='running' 暴露停止按钮。
+  const hasAnyActiveRun = state.messages.some(
+    (m) => m.runStatus === "running" || m.runStatus === "cancelling" || m.runStatus === "queued",
+  );
+  const hasCancellingRun = state.messages.some((m) => m.runStatus === "cancelling");
+  const hasRunningOrQueued = isAnyAgentRunning || hasAnyActiveRun;
   const hasWorkspace = Boolean(state.workspace.id);
   const missingRuntimeAgents = useMemo(
     () => state.agents.filter((agent) => agent.runtimeAvailable === false),
     [state.agents],
   );
-
   const refreshWorkspaces = () => {
     fetch("/api/workspaces").then((r) => r.json()).then(setWorkspaces).catch(() => {});
   };
@@ -221,11 +292,31 @@ export function App() {
     refreshConversations();
   }, [workspaces, state.workspace.id]);
 
-  const agentsById = useMemo(() => new Map(state.agents.map((agent) => [agent.id, agent])), [state.agents]);
+  const agentsById = useMemo(() => {
+    const agents = new Map(state.agents.map((agent) => [agent.id, agent]));
+    agents.set("supervisor", {
+      id: "supervisor",
+      label: "监工",
+      runtime: state.conversation.supervisionRuntime ?? "codebuddy",
+      status: "idle",
+    });
+    return agents;
+  }, [state.agents, state.conversation.supervisionRuntime]);
   const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
+  const visibleMessages = useMemo(() => state.messages.filter((message) => !message.discarded), [state.messages]);
+  const selectedTaskMessage = selectedTaskMessageId
+    ? visibleMessages.find((message) => message.id === selectedTaskMessageId) ?? null
+    : null;
+  const latestTaskMessage = useMemo(
+    () => [...visibleMessages].reverse().find((message) => message.kind === "agent" && (message.runId || message.activity?.length)) ?? null,
+    [visibleMessages],
+  );
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
-  const hasCoordinator = useMemo(() => state.agents.some((agent) => agent.role === "coordinator" && hasActiveChannelWatchTriggers(agent.triggers)), [state.agents]);
+  const interactionMode: InteractionMode = state.conversation.interactionMode ?? "collaborative";
+  const lastDirectAgentLabel = state.conversation.lastDirectAgentId
+    ? agentsById.get(state.conversation.lastDirectAgentId)?.label
+    : undefined;
   const scrollKey = useMemo(
     () =>
       state.messages
@@ -247,12 +338,9 @@ export function App() {
     }
 
     const query = mentionDraft.query.toLowerCase();
-    const matched = agentIds.filter((agentId) => agentId.toLowerCase().startsWith(query));
-    if ("all".startsWith(query) && !matched.includes("all")) {
-      matched.push("all" as AgentId);
-    }
+    const matched = state.agents.filter((agent) => agent.label.toLocaleLowerCase().startsWith(query)).map((agent) => agent.id);
     return matched;
-  }, [agentIds, inputFocused, mentionDraft]);
+  }, [agentIds, inputFocused, mentionDraft, state.agents]);
 
   useEffect(() => {
     if (!agentsById.has(selectedAgent) && agentIds[0]) {
@@ -348,14 +436,15 @@ export function App() {
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = content.trim();
-    if (!trimmed || isSending) {
+    if (!trimmed || isSending || isSwitchingInteractionMode) {
       return;
     }
 
     setIsSending(true);
     try {
-      const body: { content: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
+      const body: { content: string; approvalMode: ApprovalMode; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
         content: trimmed,
+        approvalMode,
       };
       if (pendingAttachments.length > 0) {
         body.draftAttachments = pendingAttachments.map((a) => ({
@@ -388,6 +477,103 @@ export function App() {
       }));
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function selectInteractionMode(mode: InteractionMode) {
+    setShowInteractionModeMenu(false);
+    if (isSwitchingInteractionMode || mode === interactionMode) return;
+    setIsSwitchingInteractionMode(true);
+    const label = interactionModeLabel(mode);
+    try {
+      // 复杂协作需要监工运行时：优先沿用会话已记录的运行时，否则按可用性选择
+      const runtime = mode === "supervised"
+        ? state.conversation.supervisionRuntime ?? preferredSupervisionRuntime(state.runtimeAvailability)
+        : undefined;
+
+      // 首次对话还没有会话：先创建一个会话，再切换模式，保证菜单在首条消息前即可使用
+      let conversationId = state.conversation.id;
+      if (!conversationId) {
+        if (!state.workspace.id) throw new Error("请先选择或创建工作区。");
+        const createResponse = await fetch(`/api/conversations?workspaceId=${encodeURIComponent(state.workspace.id)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const created = await createResponse.json() as { id?: string; message?: string };
+        if (!createResponse.ok || !created.id) throw new Error(created.message ?? "创建会话失败。");
+        conversationId = created.id;
+        refreshConversations();
+      }
+
+      const response = await fetch(`/api/conversations/${conversationId}/interaction-mode`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(runtime ? { mode, runtime } : { mode }),
+      });
+      const body = await response.json() as { conversation?: ConversationInfo; message?: string };
+      if (!response.ok || !body.conversation) throw new Error(body.message ?? `${label}切换失败`);
+      setState((current) => ({ ...current, conversation: body.conversation! }));
+    } catch (error) {
+      setState((current) => ({ ...current, messages: [...current.messages, createLocalSystemMessage(error instanceof Error ? error.message : `${label}切换失败`)] }));
+    } finally {
+      setIsSwitchingInteractionMode(false);
+    }
+  }
+
+  async function resolvePermission(requestId: string, decision: PermissionDecision) {
+    if (resolvingPermissionIds.includes(requestId)) return;
+    setResolvingPermissionIds((current) => [...current, requestId]);
+    try {
+      const response = await fetch("/api/permissions/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, decision }),
+      });
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`Permission request failed: ${response.status}`);
+      }
+      if (response.status === 404) {
+        setState((current) => ({
+          ...current,
+          pendingPermissions: current.pendingPermissions.filter((permission) => permission.id !== requestId),
+        }));
+      }
+    } catch {
+      setState((current) => ({
+        ...current,
+        messages: [...current.messages, createLocalSystemMessage("审批失败，请检查本地服务是否正在运行。")],
+      }));
+    } finally {
+      setResolvingPermissionIds((current) => current.filter((id) => id !== requestId));
+    }
+  }
+
+  async function resolveElicitation(requestId: string, response: ElicitationResponse) {
+    if (resolvingElicitationIds.includes(requestId)) return;
+    setResolvingElicitationIds((current) => [...current, requestId]);
+    try {
+      const httpResponse = await fetch("/api/elicitations/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, ...response }),
+      });
+      if (!httpResponse.ok && httpResponse.status !== 404) {
+        throw new Error(`Elicitation request failed: ${httpResponse.status}`);
+      }
+      if (httpResponse.status === 404) {
+        setState((current) => ({
+          ...current,
+          pendingElicitations: current.pendingElicitations.filter((elicitation) => elicitation.id !== requestId),
+        }));
+      }
+    } catch {
+      setState((current) => ({
+        ...current,
+        messages: [...current.messages, createLocalSystemMessage("提交输入失败，请检查本地服务是否正在运行。")],
+      }));
+    } finally {
+      setResolvingElicitationIds((current) => current.filter((id) => id !== requestId));
     }
   }
 
@@ -468,8 +654,8 @@ export function App() {
         throw new Error(`Interrupt request failed: ${response.status}`);
       }
       const data = await response.json();
-      if ((data.cancelledQueuedRunIds?.length ?? 0) > 0 || (data.suppressedRunningRunIds?.length ?? 0) > 0) {
-        setInterruptToast("已打断后续自动协作");
+      if ((data.cancelledQueuedRunIds?.length ?? 0) > 0 || (data.cancellingRunningRunIds?.length ?? 0) > 0) {
+        setInterruptToast("正在停止所有任务");
         window.setTimeout(() => setInterruptToast(null), 3000);
       }
     } catch {
@@ -504,18 +690,19 @@ export function App() {
   }
 
   function chooseAgent(agentId: AgentId) {
+    const agentName = agentsById.get(agentId)?.label ?? agentId;
     setSelectedAgent(agentId);
     setContent((current) => {
-      if (!current.trim() || /^@\w[\w-]*:\s*$/.test(current.trim())) {
-        return `@${agentId}: `;
+      if (!current.trim() || /^@[^\s@:：]+:\s*$/.test(current.trim())) {
+        return `@${agentName}: `;
       }
       return current;
     });
-    const nextCursorIndex = agentId.length + 3;
+    const nextCursorIndex = agentName.length + 3;
     setCursorIndex(nextCursorIndex);
     window.setTimeout(() => {
       inputRef.current?.focus();
-      if (!content.trim() || /^@\w[\w-]*:\s*$/.test(content.trim())) {
+      if (!content.trim() || /^@[^\s@:：]+:\s*$/.test(content.trim())) {
         inputRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
       }
     }, 0);
@@ -710,11 +897,10 @@ export function App() {
       return;
     }
 
-    const nextContent = `${content.slice(0, mentionDraft.start)}@${agentId}: ${content.slice(mentionDraft.end)}`;
-    const nextCursorIndex = mentionDraft.start + agentId.length + 3;
-    if (agentId !== "all") {
-      setSelectedAgent(agentId);
-    }
+    const agentName = agentsById.get(agentId)?.label ?? agentId;
+    const nextContent = `${content.slice(0, mentionDraft.start)}@${agentName}: ${content.slice(mentionDraft.end)}`;
+    const nextCursorIndex = mentionDraft.start + agentName.length + 3;
+    setSelectedAgent(agentId);
     setContent(nextContent);
     setCursorIndex(nextCursorIndex);
     window.setTimeout(() => {
@@ -763,18 +949,18 @@ export function App() {
       <aside className="sidebar" aria-label="工作区导航" aria-hidden={sidebarCollapsed}>
         <div className="sidebarTop">
           <div className="brandBlock">
-            <div className="brandMark">orbit</div>
+            <div className="brandMark"><img src="/assets/orbit-mark.png" alt="" />Orbit</div>
             <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
-            <button className="sidebarCollapseBtn" type="button" onClick={() => setSidebarCollapsed(true)} title="隐藏侧边栏">
-              <NavIcon kind="collapse" />
-            </button>
+            <Tooltip content="隐藏侧边栏" placement="right">
+              <Button className="sidebarCollapseBtn" variant="text" shape="square" icon={<ChevronLeftIcon />} onClick={() => setSidebarCollapsed(true)} />
+            </Tooltip>
           </div>
         </div>
 
         <section className="navSection workspaceStack" aria-label="当前工作区和会话">
           <div className="navSectionHeader">
             <span>工作区</span>
-            <button type="button" onClick={createWorkspaceFromDirectoryPicker} disabled={isPickingDirectory} title="新建工作区">+</button>
+            <Button size="small" variant="text" shape="square" icon={<AddIcon />} onClick={createWorkspaceFromDirectoryPicker} disabled={isPickingDirectory} title="新建工作区" />
           </div>
           <div className="workspaceTree">
             {workspaces.length === 0 ? (
@@ -809,7 +995,7 @@ export function App() {
                         </form>
                       ) : (
                         <button className="workspaceNameButton" type="button" onClick={() => handleWorkspaceClick(ws.id)} title={ws.path}>
-                          <NavIcon kind="workspace" />
+                          <FolderIcon className="navIcon" />
                           <span>{ws.name}</span>
                         </button>
                       )}
@@ -855,7 +1041,7 @@ export function App() {
                       </div>
                       {isWorkspaceConversationOpen ? (
                         <button className="rowIconButton persistent" type="button" onClick={() => createConversation(ws.id)} title="新建会话">
-                          <NavIcon kind="edit" />
+                          <EditIcon className="navIcon" />
                         </button>
                       ) : null}
                     </div>
@@ -936,10 +1122,10 @@ export function App() {
           </div>
         </section>
 
-        <section className="navSection compactAgents" aria-label="数字员工">
+        <section className="navSection compactAgents" aria-label="数字员工团队">
           <div className="navSectionHeader">
-            <span><NavIcon kind="agents" />数字员工</span>
-            <button type="button" onClick={() => setShowAgentManager(true)} disabled={!hasWorkspace} title="添加或启用数字员工">+</button>
+            <span><UsergroupIcon />数字员工团队</span>
+            <Button size="small" variant="text" shape="square" icon={<AddIcon />} onClick={() => setShowAgentManager(true)} disabled={!hasWorkspace} title="添加或启用数字员工" />
           </div>
           <nav className="agentList" aria-label="选择数字员工">
             {agentIds.length === 0 ? (
@@ -951,7 +1137,7 @@ export function App() {
               agentIds.map((agentId) => (
                 <AgentButton
                   key={agentId}
-                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", role: "general", status: "idle" }}
+                  agent={agentsById.get(agentId) ?? { id: agentId, label: agentId, runtime: "claude-code", status: "idle" }}
                   selected={selectedAgent === agentId}
                   showLiveStatus={activeView === "conversation"}
                   onClick={() => chooseAgent(agentId)}
@@ -969,10 +1155,10 @@ export function App() {
             className={`sidebarUtilityBtn ${activeView === "analysis" ? "active" : ""}`}
             onClick={() => setActiveView("analysis")}
             disabled={!hasWorkspace}
-            title="协作洞察"
+            title="可观测"
           >
-            <NavIcon kind="analytics" />
-            <span>协作洞察</span>
+            <ChartIcon />
+            <span>可观测</span>
           </button>
           <button
             type="button"
@@ -980,7 +1166,7 @@ export function App() {
             onClick={() => setShowSettings(true)}
             title="设置"
           >
-            ⚙️
+            <SettingIcon />
             <span>设置</span>
           </button>
         </div>
@@ -992,7 +1178,7 @@ export function App() {
         title="显示侧边栏"
         aria-label="显示侧边栏"
       >
-        <NavIcon kind="expand" />
+        <ChevronRightIcon />
       </button>
       <div
         className="sidebarResizeHandle"
@@ -1009,36 +1195,29 @@ export function App() {
       {activeView === "analysis" ? (
         <WorkAnalysisPanel
           workspaceId={state.workspace.id}
-          workspaceName={state.workspace.name}
           onOpenConversation={(conversationId) => { void switchConversation(conversationId); }}
         />
       ) : (
       <section className="conversation" aria-label="Chat conversation">
-        <header className={`conversationHeader ${headerCollapsed ? "collapsed" : ""}`}>
-          {headerCollapsed ? (
-            <div className="conversationHeaderLeft">
-              {state.workspace.name ? <p className="eyebrow">{state.workspace.name}</p> : null}
-              <h1 title={state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}>
-                {state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}
-              </h1>
-            </div>
-          ) : (
-            <div className="conversationHeaderLeft">
-              <p className="eyebrow">{state.workspace.name || "工作区"}</p>
-              <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
-              {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
-            </div>
-          )}
+        <header className="conversationHeader">
+          <div className="conversationHeaderLeft">
+            <div className="conversationBreadcrumb"><span>{state.workspace.name || "工作区"}</span><ChevronRightIcon /><span>会话</span><ChevronRightIcon /></div>
+            <h1>{state.conversation.name || (hasWorkspace ? "新会话" : "未选择工作区")}</h1>
+            {state.workspace.path ? <p className="workspacePath" title={state.workspace.path}>{state.workspace.path}</p> : null}
+          </div>
           <div className="conversationHeaderRight">
-            {!headerCollapsed && <span className="headerMeta">{state.messages.length} 条消息</span>}
-            <button
-              className="headerCollapseBtn"
-              type="button"
-              onClick={() => setHeaderCollapsed((c) => !c)}
-              title={headerCollapsed ? "展开头部" : "折叠头部"}
-            >
-              <NavIcon kind="collapse" />
-            </button>
+            <Avatar.Group size="28px" max={4}>
+              {state.agents.map((agent) => <Avatar key={agent.id} style={{ backgroundColor: agentColor(agent.id) }}>{agent.label.slice(0, 1)}</Avatar>)}
+            </Avatar.Group>
+            <span className="headerMeta">{state.agents.length} 人在线</span>
+            <Button
+              className="headerTaskButton"
+              variant="text"
+              icon={<ChatBubbleHistoryIcon />}
+              disabled={!latestTaskMessage}
+              onClick={() => latestTaskMessage && setSelectedTaskMessageId(latestTaskMessage.id)}
+            >运行记录 {latestTaskMessage?.activity?.length ?? 0} 条</Button>
+            <Button variant="text" shape="square" icon={<MoreIcon />} aria-label="更多操作" />
           </div>
         </header>
 
@@ -1053,7 +1232,7 @@ export function App() {
               {isLoadingOlderMessages ? "加载中..." : "加载更早的消息"}
             </button>
           ) : null}
-          {state.messages.length === 0 ? (
+          {visibleMessages.length === 0 ? (
             <div className="emptyState">
               <div className="emptyOrbital" aria-hidden="true">
                 <svg viewBox="0 0 120 120" width="120" height="120">
@@ -1070,7 +1249,7 @@ export function App() {
                 {hasWorkspace ? (
                   <>
                     <li><strong>1</strong> 启用或添加数字员工</li>
-                    <li><strong>2</strong> 使用 <code>@agent:</code> 输入任务</li>
+                    <li><strong>2</strong> 使用 <code>@数字员工名称:</code> 输入任务</li>
                     <li><strong>3</strong> 首句话会成为会话名称</li>
                   </>
                 ) : (
@@ -1083,13 +1262,14 @@ export function App() {
               </ol>
             </div>
           ) : (
-            state.messages.map((message) => (
+            visibleMessages.map((message) => (
               <MessageRow
                 key={message.id}
                 message={message}
                 agent={message.agentId ? agentsById.get(message.agentId) : undefined}
                 parentMessage={message.parentMessageId ? messagesById.get(message.parentMessageId) : undefined}
                 agentsById={agentsById}
+                onOpenTask={() => setSelectedTaskMessageId(message.id)}
               />
             ))
           )}
@@ -1103,7 +1283,7 @@ export function App() {
                 setIsNearBottom(true);
               }}
             >
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12V4m0 0L4 8m4-4l4 4" /></svg>
+              <ArrowDownIcon />
             </button>
           )}
         </div>
@@ -1117,6 +1297,32 @@ export function App() {
         ) : null}
         {interruptToast ? <div className="interruptToast">{interruptToast}</div> : null}
         {attachmentToast ? <div className="attachmentToast">{attachmentToast}</div> : null}
+        {state.pendingPermissions.length > 0 ? (
+          <div className="permissionApprovalStack" aria-live="polite">
+            {state.pendingPermissions.map((permission) => (
+              <PermissionApprovalPanel
+                key={permission.id}
+                permission={permission}
+                agentLabel={agentsById.get(permission.agentId)?.label ?? permission.agentId}
+                resolving={resolvingPermissionIds.includes(permission.id)}
+                onDecision={(decision) => resolvePermission(permission.id, decision)}
+              />
+            ))}
+          </div>
+        ) : null}
+        {state.pendingElicitations.length > 0 ? (
+          <div className="elicitationStack" aria-live="polite">
+            {state.pendingElicitations.map((elicitation) => (
+              <ElicitationPanel
+                key={elicitation.id}
+                elicitation={elicitation}
+                agentLabel={agentsById.get(elicitation.agentId)?.label ?? elicitation.agentId}
+                resolving={resolvingElicitationIds.includes(elicitation.id)}
+                onResponse={(response) => resolveElicitation(elicitation.id, response)}
+              />
+            ))}
+          </div>
+        ) : null}
         <form className="composer" onSubmit={sendMessage}>
           <div className={`composerInputWrap${pendingAttachments.length > 0 ? " hasAttachments" : ""}`}>
             {pendingAttachments.length > 0 && (
@@ -1168,7 +1374,17 @@ export function App() {
                 handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
-              placeholder={!hasWorkspace ? "先选择或创建工作区" : hasCoordinator ? "直接输入消息，或使用 @developer: 指派具体数字员工" : hasEnabledAgent ? `@${selectedAgent}: 输入任务` : "先添加或启用数字员工"}
+              placeholder={!hasWorkspace
+                ? "先选择或创建工作区"
+                : !hasEnabledAgent
+                  ? "先添加或启用数字员工"
+                  : interactionMode === "direct"
+                    ? lastDirectAgentLabel
+                      ? `继续与 ${lastDirectAgentLabel} 对话，或 @其他员工切换`
+                      : "@一位数字员工开始对话"
+                    : interactionMode === "supervised"
+                      ? "输入目标，由监工协调数字员工"
+                      : "@一位数字员工发起协作"}
               aria-label="Message to agent"
               disabled={!hasWorkspace || !hasEnabledAgent}
               spellCheck={false}
@@ -1181,22 +1397,97 @@ export function App() {
                 onSelect={chooseMention}
               />
             ) : null}
-          </div>
-          <div className="composerActions">
+            <div className="composerModeRow">
+              <div className="interactionModeControl">
+                <button
+                  type="button"
+                  className={`interactionModeTrigger ${interactionMode !== "collaborative" ? "accented" : ""}`}
+                  onClick={() => setShowInteractionModeMenu((open) => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={showInteractionModeMenu}
+                  title={interactionModeTooltip(interactionMode)}
+                >
+                  <UsergroupIcon className="interactionModeIcon" />
+                  <span>{interactionModeLabel(interactionMode)}</span>
+                  <span className="approvalModeChevron" aria-hidden="true">⌄</span>
+                </button>
+                {showInteractionModeMenu ? (
+                  <div className="interactionModeMenu" role="menu" aria-label="会话协作模式">
+                    {INTERACTION_MODE_META.map((meta) => (
+                      <button
+                        key={meta.mode}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={interactionMode === meta.mode}
+                        title={meta.tooltip}
+                        onClick={() => { void selectInteractionMode(meta.mode); }}
+                      >
+                        <InteractionModeIcon mode={meta.mode} />
+                        <span><strong>{meta.label}</strong><small>{meta.tooltip}</small></span>
+                        {interactionMode === meta.mode ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="approvalModeControl">
+                <button
+                  type="button"
+                  className={`approvalModeTrigger ${approvalMode === "full-access" ? "fullAccess" : ""}`}
+                  onClick={() => setShowApprovalModeMenu((open) => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={showApprovalModeMenu}
+                  title="设置这条消息及后续协作的审批方式"
+                >
+                  <SecuredIcon className="approvalModeIcon" />
+                  <span>{approvalMode === "full-access" ? "完全批准" : "向我审批"}</span>
+                  <span className="approvalModeChevron" aria-hidden="true">⌄</span>
+                </button>
+                {showApprovalModeMenu ? (
+                  <div className="approvalModeMenu" role="menu" aria-label="权限审批方式">
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={approvalMode === "ask"}
+                      onClick={() => { setApprovalMode("ask"); setShowApprovalModeMenu(false); }}
+                    >
+                      <ApprovalModeIcon mode="ask" />
+                      <span><strong>向我审批</strong><small>敏感操作执行前暂停并询问</small></span>
+                      {approvalMode === "ask" ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={approvalMode === "full-access"}
+                      onClick={() => { setApprovalMode("full-access"); setShowApprovalModeMenu(false); }}
+                    >
+                      <ApprovalModeIcon mode="full-access" />
+                      <span><strong>完全批准</strong><small>自动批准员工权限范围内的操作</small></span>
+                      {approvalMode === "full-access" ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            <div className="composerActions">
             {hasRunningOrQueued ? (
-              <button
+              <Button
                 type="button"
                 className="interruptBtn"
                 onClick={interruptChain}
-                disabled={isInterrupting}
-                title="停止后续自动协作"
+                disabled={isInterrupting || hasCancellingRun}
+                title="停止所有任务"
+                variant="outline"
+                theme="danger"
+                icon={<StopCircleIcon />}
               >
-                {isInterrupting ? <span className="sendSpinner" aria-hidden="true" /> : "打断"}
-              </button>
+                {isInterrupting || hasCancellingRun ? <><span className="sendSpinner" aria-hidden="true" />正在停止…</> : "停止所有任务"}
+              </Button>
             ) : null}
-            <button type="submit" disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending}>
+            <Button type="submit" theme="primary" icon={<SendIcon />} disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode}>
               {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
-            </button>
+            </Button>
+            </div>
+          </div>
           </div>
         </form>
       </section>
@@ -1217,17 +1508,16 @@ export function App() {
         <div className="modalOverlay" onClick={() => setPendingWorkspacePath(null)}>
           <div className="modalPanel presetPickerPanel" onClick={(e) => e.stopPropagation()}>
             <div className="modalHeader">
-              <h2>选择工作区模板</h2>
+              <h2>选择数字员工团队</h2>
               <button type="button" onClick={() => setPendingWorkspacePath(null)}>&times;</button>
             </div>
             <div className="settingsBody">
-              <span className="workspaceConfigHint">选择一个内置模板快速配置工作区，或使用空白工作区。</span>
+              <span className="workspaceConfigHint">选择团队模板将预置对应的数字员工；选择空白则不预置，创建后可自行添加。</span>
               <div className="presetPickerList">
                 {workspacePresets.map((preset) => (
                   <PresetCard
                     key={preset.id}
                     preset={preset}
-                    runtimeAvailability={state.runtimeAvailability}
                     onClick={() => confirmWorkspaceCreation(preset.id)}
                   />
                 ))}
@@ -1246,6 +1536,14 @@ export function App() {
           onRefreshRuntimes={refreshRuntimeAvailability}
         />
       ) : null}
+      <TaskDetailDrawer
+        visible={Boolean(selectedTaskMessage)}
+        message={selectedTaskMessage}
+        parentMessage={selectedTaskMessage?.parentMessageId ? messagesById.get(selectedTaskMessage.parentMessageId) : undefined}
+        agent={selectedTaskMessage?.agentId ? agentsById.get(selectedTaskMessage.agentId) : undefined}
+        agents={state.agents}
+        onClose={() => setSelectedTaskMessageId(null)}
+      />
       {previewAttachment ? (
         <div className="imagePreviewOverlay" onClick={() => setPreviewAttachment(null)}>
           <div className="imagePreviewModal" onClick={(e) => e.stopPropagation()}>
@@ -1264,6 +1562,223 @@ export function App() {
   );
 }
 
+function ApprovalModeIcon({ mode }: { mode: ApprovalMode }) {
+  return <SecuredIcon className={`approvalModeIcon ${mode === "full-access" ? "fullAccess" : "ask"}`} aria-hidden="true" />;
+}
+
+function InteractionModeIcon({ mode }: { mode: InteractionMode }) {
+  const icon =
+    mode === "direct" ? <ChatBubbleHistoryIcon /> :
+    mode === "supervised" ? <ChartIcon /> :
+    <UsergroupIcon />;
+  return <span className={`interactionModeIcon ${mode}`} aria-hidden="true">{icon}</span>;
+}
+
+function PermissionApprovalPanel(props: {
+  permission: PendingPermission;
+  agentLabel: string;
+  resolving: boolean;
+  onDecision: (decision: PermissionDecision) => void;
+}) {
+  const detail = props.permission.input || props.permission.locations?.join("、");
+  return (
+    <section className="permissionApproval" aria-label={`${props.agentLabel} 请求权限`}>
+      <span className="permissionApprovalIcon"><ApprovalModeIcon mode="ask" /></span>
+      <div className="permissionApprovalContent">
+        <strong>{props.agentLabel} 请求批准</strong>
+        <span>{props.permission.title}</span>
+        {detail ? <code title={detail}>{detail}</code> : null}
+      </div>
+      <div className="permissionApprovalActions">
+        <button type="button" className="permissionRejectBtn" disabled={props.resolving} onClick={() => props.onDecision("reject")}>拒绝</button>
+        <button type="button" className="permissionAllowBtn" disabled={props.resolving} onClick={() => props.onDecision("allow")}>
+          {props.resolving ? <span className="sendSpinner" aria-hidden="true" /> : "允许一次"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ElicitationPanel(props: {
+  elicitation: PendingElicitation;
+  agentLabel: string;
+  resolving: boolean;
+  onResponse: (response: ElicitationResponse) => void;
+}) {
+  const schema = props.elicitation.requestedSchema;
+  const fields = Object.entries(schema?.properties ?? {});
+  const hasUnsupportedFields = fields.some(([, field]) => (
+    !["string", "number", "integer", "boolean", "array"].includes(field.type) ||
+    (field.type === "array" && !field.items)
+  ));
+  const [values, setValues] = useState<ElicitationContent>(() => {
+    const defaults: ElicitationContent = {};
+    for (const [name, field] of fields) {
+      defaults[name] = field.default ?? (field.type === "boolean" ? false : field.type === "array" ? [] : "");
+    }
+    return defaults;
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  if (props.elicitation.mode === "url") {
+    return (
+      <section className="elicitationPanel" aria-label={`${props.agentLabel} 请求外部输入`}>
+        <span className="elicitationIcon" aria-hidden="true">?</span>
+        <div className="elicitationContent">
+          <strong>{props.agentLabel} 需要你的输入</strong>
+          <span>{props.elicitation.message}</span>
+          {props.elicitation.url && isSafeExternalUrl(props.elicitation.url) ? (
+            <a href={props.elicitation.url} target="_blank" rel="noreferrer" className="elicitationUrl">
+              打开外部页面
+            </a>
+          ) : null}
+          {props.elicitation.url ? <code title={props.elicitation.url}>{props.elicitation.url}</code> : null}
+        </div>
+        <div className="elicitationActions">
+          <button type="button" className="permissionRejectBtn" disabled={props.resolving} onClick={() => props.onResponse({ action: "decline" })}>拒绝</button>
+          <button type="button" className="permissionAllowBtn" disabled={props.resolving} onClick={() => props.onResponse({ action: "accept" })}>
+            {props.resolving ? <span className="sendSpinner" aria-hidden="true" /> : "同意继续"}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (props.elicitation.mode !== "form" || !schema || hasUnsupportedFields) {
+    return (
+      <section className="elicitationPanel" aria-label={`${props.agentLabel} 请求输入`}>
+        <span className="elicitationIcon" aria-hidden="true">?</span>
+        <div className="elicitationContent">
+          <strong>{props.agentLabel} 请求输入</strong>
+          <span>{props.elicitation.message}</span>
+          <small>当前版本暂不支持这种输入类型。</small>
+        </div>
+        <div className="elicitationActions">
+          <button type="button" className="permissionRejectBtn" disabled={props.resolving} onClick={() => props.onResponse({ action: "cancel" })}>关闭</button>
+        </div>
+      </section>
+    );
+  }
+
+  const formSchema = schema;
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content: ElicitationContent = {};
+    const required = new Set(formSchema.required ?? []);
+
+    for (const [name, field] of fields) {
+      const value = values[name];
+      const isEmpty = value === "" || (Array.isArray(value) && value.length === 0);
+      if (required.has(name) && isEmpty) {
+        setError(`请填写“${field.title || name}”`);
+        return;
+      }
+      if (isEmpty) continue;
+
+      if (field.type === "number" || field.type === "integer") {
+        const numberValue = typeof value === "number" ? value : Number(value);
+        if (!Number.isFinite(numberValue) || (field.type === "integer" && !Number.isInteger(numberValue))) {
+          setError(`“${field.title || name}”必须是有效的${field.type === "integer" ? "整数" : "数字"}`);
+          return;
+        }
+        if (field.minimum != null && numberValue < field.minimum || field.maximum != null && numberValue > field.maximum) {
+          setError(`“${field.title || name}”超出允许范围`);
+          return;
+        }
+        content[name] = numberValue;
+        continue;
+      }
+
+      if (field.type === "string" && typeof value === "string") {
+        if (field.minLength != null && value.length < field.minLength || field.maxLength != null && value.length > field.maxLength) {
+          setError(`“${field.title || name}”长度不符合要求`);
+          return;
+        }
+      }
+      if (field.type === "array" && Array.isArray(value)) {
+        if (field.minItems != null && value.length < field.minItems || field.maxItems != null && value.length > field.maxItems) {
+          setError(`“${field.title || name}”选择数量不符合要求`);
+          return;
+        }
+      }
+      content[name] = value;
+    }
+
+    setError(null);
+    props.onResponse({ action: "accept", content });
+  }
+
+  return (
+    <section className="elicitationPanel elicitationFormPanel" aria-label={`${props.agentLabel} 请求输入`}>
+      <span className="elicitationIcon" aria-hidden="true">?</span>
+      <form className="elicitationForm" onSubmit={submit}>
+        <strong>{props.agentLabel} 需要你的输入</strong>
+        <span>{props.elicitation.message}</span>
+        {formSchema.title ? <h4>{formSchema.title}</h4> : null}
+        {formSchema.description ? <small>{formSchema.description}</small> : null}
+        {fields.map(([name, field]) => (
+          <ElicitationField
+            key={name}
+            name={name}
+            field={field}
+            value={values[name]}
+            onChange={(value) => setValues((current) => ({ ...current, [name]: value }))}
+          />
+        ))}
+        {error ? <div className="elicitationError" role="alert">{error}</div> : null}
+        <div className="elicitationActions">
+          <button type="button" className="permissionRejectBtn" disabled={props.resolving} onClick={() => props.onResponse({ action: "decline" })}>拒绝</button>
+          <button type="submit" className="permissionAllowBtn" disabled={props.resolving}>
+            {props.resolving ? <span className="sendSpinner" aria-hidden="true" /> : "提交"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function ElicitationField(props: {
+  name: string;
+  field: ElicitationFieldSchema;
+  value: string | number | boolean | string[] | undefined;
+  onChange: (value: string | number | boolean | string[]) => void;
+}) {
+  const label = props.field.title || props.name;
+  const options = props.field.enum?.map((value) => ({ const: value, title: value }))
+    ?? props.field.oneOf
+    ?? (props.field.items?.enum?.map((value) => ({ const: value, title: value }))
+      ?? props.field.items?.anyOf);
+  const isMulti = props.field.type === "array";
+
+  return (
+    <label className="elicitationField">
+      <span>{label}{props.field.description ? <small>{props.field.description}</small> : null}</span>
+      {options && !isMulti ? (
+        <select value={typeof props.value === "string" ? props.value : ""} onChange={(event) => props.onChange(event.target.value)}>
+          <option value="">请选择</option>
+          {options.map((option) => <option key={option.const} value={option.const}>{option.title}</option>)}
+        </select>
+      ) : isMulti ? (
+        <select multiple value={Array.isArray(props.value) ? props.value : []} onChange={(event) => props.onChange(Array.from(event.target.selectedOptions, (option) => option.value))}>
+          {(options ?? []).map((option) => <option key={option.const} value={option.const}>{option.title}</option>)}
+        </select>
+      ) : props.field.type === "boolean" ? (
+        <input type="checkbox" checked={props.value === true} onChange={(event) => props.onChange(event.target.checked)} />
+      ) : (
+        <input
+          type={props.field.type === "number" || props.field.type === "integer" ? "number" : "text"}
+          value={typeof props.value === "string" || typeof props.value === "number" ? props.value : ""}
+          min={props.field.minimum ?? undefined}
+          max={props.field.maximum ?? undefined}
+          step={props.field.type === "integer" ? 1 : "any"}
+          onChange={(event) => props.onChange(event.target.value)}
+        />
+      )}
+    </label>
+  );
+}
+
 function MentionMenu(props: {
   agentsById: Map<AgentId, AgentState>;
   candidates: AgentId[];
@@ -1273,7 +1788,6 @@ function MentionMenu(props: {
   return (
     <div className="mentionMenu" role="listbox" aria-label="Choose agent">
       {props.candidates.map((agentId, index) => {
-        const isAll = agentId === "all";
         const agent = props.agentsById.get(agentId);
         const status = agent?.status ?? "idle";
         return (
@@ -1287,76 +1801,15 @@ function MentionMenu(props: {
             onClick={() => props.onSelect(agentId)}
           >
             <span className="mentionName">
-              <span className={`mentionDot ${isAll ? "idle" : status}`} aria-hidden="true" />
-              <span>@{agentId}</span>
+              <span className={`mentionDot ${status}`} aria-hidden="true" />
+              <span>@{agent?.label ?? agentId}</span>
             </span>
-            <small>{isAll ? "all agents" : status}</small>
+            <small>{status}</small>
           </button>
         );
       })}
       <div className="mentionHint">↑↓ select · Tab/Enter confirm · Esc close</div>
     </div>
-  );
-}
-
-function NavIcon({ kind }: { kind: "workspace" | "conversation" | "agents" | "settings" | "collapse" | "expand" | "edit" | "analytics" }) {
-  if (kind === "workspace") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.5 4.5h3l1.1 1.4h6.9v5.6a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 2.5 11.5v-7Z" />
-      </svg>
-    );
-  }
-  if (kind === "conversation") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 4.5A2 2 0 0 1 5 2.5h6A2 2 0 0 1 13 4.5v4A2 2 0 0 1 11 10.5H7L4 13v-2.6A2 2 0 0 1 3 8.5v-4Z" />
-      </svg>
-    );
-  }
-  if (kind === "agents") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M8 3.2a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Z" />
-        <path d="M3.8 13a4.2 4.2 0 0 1 8.4 0" />
-      </svg>
-    );
-  }
-  if (kind === "analytics") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.5 13.5h11" />
-        <path d="M4 11V8.5M8 11V4.5M12 11V6.5" />
-      </svg>
-    );
-  }
-  if (kind === "collapse") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M10 3 5 8l5 5" />
-      </svg>
-    );
-  }
-  if (kind === "expand") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M6 3l5 5-5 5" />
-      </svg>
-    );
-  }
-  if (kind === "edit") {
-    return (
-      <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 11.5V13h1.5l7-7L10 4.5l-7 7Z" />
-        <path d="M9.5 5 11 3.5 12.5 5 11 6.5" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="navIcon" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z" />
-      <path d="M8 1.8v1.4M8 12.8v1.4M3.6 3.6l1 1M11.4 11.4l1 1M1.8 8h1.4M12.8 8h1.4M3.6 12.4l1-1M11.4 4.6l1-1" />
-    </svg>
   );
 }
 
@@ -1377,7 +1830,7 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
         <span className="agentTextRow">
           <strong>
             {props.agent.label}
-            {isRunning && <span className="agentRunningLabel">Running</span>}
+            {isRunning && <span className="agentRunningLabel">运行中</span>}
             <RuntimeBadge runtime={props.agent.runtime} />
           </strong>
           {props.onConfig && (
@@ -1389,15 +1842,11 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
               onClick={(e) => { e.stopPropagation(); props.onConfig!(); }}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); props.onConfig!(); } }}
             >
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11.5 1.5l3 3L5 14H2v-3z" />
-                <path d="M9.5 3.5l3 3" />
-              </svg>
+              <EditIcon />
             </span>
           )}
         </span>
         <small>
-          {props.agent.id}
           {isRuntimeMissing ? (
             <>
               {" · "}<a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="agentInstallLink" onClick={(e) => e.stopPropagation()}>安装 ↗</a>
@@ -1405,11 +1854,6 @@ function AgentButton(props: { agent: AgentState; selected: boolean; showLiveStat
           ) : null}
         </small>
       </span>
-      {showStatus ? (
-        <span className={`agentStatusPill ${isRuntimeMissing ? "runtimeMissing" : props.agent.status}`}>
-          {isRuntimeMissing ? "missing" : props.agent.status}
-        </span>
-      ) : null}
     </button>
   );
 }
@@ -1419,47 +1863,68 @@ function MessageRow({
   agent,
   parentMessage,
   agentsById,
+  onOpenTask,
 }: {
   message: ChatMessage;
   agent?: AgentState;
   parentMessage?: ChatMessage;
   agentsById: Map<AgentId, AgentState>;
+  onOpenTask: () => void;
 }) {
-  const author = message.kind === "user" ? "You" : message.kind === "agent" ? agent?.label ?? message.agentId ?? "agent" : "system";
+  const author = message.kind === "user" ? "你" : message.kind === "agent" ? agent?.label ?? message.agentId ?? "数字员工" : "系统";
   const isRunning = message.status === "running";
+  const isCancelling = message.status === "cancelling" || message.runStatus === "cancelling";
   const isQueued = message.runStatus === "queued";
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
-  const [cancelling, setCancelling] = useState(false);
+  const compactHandoffSource = parentMessage?.kind === "agent"
+    ? agentsById.get(parentMessage.agentId ?? "")?.label ?? parentMessage.agentId ?? "数字员工"
+    : null;
+  const isProgressPlaceholder = message.kind === "agent"
+    && (message.content.endsWith(" is working...") || message.content.endsWith(" queued..."));
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyResetTimer = useRef<number | null>(null);
+  const canCopyMessage = message.content.trim().length > 0 && !isProgressPlaceholder;
 
-  async function cancelRun() {
-    if (!message.runId || cancelling) return;
-    setCancelling(true);
-    try {
-      await fetch(`/api/runs/${message.runId}/cancel`, { method: "POST" });
-    } catch {
-      // Cancellation request failed silently — the run may already be done
-    } finally {
-      setCancelling(false);
+  useEffect(() => () => {
+    if (copyResetTimer.current !== null) {
+      window.clearTimeout(copyResetTimer.current);
     }
+  }, []);
+
+  async function copyMessage() {
+    if (!canCopyMessage) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+
+    if (copyResetTimer.current !== null) {
+      window.clearTimeout(copyResetTimer.current);
+    }
+    copyResetTimer.current = window.setTimeout(() => setCopyState("idle"), 1500);
   }
 
   return (
     <article className={`message ${message.kind}`}>
       <div className="messageMeta">
+        {message.kind === "agent" ? (
+          <Avatar
+            className="messageAuthorAvatar"
+            size="24px"
+            style={{ backgroundColor: agentColor(message.agentId ?? agent?.id ?? "agent") }}
+            aria-label={`${author}头像`}
+          >
+            {author.slice(0, 1)}
+          </Avatar>
+        ) : null}
         <strong>{author}</strong>
         {message.kind === "agent" && agent ? <RuntimeBadge runtime={agent.runtime} /> : null}
-        {message.status ? <span className={`statusPill ${message.status}`}>{message.status}</span> : null}
-        {((isQueued || isRunning) && message.runId) || cancelling ? (
-          <button
-            type="button"
-            className="cancelRunBtn"
-            onClick={cancelRun}
-            disabled={cancelling}
-            title={cancelling ? "正在取消..." : isRunning ? "打断正在执行的任务" : "取消排队任务"}
-          >
-            {cancelling ? "取消中..." : isRunning ? "打断" : "取消"}
-          </button>
-        ) : null}
+        {message.status ? <span className={`statusPill ${message.status}`}>{messageStatusLabel(message.status)}</span> : null}
         {/* 用户消息显示创建时间 */}
         {message.kind === "user" && message.createdAt ? (
           <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
@@ -1472,6 +1937,17 @@ function MessageRow({
             isRunning={isRunning}
           />
         ) : null}
+        {canCopyMessage ? (
+          <button
+            className={`messageCopyBtn ${copyState}`}
+            type="button"
+            onClick={(event) => { event.stopPropagation(); void copyMessage(); }}
+            aria-label={copyState === "copied" ? "已复制消息" : "复制消息"}
+            title={copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制消息"}
+          >
+            {copyState === "copied" ? <CheckIcon /> : <CopyIcon />}
+          </button>
+        ) : null}
       </div>
       {message.sessionId || message.runIndex ? (
         <div className="sessionInfo">
@@ -1481,10 +1957,18 @@ function MessageRow({
           {message.runIndex ? <span>第 {message.runIndex} 次执行</span> : null}
         </div>
       ) : null}
-      {handoffSummary ? <div className="handoffSummary">{handoffSummary}</div> : null}
+      {compactHandoffSource ? (
+        <div className="handoffSummary" title={handoffSummary ?? undefined}>
+          <span className="handoffSourcePrefix">来自</span>
+          <span>{compactHandoffSource}</span>
+        </div>
+      ) : handoffSummary && parentMessage?.kind !== "user" ? (
+        <div className="handoffSummary" title={handoffSummary}>{handoffSummary}</div>
+      ) : null}
       <div className="messageBody">
-        {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} /> : null}
-        {message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
+        {isProgressPlaceholder ? (
+          <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
+        ) : message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
             {message.attachments.map((att) => (
@@ -1506,8 +1990,21 @@ function MessageRow({
           </div>
         ) : null}
       </div>
+      {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} onOpenDetails={onOpenTask} /> : null}
     </article>
   );
+}
+
+function messageStatusLabel(status: ChatMessage["status"]): string {
+  switch (status) {
+    case "sent": return "已发送";
+    case "running": return "运行中";
+    case "cancelling": return "取消中";
+    case "done": return "已完成";
+    case "error": return "失败";
+    case "cancelled": return "已取消";
+    default: return status ?? "";
+  }
 }
 
 function DurationDisplay({ startedAt, completedAt, isRunning }: { startedAt?: string; completedAt?: string; isRunning: boolean }) {
@@ -1555,104 +2052,30 @@ function DurationDisplay({ startedAt, completedAt, isRunning }: { startedAt?: st
   return <time dateTime={startedAt}>{startLabel}</time>;
 }
 
-function ActivityList({ activity, status }: { activity: AgentActivityEvent[]; status?: ChatMessage["status"] }) {
-  const shouldAutoCollapse = status === "done" || status === "error";
-  const [manualOverride, setManualOverride] = useState(false);
-  const [expanded, setExpanded] = useState(!shouldAutoCollapse);
-  const timelineRef = useRef<HTMLDivElement | null>(null);
+function ActivityList({ activity, status, onOpenDetails }: { activity: AgentActivityEvent[]; status?: ChatMessage["status"]; onOpenDetails: () => void }) {
   const toolCount = activity.filter((item) => item.type === "tool.started").length;
   const failedCount = activity.filter((item) => item.type === "tool.failed").length;
   const errorCount = activity.filter((item) => item.type === "error").length;
   const latest = activity[activity.length - 1];
-  const visibleActivity = expanded ? activity : activity.slice(-3);
-
-  useEffect(() => {
-    if (!manualOverride) {
-      setExpanded(!shouldAutoCollapse);
-    }
-  }, [manualOverride, shouldAutoCollapse]);
-
-  useEffect(() => {
-    if (expanded) {
-      timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight });
-    }
-  }, [activity.length, expanded]);
-
-  function toggleExpanded() {
-    setManualOverride(true);
-    setExpanded((value) => !value);
-  }
-
   return (
-    <div className={`activityPanel ${expanded ? "expanded" : "collapsed"}`} aria-label="Agent activity">
-      <div className="activityHeader">
-        <div className="activitySummary">
-          <strong>Activity</strong>
-          <span>{activity.length} events</span>
-          {toolCount > 0 ? <span>{toolCount} tools</span> : null}
-          {failedCount > 0 ? <span className="activityErrorCount">{failedCount} failed</span> : null}
-          {errorCount > 0 ? <span className="activityErrorCount">{errorCount} errors</span> : null}
-        </div>
-        {activity.length > 3 ? (
-          <button type="button" onClick={toggleExpanded}>
-            {expanded ? "Collapse" : "Show full"}
-          </button>
-        ) : null}
-      </div>
-      {latest ? <div className="activityLatest">{activityText(latest)}</div> : null}
-      <div className="activityTimeline" ref={timelineRef}>
-        {visibleActivity.map((item, index) => (
-          <div className={`activityItem ${item.type.replace(".", "-")}`} key={`${item.timestamp}_${index}`}>
-            <span className="activityDot" aria-hidden="true" />
-            <span className="activityText">{activityText(item)}</span>
-            <time>{formatTime(item.timestamp)}</time>
-          </div>
-        ))}
-      </div>
+    <div className="activityPanel collapsed" aria-label="Agent activity">
+      <button className="activityHeader" type="button" onClick={onOpenDetails} aria-label="打开任务详情">
+        <span className={`activityIndicator ${status ?? "done"}`} aria-hidden="true" />
+        <span className="activitySummary">
+          <strong>运行记录</strong>
+          <span>{activity.length} 条</span>
+          {toolCount > 0 ? <span>{toolCount} 个工具</span> : null}
+          {failedCount > 0 ? <span className="activityErrorCount">{failedCount} 个失败</span> : null}
+          {errorCount > 0 ? <span className="activityErrorCount">{errorCount} 个错误</span> : null}
+        </span>
+        {latest ? <span className="activityLatest">{activityText(latest)}</span> : null}
+        <span className="activityOpenLabel">查看详情</span><ChevronRightIcon className="activityChevron" />
+      </button>
     </div>
   );
 }
 
 const RUNTIMES: readonly AgentRuntimeKind[] = AGENT_RUNTIME_PRIORITY;
-const ROLES: AgentRole[] = ["pm", "architect", "developer", "tester", "general", "coordinator"];
-const PERM_FLAGS: { key: keyof PermissionProfile; label: string; hint: string }[] = [
-  { key: "canReadFiles", label: "读取文件", hint: "允许数字员工读取工作区中的文件内容。" },
-  { key: "canWriteFiles", label: "写入文件", hint: "允许数字员工创建、修改或删除工作区中的文件。" },
-  { key: "canRunCommands", label: "运行命令", hint: "允许数字员工执行终端命令（如构建、测试等）。" },
-  { key: "canInstallDependencies", label: "安装依赖", hint: "允许数字员工安装项目依赖包（如 npm install）。" },
-  { key: "canGitCommit", label: "Git 提交", hint: "允许数字员工执行 git commit 和 git push 操作。" },
-];
-
-function PermissionEditor({ config, onChange }: { config: AgentConfig; onChange: (pp: PermissionProfile) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const pp: PermissionProfile = config.permissionProfile ?? permissionProfile(config.role);
-
-  return (
-    <div className="permSection">
-      <button type="button" className="permToggle" onClick={() => setExpanded((v) => !v)}>
-        {expanded ? "▼" : "▶"} 权限设置
-      </button>
-      {expanded ? (
-        <div className="permFields">
-          {PERM_FLAGS.map(({ key, label, hint }) => (
-            <label key={key} className="permLabel">
-              <input type="checkbox" checked={pp[key] as boolean} onChange={(e) => onChange({ ...pp, [key]: e.target.checked })} /> {label}
-              <span className="fieldHint" title={hint}>?</span>
-            </label>
-          ))}
-          <div className="fieldWithHint">
-            <input
-              placeholder="允许访问的目录（逗号分隔）"
-              value={pp.allowedDirectories.join(", ")}
-              onChange={(e) => onChange({ ...pp, allowedDirectories: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
-            />
-            <span className="fieldHint" title="限制数字员工只能访问指定目录。留空表示允许访问整个工作区。多个目录用逗号分隔。">?</span>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 // Global settings - only runtime-level config
 function SystemSettingsPanel({ onClose }: { onClose: () => void }) {
@@ -1785,33 +2208,19 @@ function uniqueMissingRuntimes(agents: readonly Pick<AgentState, "runtime">[]): 
 }
 
 // A preset template card, shared by the workspace-creation picker and the workspace config panel.
-function PresetCard({ preset, selected, runtimeAvailability, onClick }: { preset: WorkspacePreset; selected?: boolean; runtimeAvailability?: AppState["runtimeAvailability"]; onClick: () => void }) {
+function PresetCard({ preset, selected, onClick }: { preset: WorkspacePreset; selected?: boolean; onClick: () => void }) {
   const classes = [
     "presetCard",
     selected ? "presetCardSelected" : "",
     preset.recommended ? "presetCardRecommended" : "",
   ].filter(Boolean).join(" ");
-  const runtimeSummary = runtimeAvailability && preset.id === PRESET_IDS.multiAgentCollaboration
-    ? summarizeRuntimeAvailability(runtimeAvailability)
-    : null;
   return (
     <button type="button" className={classes} aria-pressed={selected} onClick={onClick}>
       <span className="presetName">{preset.name}</span>
       <span className="presetDesc">{preset.description}</span>
-      {runtimeSummary ? <span className={`presetRuntimeHint ${runtimeSummary.kind}`}>{runtimeSummary.text}</span> : null}
       {preset.recommended ? <span className="presetBadge">推荐</span> : null}
     </button>
   );
-}
-
-function summarizeRuntimeAvailability(availability: AppState["runtimeAvailability"]): { kind: "ready" | "missing"; text: string } {
-  const available = RUNTIMES
-    .filter((runtime) => availability.some((item) => item.runtime === runtimeKindToCliKey(runtime) && item.available))
-    .map((runtime) => runtimeMeta(runtime).label);
-  if (available.length > 0) {
-    return { kind: "ready", text: `将默认使用：${available[0]}` };
-  }
-  return { kind: "missing", text: "未检测到运行时，创建后可按提示安装" };
 }
 
 // Workspace-level config - prompt and rules
@@ -1912,7 +2321,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
               {presets.length > 0 ? (
                 <div className="settingsSection">
                   <label className="settingsLabel">应用模板</label>
-                  <span className="workspaceConfigHint">选择内置模板一键填充提示词和规则，会覆盖当前内容。</span>
+                  <span className="workspaceConfigHint">选择模板一键填充提示词和规则（不改变已配置的数字员工），会覆盖当前内容。</span>
                   <div className="presetSelector">
                     {presets.map((preset) => (
                       <PresetCard key={preset.id} preset={preset} selected={activePresetId === preset.id} onClick={() => applyPreset(preset.id)} />
@@ -1998,6 +2407,7 @@ function AgentManagerPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [teamTemplates, setTeamTemplates] = useState<AgentTeamTemplate[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const focusedAgentApplied = useRef(false);
 
@@ -2027,6 +2437,10 @@ function AgentManagerPanel({
       .then((r) => r.json())
       .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
       .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
+    fetch("/api/agent-teams")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setTeamTemplates(Array.isArray(data) ? data as AgentTeamTemplate[] : []))
+      .catch(() => setTeamTemplates([]));
   }, []);
 
   // Auto-expand the focused agent once configs are loaded
@@ -2044,16 +2458,13 @@ function AgentManagerPanel({
   }
 
   function addConfig() {
-    const role: AgentRole = "general";
     setConfigs((prev) => [
       {
         id: `agent-${Date.now()}`,
         name: "",
-        role,
         runtime: firstAvailableRuntime,
         systemPrompt: "",
         enabled: true,
-        permissionProfile: permissionProfile(role),
       },
       ...prev,
     ]);
@@ -2135,19 +2546,55 @@ function AgentManagerPanel({
     }
   }
 
+  async function applyTeam(teamId: string) {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/agents/apply-team", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teamId }),
+      });
+      if (!res.ok) {
+        const body = await res.json() as { message?: string };
+        setError(body.message ?? "应用团队模板失败。");
+        return;
+      }
+      setConfigs(await res.json() as AgentConfig[]);
+      onSaved();
+    } catch {
+      setError("网络错误，应用团队模板失败。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader">
-          <h2>数字员工</h2>
+          <h2>数字员工团队</h2>
           <button type="button" onClick={onClose}>&times;</button>
         </div>
         {loading ? <p className="settingsLoading">加载中...</p> : (
           <div className="settingsBody">
             <div className="agentManagerIntro">
-              <strong>默认数字员工模板</strong>
-              <span>五个内置模板默认不启用。产品经理（pm）、架构师（architect）、开发（developer）、测试（tester）负责规划与实现，监督者（supervisor）负责会话监督与任务闭环。你可以按当前工作区需要开启，也可以创建自己的数字员工。</span>
+              <strong>数字员工团队模板</strong>
+              <span>内置团队模板包含一组预置的数字员工，点击“应用”会全部启用。新建工作区时选择对应模板也会自动预置该团队。</span>
             </div>
+            {teamTemplates.length > 0 ? (
+              <div className="agentTeamTemplates">
+                {teamTemplates.map((team) => (
+                  <div className="agentTeamTemplate" key={team.id}>
+                    <div>
+                      <strong>{team.name}</strong>
+                      <span>{team.description}</span>
+                    </div>
+                    <button type="button" onClick={() => applyTeam(team.id)} disabled={saving}>应用</button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div className="runtimeProbeRow">
               <span>安装或更新命令行工具后，可以重新检测运行环境。</span>
               <button type="button" className="runtimeRefreshBtn" onClick={onRefreshRuntimes} disabled={isRefreshingRuntimes}>
@@ -2166,9 +2613,7 @@ function AgentManagerPanel({
                         <span className="toggleTrack" />
                       </label>
                       <span className="configCardName">{config.name || config.id}</span>
-                      <span className="configCardPill configCardRole">{config.role}</span>
                       <span className="configCardPill configCardRuntime">{config.runtime}</span>
-                      {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? <span className="configCardPill supervisorBadge">👁 监督</span> : null}
                     </div>
                     <div className="configCardActions">
                       <button type="button" className="copyBtn" onClick={(e) => { e.stopPropagation(); copyConfig(i); }} title="复制">📋</button>
@@ -2180,41 +2625,19 @@ function AgentManagerPanel({
                     <div className="configCardBody">
                       <div className="configFields">
                         <div className="fieldWithHint">
-                          <input placeholder="标识符" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
-                          <span className="fieldHint" title="数字员工的唯一标识符，用于 @mention 语法（如 @developer:）。只能用小写字母，不能有空格。">?</span>
+                          <input placeholder="内部标识符" value={config.id} onChange={(e) => updateConfig(i, { id: e.target.value })} />
+                          <span className="fieldHint" title="仅用于内部保存会话和运行记录，用户指派时使用名称。">?</span>
                         </div>
                         <div className="fieldWithHint">
                           <input placeholder="名称" value={config.name} onChange={(e) => updateConfig(i, { name: e.target.value })} />
                           <span className="fieldHint" title="显示在侧边栏和消息头中的可读名称。">?</span>
                         </div>
                         <div className="fieldWithHint">
-                          <input placeholder="显示标签（可选）" value={config.ui?.label ?? ""} onChange={(e) => updateConfig(i, { ui: { ...config.ui, label: e.target.value || undefined } })} />
-                          <span className="fieldHint" title="侧边栏显示的标签，为空则使用名称字段。">?</span>
-                        </div>
-                        <div className="fieldWithHint">
                           <input placeholder="描述" value={config.description ?? ""} onChange={(e) => updateConfig(i, { description: e.target.value })} />
                           <span className="fieldHint" title="数字员工能力的简短描述。其他数字员工发现可协作成员时会看到此内容。">?</span>
                         </div>
                         <div className="pillGroup">
-                          <span className="pillLabel">角色 <span className="fieldHint" title="决定默认权限和行为。pm = 规划，architect = 设计，developer = 编码，tester = 测试，general = 自定义，coordinator = 纯协调/监督。">?</span></span>
-                          <div className="pillOptions">
-                            {ROLES.map((r) => (
-                              <button
-                                key={r}
-                                type="button"
-                                className={`pillBtn ${config.role === r ? "pillActive" : ""}`}
-                                onClick={() => {
-                                  if (config.role === r) return;
-                                  updateConfig(i, { role: r, permissionProfile: permissionProfile(r) });
-                                }}
-                              >
-                                {r}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="pillGroup">
-                          <span className="pillLabel">运行时 <span className="fieldHint" title="驱动该数字员工的命令行工具。claude-code = Claude CLI，codex = OpenAI Codex，codebuddy = CodeBuddy CLI。">?</span></span>
+                          <span className="pillLabel">运行时 <span className="fieldHint" title="驱动该数字员工的本地运行时。协议适配由 Orbit 在内部处理。">?</span></span>
                           <div className="pillOptions">
                             {RUNTIMES.map((r) => {
                               const isAvail = isRuntimeAvailable(r);
@@ -2246,7 +2669,7 @@ function AgentManagerPanel({
                             return (
                               <div className="runtimeInstallHint">
                                 <span>未检测到 {meta.label}。请先安装，并确认终端中可以运行对应命令；安装后点击重新检测即可继续。</span>
-                                <code className="runtimeInstallCommand">{meta.installCommand}</code>
+                                {meta.installCommand ? <code className="runtimeInstallCommand">{meta.installCommand}</code> : null}
                                 <a href={meta.installUrl} target="_blank" rel="noopener noreferrer" className="runtimeInstallBtn">查看安装指南 ↗</a>
                                 <button type="button" className="runtimeRefreshBtn" onClick={onRefreshRuntimes} disabled={isRefreshingRuntimes}>
                                   {isRefreshingRuntimes ? "检测中..." : "重新检测"}
@@ -2255,19 +2678,10 @@ function AgentManagerPanel({
                             );
                           })()}
                         </div>
-                        {hasActiveChannelWatchTriggers(config.triggers) && config.role === "coordinator" ? (
-                          <SupervisorBanner
-                            maxTriggers={config.triggers?.maxTriggersPerConversation ?? 5}
-                            hasUnassigned={config.triggers?.onUnassignedMessage === true}
-                            hasBlocked={config.triggers?.onAgentBlocked === true}
-                            hasRunFailed={config.triggers?.onRunFailed === true}
-                          />
-                        ) : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
                         </div>
-                        <PermissionEditor config={config} onChange={(pp) => updateConfig(i, { permissionProfile: pp })} />
                       </div>
                     </div>
                   ) : null}
@@ -2282,27 +2696,6 @@ function AgentManagerPanel({
           <button type="button" onClick={save} disabled={saving}>{saving ? "保存中..." : "保存"}</button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function SupervisorBanner({ maxTriggers, hasUnassigned, hasBlocked, hasRunFailed }: { maxTriggers: number; hasUnassigned: boolean; hasBlocked: boolean; hasRunFailed: boolean }) {
-  return (
-    <div className="supervisorBanner">
-      <p><span aria-hidden="true">🔍</span> <strong>会话监督已启用</strong></p>
-      <p>此数字员工会在以下情况自动介入：</p>
-      <ul>
-        {hasUnassigned ? (
-          <li><span aria-hidden="true">⚡</span> <strong>消息未分配</strong> — 消息中没有 @agent: 标记时，自动分析需求并分配任务</li>
-        ) : null}
-        {hasBlocked ? (
-          <li><span aria-hidden="true">⚡</span> <strong>路由阻塞</strong> — 其他数字员工的消息被路由拒绝时，介入兜底处理</li>
-        ) : null}
-        {hasRunFailed ? (
-          <li><span aria-hidden="true">⚡</span> <strong>运行失败</strong> — 数字员工运行出错时，介入判断下一步处理方式</li>
-        ) : null}
-      </ul>
-      <p>⏱ 单轮对话最多自动触发 {maxTriggers} 次，或在任务闭环后自动停止。关闭启用开关可暂停监督。</p>
     </div>
   );
 }
@@ -2323,6 +2716,12 @@ function activityText(item: AgentActivityEvent): string {
   if (item.type === "error") {
     return item.message;
   }
+  if (item.type === "plan.updated") {
+    return "执行计划已更新";
+  }
+  if (item.type === "plan.removed") {
+    return "执行计划已移除";
+  }
   return item.text;
 }
 
@@ -2333,6 +2732,11 @@ function MarkdownContent({ content }: { content: string }) {
 
 function PlainText({ content }: { content: string }) {
   return <div className="plainText">{content}</div>;
+}
+
+function preferredSupervisionRuntime(availability: AppState["runtimeAvailability"]): AgentRuntimeKind | undefined {
+  const available = new Set(availability.filter((item) => item.available).map((item) => item.runtime));
+  return AGENT_RUNTIME_PRIORITY.find((runtime) => available.has(runtimeKindToCliKey(runtime)));
 }
 
 function applyEvent(state: AppState, event: RuntimeEvent): AppState {
@@ -2376,6 +2780,34 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
+  if (event.type === "permission.requested") {
+    if (state.pendingPermissions.some((permission) => permission.id === event.permission.id)) {
+      return state;
+    }
+    return { ...state, pendingPermissions: [...state.pendingPermissions, event.permission] };
+  }
+
+  if (event.type === "permission.resolved") {
+    return {
+      ...state,
+      pendingPermissions: state.pendingPermissions.filter((permission) => permission.id !== event.requestId),
+    };
+  }
+
+  if (event.type === "elicitation.requested") {
+    if (state.pendingElicitations.some((elicitation) => elicitation.id === event.elicitation.id)) {
+      return state;
+    }
+    return { ...state, pendingElicitations: [...state.pendingElicitations, event.elicitation] };
+  }
+
+  if (event.type === "elicitation.resolved") {
+    return {
+      ...state,
+      pendingElicitations: state.pendingElicitations.filter((elicitation) => elicitation.id !== event.requestId),
+    };
+  }
+
   if (event.type === "terminal.chunk") {
     return state;
   }
@@ -2387,7 +2819,25 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
         if (message.runId !== event.runId) {
           return message;
         }
-        return { ...message, activity: [...(message.activity ?? []), event.activity] };
+        const activity = [...(message.activity ?? [])];
+        if (event.activity.type === "plan.updated") {
+          let previousIndex = -1;
+          for (let index = activity.length - 1; index >= 0; index -= 1) {
+            const item = activity[index];
+            if (item?.type === "plan.removed" && (
+              event.activity.plan.id === undefined || item.planId === event.activity.plan.id
+            )) break;
+            if (item?.type === "plan.updated" && item.plan.id === event.activity.plan.id) {
+              previousIndex = index;
+              break;
+            }
+          }
+          if (previousIndex >= 0) activity[previousIndex] = event.activity;
+          else activity.push(event.activity);
+        } else {
+          activity.push(event.activity);
+        }
+        return { ...message, activity };
       }),
     };
   }
@@ -2421,6 +2871,8 @@ function normalizeState(nextState: AppState): AppState {
     },
     runningSummaries: nextState.runningSummaries ?? [],
     runtimeAvailability: nextState.runtimeAvailability ?? [],
+    pendingPermissions: nextState.pendingPermissions ?? [],
+    pendingElicitations: nextState.pendingElicitations ?? [],
   };
 }
 
@@ -2440,7 +2892,7 @@ function runtimeLabel(runtime: AgentState["runtime"]): string {
 
 function findMentionDraft(value: string, cursorIndex: number): { start: number; end: number; query: string } | null {
   const beforeCursor = value.slice(0, cursorIndex);
-  const match = /(^|\s)@([a-zA-Z0-9_]*)$/.exec(beforeCursor);
+  const match = /(^|\s)@([^\s@:：]*)$/u.exec(beforeCursor);
   if (!match) {
     return null;
   }
@@ -2456,17 +2908,25 @@ function findMentionDraft(value: string, cursorIndex: number): { start: number; 
 
 function connectionLabel(state: "connecting" | "live" | "offline"): string {
   if (state === "live") {
-    return "live";
+    return "在线";
   }
   if (state === "offline") {
-    return "offline";
+    return "离线";
   }
-  return "connecting";
+  return "连接中";
+}
+
+function agentColor(id: string): string {
+  const colors = ["#0052d9", "#00a870", "#ed7b2f", "#8e56dd", "#d54941", "#6b7785"];
+  if (id === "supervisor") return "#0f766e";
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length];
 }
 
 const SIDEBAR_MIN_WIDTH = 280;
 const SIDEBAR_MAX_WIDTH = 460;
-const SIDEBAR_DEFAULT_WIDTH = 336;
+const SIDEBAR_DEFAULT_WIDTH = 292;
 
 export type WorkspaceCreationAction = { kind: "choosePreset" } | { kind: "create" };
 

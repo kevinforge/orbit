@@ -21,8 +21,8 @@ test("probeAllRuntimes returns results for all three runtimes", async () => {
   const results = await probeAllRuntimes();
   assert.equal(results.length, 3);
   const names = results.map((r) => r.runtime);
-  assert.ok(names.includes("claude"));
-  assert.ok(names.includes("codex"));
+  assert.ok(names.includes("claude-agent-acp"));
+  assert.ok(names.includes("codex-acp"));
   assert.ok(names.includes("codebuddy"));
   for (const result of results) {
     assert.equal(typeof result.available, "boolean");
@@ -43,12 +43,12 @@ test("probeRuntime handles special characters in command name", async () => {
 
 // --- runtimeKindToCliKey mapping ---
 
-test("runtimeKindToCliKey maps claude-code to claude CLI key", () => {
-  assert.equal(runtimeKindToCliKey("claude-code"), "claude");
+test("runtimeKindToCliKey maps claude-code to the Claude ACP adapter", () => {
+  assert.equal(runtimeKindToCliKey("claude-code"), "claude-agent-acp");
 });
 
-test("runtimeKindToCliKey passes through codex unchanged", () => {
-  assert.equal(runtimeKindToCliKey("codex"), "codex");
+test("runtimeKindToCliKey maps codex to the Codex ACP adapter", () => {
+  assert.equal(runtimeKindToCliKey("codex"), "codex-acp");
 });
 
 test("runtimeKindToCliKey passes through codebuddy unchanged", () => {
@@ -61,12 +61,11 @@ test("runtimeKindToCliKey handles unknown runtime types gracefully", () => {
 
 // --- Codex probe uses the real runtime resolver ---
 
-test("probeCodexRuntime via probeAllRuntimes returns record for codex", async () => {
+test("probeAllRuntimes returns a record for Codex ACP", async () => {
   const results = await probeAllRuntimes();
-  const codex = results.find((r) => r.runtime === "codex");
+  const codex = results.find((r) => r.runtime === "codex-acp");
   assert.ok(codex, "should include codex probe result");
-  // The real resolveCodexCommand is used internally; we verify it doesn't throw
-  // and returns a properly structured result
+  // The adapter resolver is used internally; verify the result stays well formed.
   assert.equal(typeof codex!.available, "boolean");
   if (codex!.available) {
     assert.ok(codex!.path, "should have path when available");
@@ -81,15 +80,15 @@ test("probeCodexRuntime via probeAllRuntimes returns record for codex", async ()
 test("runtimeMeta returns label and installUrl for claude-code", () => {
   const meta = runtimeMeta("claude-code");
   assert.equal(meta.label, "Claude Code");
-  assert.ok(meta.installUrl.includes("anthropic"), "should have anthropic install URL");
-  assert.ok(meta.installCommand.includes("@anthropic-ai/claude-code"), "should include Claude Code install command");
+  assert.ok(meta.installUrl.includes("anthropic.com"), "should have Claude Code setup URL");
+  assert.equal(meta.installCommand, "", "ACP adapter installation must stay internal");
 });
 
 test("runtimeMeta returns label and installUrl for codex", () => {
   const meta = runtimeMeta("codex");
   assert.equal(meta.label, "OpenAI Codex");
-  assert.ok(meta.installUrl.includes("openai"), "should have openai install URL");
-  assert.ok(meta.installCommand.includes("@openai/codex"), "should include Codex install command");
+  assert.ok(meta.installUrl.includes("github.com/openai/codex"), "should have Codex setup URL");
+  assert.equal(meta.installCommand, "", "ACP adapter installation must stay internal");
 });
 
 test("runtimeMeta returns label and installUrl for codebuddy", () => {
@@ -106,32 +105,28 @@ test("runtimeMeta returns runtime name as label for unknown runtime", () => {
   assert.equal(meta.installCommand, "");
 });
 
-test("Codex probe always returns runtime: codex even with custom CODEX_CLI_PATH", async () => {
-  // When CODEX_CLI_PATH points to a different executable (e.g. node),
-  // the probe result must still use runtime: "codex" so UI/server lookups work
-  const prevCliPath = process.env.CODEX_CLI_PATH;
+test("Codex probe always returns runtime: codex-acp with a custom adapter path", async () => {
+  const prevCliPath = process.env.CODEX_ACP_PATH;
   try {
-    process.env.CODEX_CLI_PATH = "node"; // node is always on PATH
+    process.env.CODEX_ACP_PATH = "node";
     const results = await probeAllRuntimes();
-    const codex = results.find((r) => r.runtime === "codex");
-    assert.ok(codex, "should find result with runtime: codex even with custom CODEX_CLI_PATH");
+    const codex = results.find((r) => r.runtime === "codex-acp");
+    assert.ok(codex, "should find result with runtime: codex-acp even with a custom path");
     assert.equal(codex!.available, true);
     // path should reflect the actual resolved command
     assert.ok(codex!.path, "should have a resolved path");
   } finally {
     if (prevCliPath !== undefined) {
-      process.env.CODEX_CLI_PATH = prevCliPath;
+      process.env.CODEX_ACP_PATH = prevCliPath;
     } else {
-      delete process.env.CODEX_CLI_PATH;
+      delete process.env.CODEX_ACP_PATH;
     }
   }
 });
 
-test("probeCodexRuntime is consistent with resolveCodexCommand", async () => {
-  // Verify that probeAllRuntimes' codex probe uses resolveCodexCommand by
-  // checking it runs without throwing for all env var configurations
+test("Codex ACP probe returns a stable availability record", async () => {
   const results = await probeAllRuntimes();
-  const codex = results.find((r) => r.runtime === "codex");
+  const codex = results.find((r) => r.runtime === "codex-acp");
   assert.ok(codex, "codex probe should always return a result");
   // available must be boolean, path must be string|null
   assert.equal(typeof codex!.available, "boolean");

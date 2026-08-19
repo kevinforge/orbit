@@ -2,8 +2,10 @@ node_modules/
 dist/
 output/
 .local/
-.claude/
+/.claude/*
+!/.claude/skills
 .playwright-mcp/
+.playwright-cli/
 .env
 .env.*
 *.log
@@ -13,6 +15,8 @@ spikes/
 coverage/
 .test-tmp/
 .orbit/
+.orbit-group/
+.workbuddy/
 .DS_Store
 Thumbs.db
 

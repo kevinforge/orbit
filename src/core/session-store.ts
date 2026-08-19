@@ -10,6 +10,8 @@ export type SessionRecord = {
   sessionId: string;
   lastRunAt: string;
   runCount: number;
+  transport?: "cli" | "acp";
+  protocolVersion?: number;
 };
 
 export class SessionStore {

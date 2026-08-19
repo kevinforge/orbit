@@ -1,4 +1,4 @@
-import type { AgentId, AgentProfile, MessageAttachment, WorkspaceRuntimeConfig } from "../shared/types.ts";
+import type { AgentId, AgentProfile, InteractionMode, MessageAttachment, WorkspaceRuntimeConfig } from "../shared/types.ts";
 
 export const SUPERVISOR_TOOL_REMINDER =
   "Remember: you CANNOT read files or use any tools. " +
@@ -14,6 +14,8 @@ export type AgentContextInput = {
   agentId: AgentId;
   profiles: readonly AgentProfile[];
   agentMessage: string;
+  /** 本轮运行的模式快照（继承自源消息），决定 Orbit 内置协作规则。 */
+  interactionMode: InteractionMode;
   history?: AgentHistoryEntry[];
   workspaceConfig?: WorkspaceRuntimeConfig;
   imagePaths?: string[];
@@ -36,42 +38,67 @@ function escapeDynamicContent(text: string): string {
 function renderIdentitySection(profile: AgentProfile | undefined, agentId: AgentId): string {
   return [
     "<identity>",
-    `Current agent: ${profile?.name ?? agentId} (@${agentId})`,
-    `Role: ${profile?.role ?? "general"}`,
+    `Current agent: ${profile?.name ?? agentId}`,
+    "Identity: a configurable digital employee with a specific task instruction.",
     "</identity>",
   ].join("\n");
 }
 
-function renderPermissionsSection(profile: AgentProfile | undefined): string {
-  if (!profile) return "";
-  const lines = [
-    `- read files: ${profile.permissionProfile.canReadFiles ? "yes" : "no"}`,
-    `- write files: ${profile.permissionProfile.canWriteFiles ? "yes" : "no"}`,
-    `- run commands: ${profile.permissionProfile.canRunCommands ? "yes" : "no"}`,
-    `- install dependencies: ${profile.permissionProfile.canInstallDependencies ? "yes" : "no"}`,
-    `- git commit: ${profile.permissionProfile.canGitCommit ? "yes" : "no"}`,
-  ];
-  return ["<permissions>", ...lines, "</permissions>"].join("\n");
-}
-
 function renderAvailableAgentsSection(profiles: readonly AgentProfile[]): string {
   const agentLines = profiles.map((agent) => {
-    const desc = agent.description ? ` - ${agent.description}` : "";
-    return `@${agent.id}: ${agent.name}${desc}`;
+    const desc = agent.description ? ` ${agent.description}` : " available digital employee";
+    return `@${agent.name}:${desc}`;
   });
   return ["<available-agents>", ...agentLines, "</available-agents>"].join("\n");
 }
 
-function renderCollaborationRulesSection(): string {
+/**
+ * 每轮提示中的模式头：声明当前 interaction mode，并明确它是本轮唯一有效的
+ * 模式规则，取代 session 中此前出现过的模式规则（模式切换后旧上下文不残留）。
+ */
+const MODE_HEADER_LINES = [
+  "The current interaction mode is the only mode rule valid for this turn; it supersedes any mode rules that appeared earlier in this session.",
+];
+
+function renderDirectRulesSection(): string {
   return [
     "<collaboration-rules>",
-    "Collaboration rules:",
-    "- Execute only the assignment addressed to your own @agent: marker.",
-    "- The conversation may contain assignments for multiple agents. Orbit has already scheduled the other agents.",
-    "- Use other agents' assignments as shared context, not as your own work, and do not repeat or forward assignments that already exist in the same conversation.",
-    "- Plain @agent mentions without a colon are references only.",
-    "- Only create a new @agent: assignment when it is genuinely new follow-up work that is not already present in the conversation.",
-    "- If you need another agent to continue, use that agent's @agent: assignment marker with a clear task.",
+    `Current interaction mode: direct.`,
+    ...MODE_HEADER_LINES,
+    "",
+    "Mode rules (direct conversation with one digital employee):",
+    "- Handle the task the user assigned to you directly, and reply to the user directly.",
+    "- Do NOT create, suggest, or output executable employee assignment markers. Any @name: marker you output is treated as plain text and will never be routed to another employee.",
+    "- Do NOT ask other digital employees to continue the work.",
+    "- If you need more information or a decision, ask the user directly.",
+    "- When your task is done, give the final answer to the user and stop.",
+    "",
+    "Final answer rules:",
+    "- Return only your useful result, question, or concise status.",
+    "- Do not start by repeating the conversation, the private context, or your own assignment marker.",
+    "- Do not include terminal UI noise, hook output, API errors, or thinking/status text.",
+    "- If the task is complete, provide a concise final answer and stop.",
+    "</collaboration-rules>",
+  ].join("\n");
+}
+
+function renderCollaborativeRulesSection(): string {
+  return [
+    "<collaboration-rules>",
+    "Current interaction mode: collaborative.",
+    ...MODE_HEADER_LINES,
+    "",
+    "Mode rules (lightweight collaboration):",
+    "- Complete the task assigned to you first.",
+    "- Hand off to another digital employee only when the follow-up work genuinely needs a different capability; do not hand off just to follow a fixed process.",
+    "- Run or hand off tasks in parallel only when they are independent.",
+    "- If a follow-up consumes your result or another employee's result, do not assign both stages in one message; wait until the prerequisite result is visible, then hand off the dependent task with the relevant context.",
+    "- When dependency status is unclear, prefer sequential execution or ask the user instead of assuming parallel safety.",
+    "- Execute only the assignment addressed to your own @employee-name: marker; other agents' assignments are shared context, not your own work.",
+    "- Do not repeat or forward assignments that already exist in the same conversation.",
+    "- Plain @employee-name mentions without a colon are references only.",
+    "- If you need another employee to continue, use that employee's exact @name: assignment marker with a clear task.",
+    "- When there is no further work, end naturally with your final answer.",
     "",
     "Collaboration examples:",
     "",
@@ -80,25 +107,62 @@ function renderCollaborationRulesSection(): string {
     "Bad: Ready for @reviewer to re-check.  (This looks like a handoff but won't route!)",
     "",
     "# Actually needing another agent to continue work (must use assignment):",
-    "Good: @reviewer: Please review the changes above, focusing on edge cases.",
-    "",
-    "# Typical handoff loop:",
-    "Planner -> @worker: Build the first version, then decide if others are needed.",
-    "Worker -> @reviewer: Review this for completeness and risks.",
-    "Reviewer -> @worker: Fix issues X and Y, then re-submit.",
-    "Worker -> @reviewer: Fixes applied, please re-verify.",
-    "Reviewer -> Done. No further work needed.",
+    "Good: @Quality Check: Please review the changes above, focusing on edge cases.",
     "",
     "# No further work - just end naturally:",
     "Good: Task complete. No further agent work is needed at this time.",
     "",
     "Final answer rules:",
     "- Return only your useful result, question, or concise status.",
-    "- Do not start by repeating the conversation, the private context, or your own @agent: assignment marker.",
+    "- Do not start by repeating the conversation, the private context, or your own assignment marker.",
     "- Do not include terminal UI noise, hook output, API errors, or thinking/status text.",
     "- If the task is complete, provide a concise final answer and stop.",
     "</collaboration-rules>",
   ].join("\n");
+}
+
+function renderSupervisedRulesSection(isSupervisor: boolean): string {
+  const roleRules = isSupervisor
+    ? [
+        "- You are the built-in supervisor coordinating the overall task globally: decompose, schedule, track progress, recover from failures, and drive the task to closure.",
+        "- Delegate work using an exact employee name from <available-agents>.",
+        "- Before delegating, identify dependencies between tasks: schedule independent tasks in parallel, but sequence dependent tasks.",
+        "- Never assign a downstream task in the same delegation message as its prerequisite; wait for the prerequisite result before assigning the downstream task.",
+        "- When dependency status is unclear, sequence conservatively or ask the user instead of assuming parallel safety.",
+      ]
+    : [
+        "- Complete the task assigned to you.",
+        "- You may hand off follow-up work to another digital employee when it is genuinely needed, using that employee's exact @name: assignment marker.",
+        "- Run or hand off tasks in parallel only when they are independent.",
+        "- If a follow-up consumes your result or another employee's result, do not assign both stages in one message; wait until the prerequisite result is visible, then hand off the dependent task with the relevant context.",
+        "- When dependency status is unclear, prefer sequential execution or ask the user instead of assuming parallel safety.",
+        "- The built-in supervisor coordinates the overall task globally (progress tracking, failure recovery, final closure). Do not impersonate the supervisor or claim its role.",
+      ];
+  return [
+    "<collaboration-rules>",
+    "Current interaction mode: supervised.",
+    ...MODE_HEADER_LINES,
+    "",
+    "Mode rules (supervised collaboration):",
+    ...roleRules,
+    "- Execute only the assignment addressed to your own @employee-name: marker; other agents' assignments are shared context, not your own work.",
+    "- Do not repeat or forward assignments that already exist in the same conversation.",
+    "- Plain @employee-name mentions without a colon are references only.",
+    "- When the overall task is complete, conclude with the final result and stop.",
+    "",
+    "Final answer rules:",
+    "- Return only your useful result, question, or concise status.",
+    "- Do not start by repeating the conversation, the private context, or your own assignment marker.",
+    "- Do not include terminal UI noise, hook output, API errors, or thinking/status text.",
+    "- If the task is complete, provide a concise final answer and stop.",
+    "</collaboration-rules>",
+  ].join("\n");
+}
+
+function renderCollaborationRulesSection(mode: InteractionMode, isSupervisor: boolean): string {
+  if (mode === "direct") return renderDirectRulesSection();
+  if (mode === "collaborative") return renderCollaborativeRulesSection();
+  return renderSupervisedRulesSection(isSupervisor);
 }
 
 function renderSupervisorConstraintsSection(): string {
@@ -115,9 +179,8 @@ function renderSupervisorConstraintsSection(): string {
       "and notifying the user via @user:",
     "",
     "Delegation guide:",
-    "- Need code analysis? -> @architect: analyze ...",
-    "- Need implementation? -> @developer: implement ...",
-    "- Need testing? -> @tester: validate ...",
+    "- Delegate only to an exact employee name from <available-agents>, for example @employee-name: analyze ...",
+    "- Do not invent employee names or use internal IDs in assignments.",
     "- Task complete? -> @user: summarize what was accomplished",
     "",
     "Violating these constraints corrupts the supervision mechanism.",
@@ -141,12 +204,12 @@ function renderWorkspaceContextSection(config: WorkspaceRuntimeConfig): string {
   return ["<workspace-context>", ...inner, "</workspace-context>"].join("\n");
 }
 
-function renderAgentRoleSection(profile: AgentProfile | undefined): string {
+function renderAgentInstructionSection(profile: AgentProfile | undefined): string {
   if (!profile?.systemPrompt) return "";
   return [
-    "<agent-role>",
-    `Role instruction: ${escapeDynamicContent(profile.systemPrompt)}`,
-    "</agent-role>",
+    "<agent-instructions>",
+    `Instructions: ${escapeDynamicContent(profile.systemPrompt)}`,
+    "</agent-instructions>",
   ].join("\n");
 }
 
@@ -203,18 +266,20 @@ function renderCurrentAttachmentsSection(imagePaths: string[]): string {
 
 export function buildAgentContext(input: AgentContextInput): string {
   const profile = input.profiles.find((agent) => agent.id === input.agentId);
+  const isSupervisor = profile?.internal === true;
+  // 普通对话不展示其他可用员工，减少错误转交；监工始终需要可指派名单。
+  const showAvailableAgents = isSupervisor || input.interactionMode !== "direct";
 
   const sections: string[] = [
     renderIdentitySection(profile, input.agentId),
-    renderPermissionsSection(profile),
-    renderAvailableAgentsSection(input.profiles),
-    renderCollaborationRulesSection(),
-    // Supervisor constraints only for coordinator role
-    ...(profile?.role === "coordinator" ? [renderSupervisorConstraintsSection()] : []),
-    // Workspace config after fixed rules, before agent role instruction
+    ...(showAvailableAgents ? [renderAvailableAgentsSection(input.profiles)] : []),
+    renderCollaborationRulesSection(input.interactionMode, isSupervisor),
+    // Supervisor constraints only for the internal collaboration supervisor
+    ...(isSupervisor ? [renderSupervisorConstraintsSection()] : []),
+    // Workspace config after fixed rules, before employee instructions
     ...(input.workspaceConfig ? [renderWorkspaceContextSection(input.workspaceConfig)] : []),
-    // Agent role instruction after workspace config
-    renderAgentRoleSection(profile),
+    // Agent instructions after workspace config
+    renderAgentInstructionSection(profile),
     // Conversation history (optional)
     ...(input.history?.length ? [renderHistorySection(input.history)] : []),
     // Current task (always present)

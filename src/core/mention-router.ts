@@ -1,4 +1,4 @@
-import type { AgentId } from "../shared/types.ts";
+import type { AgentId, AgentProfile } from "../shared/types.ts";
 
 export type MentionRouteResult =
   | { kind: "assignments"; agentIds: AgentId[]; prompt: string }
@@ -6,139 +6,43 @@ export type MentionRouteResult =
   | { kind: "none"; message: string }
   | { kind: "self"; message: string };
 
-type AssignmentMarker = {
-  agentName: string;
-  start: number;
-  end: number;
-};
+type AssignmentMarker = { name: string; start: number; end: number; agentId?: AgentId };
 
-export const assignmentPattern = /@([A-Za-z0-9_-]+)\s*(?::|：)/g;
+export const assignmentPattern = /@([^\s@:]+)\s*(?::|：)/gu;
 
-export function routeMention(
-  content: string,
-  availableAgents: readonly AgentId[],
-  senderAgentId?: AgentId,
-): MentionRouteResult {
+export function routeMention(content: string, availableAgents: readonly AgentProfile[], senderAgentId?: AgentId): MentionRouteResult {
   const rawAssignments = Array.from(content.matchAll(assignmentPattern), (match): AssignmentMarker => {
     const start = match.index ?? 0;
-    return {
-      agentName: match[1],
-      start,
-      end: start + match[0].length,
-    };
+    return { name: match[1] ?? "", start, end: start + match[0].length };
   });
+  if (rawAssignments.length === 0) return { kind: "none", message: `Use ${formatAssignmentList(availableAgents)} to assign work to an employee.` };
 
-  if (rawAssignments.length === 0) {
-    return {
-      kind: "none",
-      message: `Use ${formatAssignmentList(availableAgents)} to assign work to an agent.`,
-    };
-  }
+  // @all 已移除：不再展开，也没有对应的员工，因此 @all: 会被当作未知名称忽略。
+  const byName = new Map(availableAgents.map((agent) => [agent.name.toLocaleLowerCase(), agent]));
+  const known = rawAssignments
+    .map((assignment) => {
+      const agent = byName.get(assignment.name.toLocaleLowerCase());
+      return agent && agent.id !== senderAgentId
+        ? { ...assignment, agentId: agent.id }
+        : null;
+    })
+    .filter((assignment): assignment is AssignmentMarker & { agentId: AgentId } => assignment !== null);
+  if (known.length === 0) return { kind: "none", message: `Use ${formatAssignmentList(availableAgents)} to assign work to an employee.` };
 
-  // Check @all: markers for empty task content before expansion
-  for (const assignment of rawAssignments) {
-    if (assignment.agentName.toLowerCase() !== "all") continue;
-    const nextRawEnd = findNextMarkerEnd(assignment.end, rawAssignments);
-    const taskText = content.slice(assignment.end, nextRawEnd).trim();
-    if (!taskText) {
-      return {
-        kind: "empty_assignment",
-        agentId: "all" as AgentId,
-        message: "Add task content after @all:.",
-      };
+  for (const assignment of known) {
+    if (!content.slice(assignment.end, findNextMarkerEnd(assignment.end, known)).trim()) {
+      return { kind: "empty_assignment", agentId: assignment.agentId, message: `Add task content after @${assignment.name}:.` };
     }
   }
 
-  // Expand @all: into individual agent assignments
-  const expandedAssignments: AssignmentMarker[] = [];
-  let hasAllMarker = false;
-
-  for (const assignment of rawAssignments) {
-    if (assignment.agentName.toLowerCase() === "all") {
-      hasAllMarker = true;
-      for (const agentId of availableAgents) {
-        expandedAssignments.push({
-          agentName: agentId,
-          start: assignment.start,
-          end: assignment.end,
-        });
-      }
-    } else {
-      expandedAssignments.push(assignment);
-    }
-  }
-
-  // Filter to known agents and exclude sender self-assignments
-  const knownAssignments = expandedAssignments
-    .filter((assignment) => isAgentId(assignment.agentName, availableAgents))
-    .filter((assignment) => assignment.agentName !== senderAgentId)
-    .map((assignment) => ({
-      ...assignment,
-      agentId: assignment.agentName as AgentId,
-    }));
-
-  if (knownAssignments.length === 0) {
-    return {
-      kind: "none",
-      message: `Use ${formatAssignmentList(availableAgents)} to assign work to an agent.`,
-    };
-  }
-
-  // Check for empty assignments on raw known markers before dedup.
-  // This ensures duplicate markers like "@agent1: @agent1: task" correctly
-  // block on the first empty marker, and "@all: review @agent1:" blocks
-  // on the explicit empty @agent1:.
-  for (const assignment of knownAssignments) {
-    // Skip empty-check for markers that originated from @all: expansion
-    // (they all share the same start/end from the @all marker)
-    if (hasAllMarker && rawAssignments.some((raw) => raw.agentName.toLowerCase() === "all" && raw.start === assignment.start)) {
-      continue;
-    }
-
-    const nextEnd = findNextMarkerEnd(assignment.end, knownAssignments);
-    const taskText = content.slice(assignment.end, nextEnd).trim();
-    if (!taskText) {
-      return {
-        kind: "empty_assignment",
-        agentId: assignment.agentId,
-        message: `Add task content after @${assignment.agentId}:.`,
-      };
-    }
-  }
-
-  // Deduplicate by agentId while preserving order
   const seen = new Set<AgentId>();
-  const dedupedAssignments = knownAssignments.filter((assignment) => {
-    if (seen.has(assignment.agentId)) return false;
-    seen.add(assignment.agentId);
-    return true;
-  });
-
-  return {
-    kind: "assignments",
-    agentIds: dedupedAssignments.map((assignment) => assignment.agentId),
-    prompt: content.trim(),
-  };
+  return { kind: "assignments", agentIds: known.filter((assignment) => !seen.has(assignment.agentId) && seen.add(assignment.agentId)).map((assignment) => assignment.agentId), prompt: content.trim() };
 }
 
-/**
- * Find the start position of the next assignment marker after the given position,
- * or return the content length if there is no next marker.
- */
 function findNextMarkerEnd(afterEnd: number, assignments: Array<{ start: number }>): number {
-  let next = Infinity;
-  for (const assignment of assignments) {
-    if (assignment.start > afterEnd && assignment.start < next) {
-      next = assignment.start;
-    }
-  }
-  return next === Infinity ? Infinity : next;
+  return assignments.find((assignment) => assignment.start > afterEnd)?.start ?? Infinity;
 }
 
-function isAgentId(value: string, availableAgents: readonly AgentId[]): value is AgentId {
-  return availableAgents.includes(value as AgentId);
-}
-
-function formatAssignmentList(agentIds: readonly AgentId[], separator = " or "): string {
-  return agentIds.map((agentId) => `@${agentId}:`).join(separator);
+function formatAssignmentList(agents: readonly AgentProfile[]): string {
+  return agents.map((agent) => `@${agent.name}:`).join(" or ");
 }

@@ -1,6 +1,6 @@
 {
   "name": "@kevinforge/orbit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": false,
   "description": "Local-first workspace for coordinating CLI-backed digital employees.",
   "license": "MIT",
@@ -27,7 +27,7 @@
     "orbit": "bin/orbit.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "files": [
     "bin/orbit.js",
@@ -41,8 +41,8 @@
     "build": "tsc --noEmit && vite build && node scripts/build-standalone.mjs",
     "build:all": "tsc --noEmit && vite build && node scripts/build-standalone.mjs --all --package-layout",
     "package:npm": "node scripts/assemble-npm-package.mjs",
-    "release:check": "node scripts/verify-release-readiness.mjs v1.0.0",
-    "release:check:strict": "node scripts/verify-release-readiness.mjs v1.0.0 --strict",
+    "release:check": "node scripts/verify-release-readiness.mjs v1.1.0",
+    "release:check:strict": "node scripts/verify-release-readiness.mjs v1.1.0 --strict",
     "smoke:start": "node scripts/smoke-start.mjs",
     "smoke:port-conflict": "node scripts/smoke-port-conflict.mjs",
     "test": "node scripts/run-tests.mjs",
@@ -50,10 +50,15 @@
     "prepublishOnly": "npm run test && npm run build"
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.68.0",
+    "@agentclientprotocol/codex-acp": "1.3.0",
+    "@agentclientprotocol/sdk": "1.3.0",
     "marked": "^18.0.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "systeminformation": "^5.31.7"
+    "systeminformation": "^5.31.7",
+    "tdesign-icons-react": "^0.6.6",
+    "tdesign-react": "^1.18.1"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

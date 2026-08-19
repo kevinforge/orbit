@@ -1,66 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDefaultAgentProfiles } from "../src/core/agent-profiles.ts";
+import { configsToProfiles, createDefaultAgentProfiles } from "../src/core/agent-profiles.ts";
+import { DEFAULT_AGENT_CONFIGS } from "../src/core/agent-config-store.ts";
 
-test("loads four legacy runtime worker profiles", () => {
+test("default profiles use the generic software team members", () => {
   const profiles = createDefaultAgentProfiles("D:/project");
-
-  assert.deepEqual(
-    profiles.map((profile) => profile.id),
-    ["pm", "architect", "developer", "tester"],
-  );
-  assert.deepEqual(
-    profiles.map((profile) => profile.role),
-    ["pm", "architect", "developer", "tester"],
-  );
+  assert.deepEqual(profiles.map((profile) => profile.id), ["requirements", "solution", "implementation", "verification"]);
+  assert.ok(profiles.every((profile) => !("role" in profile)));
 });
 
-test("developer can write files while pm cannot", () => {
-  const profiles = createDefaultAgentProfiles("D:/project");
-  const pm = profiles.find((profile) => profile.id === "pm");
-  const developer = profiles.find((profile) => profile.id === "developer");
-
-  assert.equal(pm?.permissionProfile.canWriteFiles, false);
-  assert.equal(developer?.permissionProfile.canWriteFiles, true);
+test("runtime overrides target ids without changing names", () => {
+  const profiles = createDefaultAgentProfiles("D:/project", { implementation: "codebuddy", verification: "codex" });
+  assert.equal(profiles.find((profile) => profile.id === "implementation")?.runtime, "codebuddy");
+  assert.equal(profiles.find((profile) => profile.id === "verification")?.runtime, "codex");
 });
 
-test("default runtimes use codex for planning, claude for development, and codebuddy for testing", () => {
-  const profiles = createDefaultAgentProfiles("D:/project");
-
-  assert.deepEqual(
-    profiles.map((profile) => [profile.id, profile.runtime]),
-    [
-      ["pm", "codex"],
-      ["architect", "codex"],
-      ["developer", "claude-code"],
-      ["tester", "codebuddy"],
-    ],
-  );
-});
-
-test("applies runtime overrides to selected agents", () => {
-  const profiles = createDefaultAgentProfiles("D:/project", {
-    developer: "codebuddy",
-    tester: "codex",
-  });
-
-  assert.equal(profiles.find((profile) => profile.id === "developer")?.runtime, "codebuddy");
-  assert.equal(profiles.find((profile) => profile.id === "tester")?.runtime, "codex");
-  assert.equal(profiles.find((profile) => profile.id === "pm")?.runtime, "codex");
-});
-
-test("parses agent runtime overrides from comma separated config", async () => {
-  const { parseAgentRuntimeOverrides } = await import("../src/core/agent-profiles.ts");
-
-  assert.deepEqual(parseAgentRuntimeOverrides("developer=codebuddy,tester=codex"), {
-    developer: "codebuddy",
-    tester: "codex",
-  });
-});
-
-test("rejects unknown runtime overrides", async () => {
-  const { parseAgentRuntimeOverrides } = await import("../src/core/agent-profiles.ts");
-
-  assert.throws(() => parseAgentRuntimeOverrides("developer=unknown"), /Unsupported runtime/);
+test("configsToProfiles keeps user names and omits configuration-only fields", () => {
+  const profiles = configsToProfiles([{ ...DEFAULT_AGENT_CONFIGS[0], name: "我的分析员", enabled: true }], "D:/project");
+  assert.equal(profiles[0]?.name, "我的分析员");
+  assert.equal("enabled" in (profiles[0] ?? {}), false);
+  assert.equal("role" in (profiles[0] ?? {}), false);
 });

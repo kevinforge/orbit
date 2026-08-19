@@ -1,7 +1,9 @@
 import type {
   AgentActivityEvent,
   AgentId,
+  ApprovalMode,
   ChatMessage,
+  InteractionMode,
   MessageAttachment,
   NewChatMessage,
   RunResult,
@@ -11,16 +13,17 @@ import { randomBytes } from "node:crypto";
 import type { EventBus } from "./event-bus.ts";
 import type { MessageStore } from "./message-store.ts";
 import { parseJsonObjects } from "./json-stream-parser.ts";
+import { isAgentRunCancelledError } from "./agent-runtime.ts";
 
 type AgentRunner = {
   get(agentId: AgentId): {
-    send(runId: string, prompt: string, imagePaths?: string[]): Promise<RunResult>;
-    /** Hard interrupt: terminate the running process tree for this agent. */
+    send(runId: string, prompt: string, imagePaths?: string[], approvalMode?: ApprovalMode): Promise<RunResult>;
+    /** Request runtime cancellation; the runtime may fall back to process termination. */
     interrupt(runId: string): boolean;
   };
 };
 
-export type ManagedRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type ManagedRunStatus = "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
 
 export type RunOrigin = "user" | "agent" | "supervisor";
 
@@ -35,10 +38,12 @@ export type ManagedRun = {
   startedAt?: string;
   completedAt?: string;
   activity: AgentActivityEvent[];
-  /** When true, this run's completion will not trigger follow-up @agent: routing or supervisor. */
+  /** When true, this run's completion will not trigger follow-up assignment routing or supervision. */
   suppressFollowupRouting?: boolean;
   /** Who initiated this run: a user message, an agent's @mention, or the supervisor. */
   origin?: RunOrigin;
+  /** 模式快照：继承自源消息，决定提示词规则与完成后的路由/监工行为，不受执行中切换全局模式影响。 */
+  interactionMode?: InteractionMode;
   /** Image attachments from the source message, passed to the runtime. */
   sourceAttachments?: MessageAttachment[];
 };
@@ -48,7 +53,7 @@ export type RunManagerOptions = {
   agents: AgentRunner;
   messages: MessageStore;
   eventBus: EventBus;
-  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[]) => string;
+  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[], interactionMode?: InteractionMode) => string;
   onRunCompleted: (message: ChatMessage) => void;
   /** Resolves a user-facing display name for an agent id (defaults to the raw id). */
   getAgentLabel?: (agentId: AgentId) => string;
@@ -82,13 +87,29 @@ export class RunManager {
     return false;
   }
 
+  cancelAgentRuns(agentId: AgentId): string[] {
+    const cancelledRunIds: string[] = [];
+    const queue = this.getQueue(agentId);
+    while (queue.length > 0) {
+      const run = queue.shift()!;
+      this.markCancelled(run, "before start");
+      cancelledRunIds.push(run.id);
+    }
+
+    const activeRun = this.active.get(agentId);
+    if (activeRun && this.cancel(activeRun.id).ok) {
+      cancelledRunIds.push(activeRun.id);
+    }
+    return cancelledRunIds;
+  }
+
   enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage, origin?: RunOrigin): ManagedRun {
     const runId = createRunId(agentId);
     const resolvedOrigin: RunOrigin = origin ?? (sourceMessage.kind === "system" ? "supervisor" : sourceMessage.kind === "agent" ? "agent" : "user");
     // Supervisor runs are triggered by ChannelWatchService (already rate-limited
     // via maxTriggers) and represent a fresh coordination check, so they start
     // from a low route-depth base instead of inheriting the triggering message's
-    // depth. Otherwise a supervisor reply that assigns more work (@agent:) would
+    // depth. Otherwise a supervisor reply that assigns more work would
     // keep counting from an already-deep chain and could trip maxRouteDepth early.
     const routeDepth = resolvedOrigin === "supervisor" ? 1 : (sourceMessage.routeDepth ?? 0) + 1;
     const isBusy = this.active.has(agentId);
@@ -106,7 +127,9 @@ export class RunManager {
       status: "running",
       parentMessageId: sourceMessage.id,
       routeDepth,
+      interactionMode: sourceMessage.interactionMode,
       activity,
+      approvalMode: sourceMessage.approvalMode ?? "ask",
     } satisfies NewChatMessage);
     this.options.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
 
@@ -121,6 +144,7 @@ export class RunManager {
       startedAt: isBusy ? undefined : now,
       activity,
       origin: resolvedOrigin,
+      interactionMode: sourceMessage.interactionMode,
       sourceAttachments: sourceMessage.attachments?.length ? sourceMessage.attachments : undefined,
     };
     this.runs.set(run.id, run);
@@ -141,7 +165,7 @@ export class RunManager {
       return { ok: false, reason: "not_found" };
     }
 
-    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+    if (run.status === "completed" || run.status === "failed" || run.status === "cancelling" || run.status === "cancelled") {
       return { ok: false, reason: "not_cancellable" };
     }
 
@@ -156,21 +180,37 @@ export class RunManager {
       return { ok: true };
     }
 
-    // Handle running run interruption (hard interrupt)
+    // Keep the run active until the runtime settles so a late response cannot
+    // race the next queued task.
     if (run.status === "running") {
       const interrupted = this.options.agents.get(run.agentId).interrupt(runId);
       if (!interrupted) {
         // Process may have already exited naturally
         return { ok: false, reason: "not_cancellable" };
       }
-      this.markCancelled(run, "during execution");
+      this.markCancelling(run);
       return { ok: true };
     }
 
     return { ok: false, reason: "not_cancellable" };
   }
 
-  private markCancelled(run: ManagedRun, phase: "before start" | "during execution"): void {
+  private markCancelling(run: ManagedRun): void {
+    run.status = "cancelling";
+    this.chunkBuffers.delete(run.id);
+    this.lastToolNames.delete(run.id);
+    this.appendActivity(run, "正在请求取消运行。");
+
+    const updated = this.options.messages.update(run.resultMessageId, {
+      status: "cancelling",
+      runStatus: "cancelling",
+      activity: run.activity,
+    });
+    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+  }
+
+  private markCancelled(run: ManagedRun, phase: "before start" | "during execution", reason?: string): void {
+    if (run.status === "cancelled") return;
     run.status = "cancelled";
     run.completedAt = new Date().toISOString();
     // Only remove from active if interrupting a running run
@@ -180,14 +220,16 @@ export class RunManager {
     this.chunkBuffers.delete(run.id);
     this.lastToolNames.delete(run.id);
 
-    const activityText = phase === "before start"
+    const activityText = reason ?? (phase === "before start"
       ? "Cancelled by user before start."
-      : "Interrupted by user during execution.";
+      : "Interrupted by user during execution.");
     this.appendActivity(run, activityText);
 
-    const contentText = phase === "before start"
-      ? `${this.resolveAgentLabel(run.agentId)} 排队任务已取消。`
-      : `${this.resolveAgentLabel(run.agentId)} 运行已中断。`;
+    const contentText = reason
+      ? `${this.resolveAgentLabel(run.agentId)} ${reason}`
+      : phase === "before start"
+        ? `${this.resolveAgentLabel(run.agentId)} 排队任务已取消。`
+        : `${this.resolveAgentLabel(run.agentId)} 运行已中断。`;
 
     const updated = this.options.messages.update(run.resultMessageId, {
       content: contentText,
@@ -208,18 +250,48 @@ export class RunManager {
 
     // A running run was interrupted, freeing the agent's slot — start the next
     // queued run so the queue doesn't stall (and FIFO is preserved via shift).
-    // Late settlement of the killed run is no-op: complete()/fail() early-return
-    // on status === "cancelled", so they won't touch the newly-active run.
+    // Late settlement of the cancelled run is a no-op: complete()/fail() early-
+    // return on status === "cancelled", so they won't touch the next run.
     if (phase === "during execution") {
       this.startNext(run.agentId);
     }
+  }
+
+  /** Discard a queued run without writing a visible "cancelled" message.
+   *
+   * Used by `interruptAll()` for queued tasks: the message is marked
+   * `discarded: true` so the frontend filters it out, instead of leaving a
+   * "排队任务已取消" row behind. Running runs are NOT handled here — they go
+   * through `cancel()` so their partially-streamed content is preserved.
+   */
+  private markDiscarded(run: ManagedRun): void {
+    run.status = "cancelled";
+    run.completedAt = new Date().toISOString();
+    this.chunkBuffers.delete(run.id);
+    this.lastToolNames.delete(run.id);
+    this.appendActivity(run, "Cancelled by user before start.");
+    const updated = this.options.messages.update(run.resultMessageId, {
+      discarded: true,
+      status: "cancelled",
+      runStatus: "cancelled",
+      activity: run.activity,
+      completedAt: run.completedAt,
+    });
+    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({
+      type: "run.cancelled",
+      conversationId: this.options.conversationId,
+      agentId: run.agentId,
+      runId: run.id,
+      resultMessageId: updated.id,
+    });
   }
 
   /** Interrupt the current auto-collaboration chain without killing running CLI processes.
    *
    * - All queued runs are cancelled immediately.
    * - All running runs are marked with `suppressFollowupRouting`, so their
-   *   completions won't trigger further @agent: routing or supervisor checks.
+   *   completions won't trigger further assignment routing or supervision checks.
    * - Running runs continue to stream output and complete normally.
    * - New messages sent after the interrupt route normally.
    */
@@ -248,6 +320,42 @@ export class RunManager {
     return { cancelledQueuedRunIds, suppressedRunningRunIds };
   }
 
+  /** Stop everything in this conversation: discard all queued runs and request
+   * cancellation for all running runs. Used by the unified "停止所有任务" button.
+   *
+   * - Queued runs go through `markDiscarded()`: their messages are marked
+   *   `discarded: true` so the frontend filters them out (no "已取消" row).
+   * - Running runs go through `cancel()`: their messages first show
+   *   "cancelling" and preserve the partially-streamed content.
+   * - Does not call `fail()`, so `run.failed` subscribers (ChannelWatch) are
+   *   not triggered. `run.cancelled` is published but ChannelWatch does not
+   *   subscribe to it.
+   * - `interruptCurrentChain()` is left intact for internal/test use.
+   */
+  interruptAll(): { cancelledQueuedRunIds: string[]; cancellingRunningRunIds: string[] } {
+    const cancelledQueuedRunIds: string[] = [];
+    const cancellingRunningRunIds: string[] = [];
+
+    // 1. Discard all queued runs (messages marked discarded, frontend filters)
+    for (const queue of this.queues.values()) {
+      while (queue.length > 0) {
+        const run = queue.shift()!;
+        this.markDiscarded(run);
+        cancelledQueuedRunIds.push(run.id);
+      }
+    }
+
+    // 2. Request cancellation for all running runs. They remain active until
+    //    their runtime promises settle, so the queue cannot advance early.
+    for (const run of Array.from(this.active.values())) {
+      if (this.cancel(run.id).ok) {
+        cancellingRunningRunIds.push(run.id);
+      }
+    }
+
+    return { cancelledQueuedRunIds, cancellingRunningRunIds };
+  }
+
   private start(run: ManagedRun): void {
     run.status = "running";
     run.startedAt = new Date().toISOString();
@@ -267,10 +375,15 @@ export class RunManager {
     // Keep that source message in conversation history so the supervisor can see the
     // employee result or user request it is expected to coordinate.
     const excludedSourceMessageId = run.origin === "supervisor" ? undefined : run.sourceMessage.id;
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths);
+    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths, run.interactionMode);
     let result: Promise<RunResult>;
     try {
-      result = this.options.agents.get(run.agentId).send(run.id, runtimePrompt, imagePaths);
+      result = this.options.agents.get(run.agentId).send(
+        run.id,
+        runtimePrompt,
+        imagePaths,
+        run.sourceMessage.approvalMode ?? "ask",
+      );
     } catch (error: unknown) {
       this.fail(run, error instanceof Error ? error.message : String(error));
       return;
@@ -278,11 +391,21 @@ export class RunManager {
 
     void result
       .then((runResult) => this.complete(run, runResult))
-      .catch((error: unknown) => this.fail(run, error instanceof Error ? error.message : String(error)));
+      .catch((error: unknown) => {
+        if (isAgentRunCancelledError(error)) {
+          this.markCancelled(run, "during execution", error.userMessage);
+          return;
+        }
+        this.fail(run, error instanceof Error ? error.message : String(error));
+      });
   }
 
   private complete(run: ManagedRun, runResult: RunResult): void {
     if (run.status === "cancelled") {
+      return;
+    }
+    if (run.status === "cancelling") {
+      this.markCancelled(run, "during execution", "运行已取消。");
       return;
     }
     run.status = "completed";
@@ -326,6 +449,10 @@ export class RunManager {
     if (run.status === "cancelled") {
       return;
     }
+    if (run.status === "cancelling") {
+      this.markCancelled(run, "during execution", "运行已取消。");
+      return;
+    }
     const errorSummary = summarizeRunError(error);
     run.status = "failed";
     run.completedAt = new Date().toISOString();
@@ -343,7 +470,7 @@ export class RunManager {
       startedAt: run.startedAt,
     });
     this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
-    this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary });
+    this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary, interactionMode: run.interactionMode });
     this.startNext(run.agentId);
   }
 
@@ -371,11 +498,18 @@ export class RunManager {
   }
 
   private appendActivityEvent(run: ManagedRun, activity: AgentActivityEvent): void {
-    run.activity.push(truncateActivity(activity));
+    const boundedActivity = truncateActivity(activity);
+    if (boundedActivity.type === "plan.updated") {
+      const previousIndex = findPlanActivityIndex(run.activity, boundedActivity.plan.id);
+      if (previousIndex >= 0) run.activity[previousIndex] = boundedActivity;
+      else run.activity.push(boundedActivity);
+    } else {
+      run.activity.push(boundedActivity);
+    }
     this.options.messages.update(run.resultMessageId, {
       activity: run.activity,
     });
-    this.options.eventBus.publish({ type: "run.activity", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, activity: run.activity[run.activity.length - 1]! });
+    this.options.eventBus.publish({ type: "run.activity", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, activity: boundedActivity });
   }
 
   private handleRuntimeEvent(event: RuntimeEvent): void {
@@ -389,6 +523,14 @@ export class RunManager {
           sessionId: event.sessionId,
         });
         this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+      }
+      return;
+    }
+
+    if (event.type === "runtime.activity" && event.runId) {
+      const run = this.runs.get(event.runId);
+      if (run && run.status === "running") {
+        this.appendActivityEvent(run, event.activity);
       }
       return;
     }
@@ -745,7 +887,40 @@ function truncateActivity(activity: AgentActivityEvent): AgentActivityEvent {
   if (activity.type === "tool.completed" || activity.type === "tool.failed") {
     return { ...activity, summary: activity.summary ? truncateText(activity.summary, MAX_TOOL_SUMMARY_CHARS) : undefined };
   }
+  if (activity.type === "plan.updated") {
+    if (activity.plan.format === "items") {
+      return {
+        ...activity,
+        plan: {
+          ...activity.plan,
+          entries: activity.plan.entries.slice(0, 100).map((entry) => ({
+            ...entry,
+            content: truncateText(entry.content, MAX_ACTIVITY_TEXT_CHARS),
+          })),
+        },
+      };
+    }
+    if (activity.plan.format === "markdown") {
+      return {
+        ...activity,
+        plan: { ...activity.plan, content: truncateText(activity.plan.content, 10_000) },
+      };
+    }
+    return {
+      ...activity,
+      plan: { ...activity.plan, uri: truncateText(activity.plan.uri, MAX_ACTIVITY_TEXT_CHARS) },
+    };
+  }
   return activity;
+}
+
+function findPlanActivityIndex(activity: AgentActivityEvent[], planId: string | undefined): number {
+  for (let index = activity.length - 1; index >= 0; index -= 1) {
+    const item = activity[index];
+    if (item?.type === "plan.removed" && (planId === undefined || item.planId === planId)) return -1;
+    if (item?.type === "plan.updated" && item.plan.id === planId) return index;
+  }
+  return -1;
 }
 
 function summarizeRunError(error: string): string {

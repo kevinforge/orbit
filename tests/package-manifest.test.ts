@@ -13,6 +13,7 @@ type PackageJson = {
   repository?: { type?: string; url?: string };
   scripts?: Record<string, string>;
   engines?: Record<string, string>;
+  dependencies?: Record<string, string>;
 };
 
 function readPackageJson(): PackageJson {
@@ -29,7 +30,7 @@ test("package build delegates to the protected standalone builder", () => {
   const manifest = readPackageJson();
   const standaloneBuilder = fs.readFileSync("scripts/build-standalone.mjs", "utf8");
 
-  assert.equal(manifest.engines?.node, ">=20");
+  assert.equal(manifest.engines?.node, ">=22");
   assert.match(manifest.scripts?.build ?? "", /node scripts\/build-standalone\.mjs/);
   assert.match(manifest.scripts?.["build:all"] ?? "", /--all --package-layout/);
   assert.equal(manifest.scripts?.["package:npm"], "node scripts/assemble-npm-package.mjs");
@@ -38,6 +39,12 @@ test("package build delegates to the protected standalone builder", () => {
   assert.match(standaloneBuilder, /"--bytecode"/);
   assert.match(standaloneBuilder, /"--minify"/);
   assert.match(standaloneBuilder, /"--sourcemap=none"/);
+});
+
+test("ACP SDK is pinned to the reviewed stable protocol implementation", () => {
+  const manifest = readPackageJson();
+
+  assert.equal(manifest.dependencies?.["@agentclientprotocol/sdk"], "1.3.0");
 });
 
 test("default test script uses complete cross-platform discovery", () => {
@@ -101,7 +108,18 @@ test("dependency license identifiers stay within the reviewed open source set", 
   const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8")) as {
     packages?: Record<string, { license?: string }>;
   };
-  const reviewed = new Set(["0BSD", "Apache-2.0", "BSD-3-Clause", "ISC", "MIT", "MPL-2.0"]);
+  const reviewed = new Set([
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "SEE LICENSE IN LICENSE.md",
+    "SEE LICENSE IN README.md",
+    "Unlicense",
+  ]);
   const licenses = new Set(
     Object.values(lock.packages ?? {})
       .map((pkg) => pkg.license)

@@ -32,6 +32,24 @@ test("save then load round-trips", () => {
   assert.deepEqual(loaded, record);
 });
 
+test("ACP transport metadata round-trips without affecting legacy records", () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const record = {
+    agentId: "tester",
+    runtime: "codebuddy" as const,
+    sessionId: "acp-session",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+    transport: "acp" as const,
+    protocolVersion: 1,
+  };
+
+  store.save("codebuddy", "default", "tester", record);
+
+  assert.deepEqual(store.load("codebuddy", "default", "tester"), record);
+});
+
 test("save creates directories", () => {
   const dir = path.join(tmpDir(), "nested", "deep");
   const store = new SessionStore(dir);

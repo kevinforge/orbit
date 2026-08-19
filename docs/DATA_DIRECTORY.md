@@ -32,13 +32,22 @@ The data directory is organized by data type and workspace id:
   conversations/<workspace-id>/conversations.json
   conversations/<workspace-id>/<conversation-id>/messages/manifest.json
   conversations/<workspace-id>/<conversation-id>/messages/<YYYY-MM-DD>.ndjson
-  sessions/<workspace-id>/<runtime>/<channel-id>/<conversation-id>/<agent-id>.json
+  conversations/<workspace-id>/<conversation-id>/attachments/<attachment-id>.<ext>
+  sessions/<workspace-id>/<runtime>/<conversation-id>/<agent-id>.json
   transcripts/<workspace-id>/<conversation-id>/<agent-id>/<YYYY-MM-DD>-<sequence>.log
+  tmp/attachments/<workspace-id>/<conversation-id>/<draft-id>.<ext>
   last-active.json
 ```
 
+`<runtime>` is one of `claude-code`, `codex`, or `codebuddy`. Session files
+record the ACP session id and transport metadata used to resume that
+employee's backend session. Image attachments live under
+`conversations/.../attachments` once a message is sent; uploads waiting in
+the composer are drafts under `tmp/attachments` and are removed when they are
+sent or deleted.
+
 These files can contain project paths, conversation content, uploaded
-attachments, digital employee configuration, CLI session identifiers, runtime
+attachments, digital employee configuration, ACP session records, runtime
 activity, and terminal output. Treat `~/.orbit` as private user data.
 
 Orbit does not copy your source repository into `~/.orbit`; workspace metadata
