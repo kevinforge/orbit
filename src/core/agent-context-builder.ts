@@ -91,6 +91,9 @@ function renderCollaborativeRulesSection(): string {
     "Mode rules (lightweight collaboration):",
     "- Complete the task assigned to you first.",
     "- Hand off to another digital employee only when the follow-up work genuinely needs a different capability; do not hand off just to follow a fixed process.",
+    "- Run or hand off tasks in parallel only when they are independent.",
+    "- If a follow-up consumes your result or another employee's result, do not assign both stages in one message; wait until the prerequisite result is visible, then hand off the dependent task with the relevant context.",
+    "- When dependency status is unclear, prefer sequential execution or ask the user instead of assuming parallel safety.",
     "- Execute only the assignment addressed to your own @employee-name: marker; other agents' assignments are shared context, not your own work.",
     "- Do not repeat or forward assignments that already exist in the same conversation.",
     "- Plain @employee-name mentions without a colon are references only.",
@@ -123,10 +126,16 @@ function renderSupervisedRulesSection(isSupervisor: boolean): string {
     ? [
         "- You are the built-in supervisor coordinating the overall task globally: decompose, schedule, track progress, recover from failures, and drive the task to closure.",
         "- Delegate work using an exact employee name from <available-agents>.",
+        "- Before delegating, identify dependencies between tasks: schedule independent tasks in parallel, but sequence dependent tasks.",
+        "- Never assign a downstream task in the same delegation message as its prerequisite; wait for the prerequisite result before assigning the downstream task.",
+        "- When dependency status is unclear, sequence conservatively or ask the user instead of assuming parallel safety.",
       ]
     : [
         "- Complete the task assigned to you.",
         "- You may hand off follow-up work to another digital employee when it is genuinely needed, using that employee's exact @name: assignment marker.",
+        "- Run or hand off tasks in parallel only when they are independent.",
+        "- If a follow-up consumes your result or another employee's result, do not assign both stages in one message; wait until the prerequisite result is visible, then hand off the dependent task with the relevant context.",
+        "- When dependency status is unclear, prefer sequential execution or ask the user instead of assuming parallel safety.",
         "- The built-in supervisor coordinates the overall task globally (progress tracking, failure recovery, final closure). Do not impersonate the supervisor or claim its role.",
       ];
   return [

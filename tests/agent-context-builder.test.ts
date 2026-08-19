@@ -88,12 +88,16 @@ test("each mode injects exactly one mode rule block and no other mode's rules", 
 
   assert.ok(collaborative.includes("Current interaction mode: collaborative."));
   assert.ok(collaborative.includes("Hand off to another digital employee only when the follow-up work genuinely needs"));
+  assert.match(collaborative, /independent/);
+  assert.match(collaborative, /prerequisite result/);
   assert.ok(!collaborative.includes("Current interaction mode: direct."));
   assert.ok(!collaborative.includes("Current interaction mode: supervised."));
   assert.ok(!collaborative.includes("You are the built-in supervisor"));
 
   assert.ok(supervised.includes("Current interaction mode: supervised."));
   assert.ok(supervised.includes("The built-in supervisor coordinates the overall task globally"));
+  assert.match(supervised, /independent/);
+  assert.match(supervised, /prerequisite result/);
   assert.ok(!supervised.includes("Current interaction mode: direct."));
   assert.ok(!supervised.includes("Current interaction mode: collaborative."));
 });
@@ -183,4 +187,5 @@ test("custom teams receive all built-in mode rules without workspace instruction
   assert.ok(supervised.includes("@资料整理:"));
   assert.ok(supervised.includes("@内容撰写:"));
   assert.ok(supervised.includes("decompose, schedule, track progress, recover from failures, and drive the task to closure"));
+  assert.match(supervised, /Before delegating, identify dependencies between tasks/);
 });

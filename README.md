@@ -1,6 +1,10 @@
 # Orbit
 
 <p align="center">
+  <a href="README.zh-CN.md">中文</a> · <strong>English</strong>
+</p>
+
+<p align="center">
   <strong>A local-first workspace for human-led collaboration with multiple AI employees.</strong>
 </p>
 
@@ -26,6 +30,18 @@ The employees are powered by Claude Code, Codex, or CodeBuddy through the Agent
 Client Protocol (ACP). Orbit owns the workspace, conversation history, routing,
 queues, approvals, session continuity, and UI; each vendor runtime remains
 responsible for its own model access and tool execution.
+
+## 📦 Installation
+
+If you already use Claude Code, Codex, or CodeBuddy locally, copy this prompt
+to your agent:
+
+```text
+Please install Orbit for me with npm using the remote package:
+npm install -g @kevinforge/orbit
+Then run orbit and verify that http://localhost:4317 is available. Do not
+install the unrelated public package named orbit.
+```
 
 ## See it in action
 
@@ -99,6 +115,10 @@ does not erase an employee's persisted runtime session.
 
 The supervisor in supervised mode is an internal coordinator, not a fifth
 employee. Plain `@name` text is a reference; only `@name:` starts an assignment.
+
+Dependency-aware prompts apply to every team: independent tasks may run in
+parallel, but dependent tasks wait for prerequisite results. Direct mode still
+talks to one employee.
 
 ## Built-in team
 

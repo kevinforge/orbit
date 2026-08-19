@@ -949,7 +949,7 @@ export function App() {
       <aside className="sidebar" aria-label="工作区导航" aria-hidden={sidebarCollapsed}>
         <div className="sidebarTop">
           <div className="brandBlock">
-            <div className="brandMark"><img src="/assets/orbit-mark.png" alt="" />orbit</div>
+            <div className="brandMark"><img src="/assets/orbit-mark.png" alt="" />Orbit</div>
             <div className={`connection ${connectionState}`}>{connectionLabel(connectionState)}</div>
             <Tooltip content="隐藏侧边栏" placement="right">
               <Button className="sidebarCollapseBtn" variant="text" shape="square" icon={<ChevronLeftIcon />} onClick={() => setSidebarCollapsed(true)} />
