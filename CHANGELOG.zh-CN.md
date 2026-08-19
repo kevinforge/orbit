@@ -6,6 +6,12 @@
 
 ## 未发布（Unreleased）
 
+暂无变更。
+
+---
+
+## v1.1.0 — 2026-08-19
+
 ### 新功能
 
 - **所有运行时统一走 ACP 协议。** Claude Code、Codex、CodeBuddy 全部通过

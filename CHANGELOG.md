@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+No notable changes yet.
+
+---
+
+## v1.1.0 — 2026-08-19
+
 ### New things you can do
 
 - **One protocol for every runtime.** Claude Code, Codex, and CodeBuddy all run
