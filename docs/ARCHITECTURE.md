@@ -1,6 +1,6 @@
 # Orbit Architecture
 
-Orbit is a local-first agent collaboration app. The current implementation runs one local HTTP server, one React UI, and multiple CLI-backed agent runs on the user's machine.
+Orbit is a local-first agent collaboration app. The current implementation runs one local HTTP server, one React UI, and multiple ACP-backed agent runs on the user's machine.
 
 ## Runtime Flow
 
@@ -142,7 +142,7 @@ Workspace prompts inject optional shared user context across all employees, whil
 
 ## Channel History
 
-Each agent run receives a scoped history of channel messages since that agent's last completed run. This lets agents see what other agents (and the user) said while they were idle, complementing the `--resume` flag which preserves each agent's own CLI session.
+Each agent run receives a scoped history of channel messages since that agent's last completed run. This lets agents see what other agents (and the user) said while they were idle, complementing ACP session restore, which preserves each agent's own backend session across runs.
 
 `buildHistoryForAgent` in `src/core/agent-history-builder.ts` builds the history:
 

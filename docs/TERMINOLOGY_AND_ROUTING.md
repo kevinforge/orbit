@@ -82,6 +82,9 @@ used as public assignment markers.
 - An empty assignment such as `@蔡一平:` with no task text is blocked.
 - A digital employee's self-assignment is ignored. For example, a reply from
   `蔡一平` containing only `@蔡一平:` does not schedule another run.
+- `@all:` is deprecated. It no longer expands to every employee and there is
+  no `all` employee, so it is treated as an unknown name and ignored. `all`,
+  `user`, and `supervisor` are reserved internal ids.
 - Agent-to-agent handoff chains are capped at routing depth 10. When the chain
   would exceed that limit, Orbit posts a system message and waits for a manual
   next step.
@@ -140,6 +143,20 @@ That sentence is only a reference. Use `@田小坑:` when that employee should r
 In 普通对话, handoff markers are never routed: any `@display-name:` marker in a
 digital employee reply is shown as plain text, and the conversation stays with
 the employee the user is talking to.
+
+## Stopping Work
+
+Use the conversation stop action (or the stop button on a single task) to halt
+work:
+
+- **Queued tasks are discarded.** A discarded task is removed from the queue
+  and hidden from the conversation view, but it stays in local history for
+  data safety.
+- **Running tasks cancel gracefully.** A running task first enters a
+  `cancelling` state and keeps its slot until the runtime settles, so partial
+  output is preserved and cannot leak into the next task of that employee.
+- Cancelling a single task (from the task card) behaves the same way for that
+  one task; the employee's next queued task starts once the runtime settles.
 
 ## Troubleshooting Routing
 

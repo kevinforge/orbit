@@ -1,6 +1,6 @@
 ﻿# Orbit
 
-Orbit is a local-first collaboration workspace for coordinating multiple CLI-backed digital employees across isolated workspaces and conversations.
+Orbit is a local-first collaboration workspace for coordinating multiple digital employees across isolated workspaces and conversations. Employees are powered by Claude Code, Codex, and CodeBuddy through the Agent Client Protocol (ACP).
 
 ## Install
 

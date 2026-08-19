@@ -12,8 +12,10 @@ function readRepoFile(relativePath: string): string {
 test("CLAUDE.md documents the current multi-runtime architecture", () => {
   const doc = readRepoFile("CLAUDE.md");
 
-  assert.match(doc, /CLI-backed digital employees/);
-  assert.match(doc, /CodeBuddy runs as an ACP v1 child process/);
+  assert.match(doc, /All three runtimes run as ACP v1 child processes/);
+  assert.match(doc, /claude-agent-acp/);
+  assert.match(doc, /codebuddy --acp/);
+  assert.doesNotMatch(doc, /CLI-backed digital employees/);
   assert.doesNotMatch(doc, /multiple Claude Code CLI agents/);
   assert.doesNotMatch(doc, /claude CLI \(stream-json\)/);
 });
@@ -216,7 +218,7 @@ test("repository documents public terminology and routing marker behavior", () =
   assert.match(terminology, /Digital employee/);
   assert.match(terminology, /Prefer \*\*digital employee\*\*/);
   assert.match(terminology, /@display-name:/);
-  assert.doesNotMatch(terminology, /@all:/);
+  assert.match(terminology, /@all:` is deprecated\. It no longer expands/);
   assert.match(terminology, /Interaction mode/);
   assert.match(terminology, /普通对话/);
   assert.match(terminology, /简单协作/);

@@ -72,15 +72,15 @@ See `docs/standalone-build.md` for distribution and installation instructions.
 
 ## Architecture Overview
 
-Orbit is a local-first chat control surface that coordinates multiple CLI-backed digital employees in one shared conversation. Users type messages with `@agent:` assignment syntax; the system routes tasks to agents, manages run queues, and streams results to a React UI via SSE.
+Orbit is a local-first chat control surface that coordinates multiple digital employees in one shared conversation. Users type messages with `@agent:` assignment syntax; the system routes tasks to employees, manages run queues, and streams results to a React UI via SSE.
 
 ### Tech Stack
 
 - TypeScript (strict, ESM, `--noEmit` only), Node.js ES2022
-- React 19 + Vite 8 (UI in a single `App.tsx`, no router or state library)
+- React 19 + Vite 8 (single-page UI, no router or state library; tdesign-react desktop components)
 - Raw `node:http` server (no Express/Koa)
 - Node.js built-in test runner (`node --test`)
-- Codex and Claude Code run as non-interactive CLI child processes; CodeBuddy runs as an ACP v1 child process
+- All three runtimes run as ACP v1 child processes: Claude Code via `claude-agent-acp`, Codex via `codex-acp` (both bundled adapters, resolved by `bundled-runtime.ts` with user PATH fallback), and CodeBuddy via `codebuddy --acp`
 
 ### Core Data Flow
 
@@ -88,13 +88,13 @@ Orbit is a local-first chat control surface that coordinates multiple CLI-backed
 User message (POST /api/messages)
   → MessageRouter → mention-router (parses @agent: markers)
     → RunManager (per-agent serial queue)
-      → AgentSession → buildAgentContext() → selected runtime adapter (Codex or Claude Code CLI, or CodeBuddy ACP)
+      → AgentSession → buildAgentContext() → selected ACP runtime adapter (Claude Code, Codex, or CodeBuddy)
         → EventBus → SseHub → browser (EventSource)
         → RunManager classifies activities (tool.started, etc.)
           → on completion: next queued run starts, agent replies can trigger further routing
 ```
 
-For CodeBuddy ACP, the user message's approval mode follows the entire handoff chain. `AgentSession` exposes pending ACP permission requests through state/SSE, and `POST /api/permissions/resolve` resumes the blocked request. The employee `PermissionProfile` remains a hard ceiling even in full-access mode.
+The user message's approval mode (`ask` | `full-access`) follows the entire handoff chain for all runtimes. `AgentSession` exposes pending ACP permission requests and elicitations through state/SSE; `POST /api/permissions/resolve` and `POST /api/elicitations/resolve` resume the blocked request.
 
 Agent replies can contain `@other_agent:` assignments, enabling delegation chains capped at depth 10.
 
@@ -105,16 +105,21 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/shared/types.ts`** — All shared type definitions for the system
 - **`src/core/message-router.ts`** + **`mention-router.ts`** — Message routing and @mention parsing
 - **`src/core/run-manager.ts`** — Per-agent FIFO run queue, lifecycle events, activity classification
-- **`src/core/claude-cli-runtime.ts`** — Spawns `claude --print --output-format stream-json`, parses stdout
-- **`src/core/codex-cli-runtime.ts`** — Spawns Codex CLI in JSONL mode, parses output
-- **`src/core/codebuddy-acp-runtime.ts`** — Runs CodeBuddy through ACP v1, restores sessions, and maps streamed updates
-- **`src/core/agent-runtime.ts`** — Shared runtime interface for all CLI adapters
-- **`src/core/agent-config-store.ts`** — Persistent agent configuration (load/save/reset via JSON file)
+- **`src/core/acp-runtime.ts`** — Shared ACP v1 runtime core (JSON-RPC transport, session lifecycle, streamed update mapping)
+- **`src/core/acp-runner-registry.ts`** — Maps runtime kinds to their ACP runner definitions
+- **`src/core/acp-connection-pool.ts`** — Reusable ACP process pool (TTL and idle-cap bounded)
+- **`src/core/acp-output-guard.ts`** — Keeps ACP progress chatter out of final answers
+- **`src/core/claude-acp-runtime.ts`** — Claude Code ACP adapter
+- **`src/core/codex-acp-runtime.ts`** — Codex ACP adapter
+- **`src/core/codebuddy-acp-runtime.ts`** — CodeBuddy ACP adapter (spawns `codebuddy --acp`)
+- **`src/core/bundled-runtime.ts`** — Resolves Orbit-bundled ACP adapter executables before PATH fallback
+- **`src/core/agent-runtime.ts`** — Shared runtime interface for all ACP adapters
+- **`src/core/agent-config-store.ts`** — Persistent employee configuration (load/save/reset via JSON file) and `AGENT_TEAM_TEMPLATES`
 - **`src/core/agent-context-builder.ts`** — Builds private system prompt injected into each agent run
 - **`src/core/agent-history-builder.ts`** — Builds scoped conversation history (messages since agent's last completed run)
-- **`src/core/session-store.ts`** — Per-agent backend session persistence with transport metadata
-- **`src/core/agent-config-store.ts`** — Five built-in agent configuration templates (pm, architect, developer, tester, supervisor)
-- **`src/core/agent-profiles.ts`** — Legacy runtime profile helpers and config-to-profile conversion
+- **`src/core/session-store.ts`** — Per-employee ACP session persistence with transport metadata
+- **`src/core/agent-profiles.ts`** — Internal supervisor (监工) profile and default employee profiles
+- **`src/core/channel-watch.ts`** — Trigger service that schedules employees on unassigned/blocked/failed channel events
 - **`src/core/agent-session.ts`** — Manages one agent's lifecycle (idle/running/error/stopped)
 - **`src/core/agent-registry.ts`** — Owns AgentSession instances, exposes agent state
 - **`src/core/message-store.ts`** — Persisted message shards, manifest recovery, and cursor pagination
@@ -127,26 +132,34 @@ Agent replies can contain `@other_agent:` assignments, enabling delegation chain
 - **`src/core/agent-prompt.ts`** — Prompt templates for agent role instructions
 - **`src/core/migrate-channel-layer.ts`** — One-time migration for flattening legacy directory structure
 - **`src/core/workspace-config-store.ts`** — Workspace-level system prompt and rules persistence
+- **`src/core/workspace-presets.ts`** + **`workspace-agent-presets.ts`** — Built-in workspace setup templates aligned with employee team templates
+- **`src/core/attachment-store.ts`** — Image attachment drafts (pending upload) and permanent per-conversation storage
+- **`src/core/global-config-store.ts`** — Global settings persistence (e.g., run logs)
+- **`src/core/runtime-probe.ts`** — Probes runtime availability for setup guidance
 - **`src/core/work-analysis.ts`** — Workspace task, collaboration, outcome, and duration aggregation
 - **`src/server/workspace-work-analysis.ts`** — Bounded history loading for collaboration insights
 
 ### UI Module
 
-- **`src/ui/App.tsx`** — Single-page React app (all UI in one file, no router)
+- **`src/ui/App.tsx`** — Main single-page React app (conversation, employees, workspaces, composer)
+- **`src/ui/TaskDetailDrawer.tsx`** — Task/run detail drawer with execution timeline
+- **`src/ui/WorkAnalysisPanel.tsx`** — Collaboration insights panel
 - **`src/ui/styles.css`** — "Warm Observatory" design system (CSS custom properties, no Tailwind)
 - **`src/ui/markdown-renderer.ts`** — Markdown→HTML with code block headers (language label + copy button)
+- **`src/ui/url-guard.ts`** — Allows only http(s) external URLs to guard against `javascript:`/`data:` XSS
 
-### Built-in Agents
+### Digital Employee Teams
 
-| ID | Can Write Files | Can Run Commands | Can Install Deps |
+Employee configuration is fully user-editable per workspace (`agents.json`). `AGENT_TEAM_TEMPLATES` in `agent-config-store.ts` seeds the built-in software development team:
+
+| ID | Name | Runtime | Role |
 |---|---|---|---|
-| pm | No | No | No |
-| architect | No | Yes | No |
-| developer | Yes | Yes | Yes |
-| tester | No | Yes | No |
-| supervisor | No | No | No |
+| requirements | 范同经 | codex | Clarify requirements, scope, and acceptance criteria |
+| solution | 甄架构 | codex | Design solutions and evaluate risk |
+| implementation | 蔡一平 | claude-code | Implement and verify changes |
+| verification | 田小坑 | codebuddy | Validate results and report regressions |
 
-The developer agent creates feature branches, commits, pushes, and opens draft PRs. Other agents cannot git commit. Default editable templates are seeded by `agent-config-store.ts`.
+Users can rename employees, edit prompts, add or remove employees (`PUT /api/agents`), or apply a whole team template (`POST /api/agents/apply-team`). The supervisor (监工) that coordinates 复杂协作 (supervised) mode is internal (`agent-profiles.ts`), not user-configurable; ids `all`, `user`, and `supervisor` are reserved. Per-employee permission settings no longer exist — the user message's approval mode applies to the entire handoff chain.
 
 ### API Surface
 
@@ -155,23 +168,37 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 | GET | `/api/state` | Full state snapshot |
 | POST | `/api/messages` | Send user message (`{ content: string }`) |
 | GET | `/api/messages?before=<id>&limit=<n>` | Load older messages for the active conversation |
-| POST | `/api/conversation/interrupt` | Stop follow-up routing for the active collaboration chain |
+| POST | `/api/permissions/resolve` | Resolve a pending ACP permission request |
+| POST | `/api/elicitations/resolve` | Resolve a pending ACP elicitation |
+| POST | `/api/conversation/interrupt` | Stop all tasks in the active conversation: queued runs are discarded, running runs cancel |
 | POST | `/api/runs/:id/cancel` | Cancel a queued or running employee task |
-| GET | `/api/agents` | List agent configurations |
-| PUT | `/api/agents` | Update agent configurations |
-| POST | `/api/agents/reset` | Reset agents to default configuration |
+| POST | `/api/attachments/drafts` | Upload an image draft attachment for the active conversation |
+| GET | `/api/attachments/drafts/:workspaceId/:conversationId/:id` | Fetch a draft attachment (composer preview) |
+| DELETE | `/api/attachments/drafts/:workspaceId/:conversationId/:id` | Delete a draft attachment |
+| GET | `/api/attachments/:workspaceId/:conversationId/:id` | Fetch a committed attachment |
+| GET | `/api/agents` | List employee configurations |
+| GET | `/api/agent-teams` | List digital employee team templates |
+| PUT | `/api/agents` | Update employee configurations |
+| POST | `/api/agents/reset` | Reset employees to default configuration |
+| POST | `/api/agents/apply-team` | Apply a team template to the workspace |
+| POST | `/api/runtimes/probe` | Probe runtime availability |
 | GET | `/api/workspace-config` | Get workspace-level prompt and rules |
 | PUT | `/api/workspace-config` | Update workspace-level prompt and rules |
 | GET | `/api/workspace-presets` | List built-in workspace setup templates |
+| GET | `/api/global-config` | Get global settings |
+| PUT | `/api/global-config` | Update global settings |
 | GET | `/api/work-analysis?days=<n>` | Build workspace collaboration insights |
 | GET | `/api/workspaces` | List workspaces |
 | POST | `/api/workspaces` | Create workspace |
 | PUT | `/api/workspaces/:id` | Update workspace |
 | DELETE | `/api/workspaces/:id` | Delete workspace |
 | POST | `/api/workspaces/:id/switch` | Switch active workspace |
-| GET | `/api/workspaces/:id/conversations` | List conversations for a workspace |
+| POST | `/api/workspaces/pick-directory` | Open the native directory picker |
+| GET | `/api/conversations` | List conversations for the active workspace |
+| GET | `/api/workspaces/:id/conversations` | List conversations for any workspace |
 | POST | `/api/conversations` | Create conversation |
 | PUT | `/api/conversations/:id` | Update conversation |
+| PUT | `/api/conversations/:id/interaction-mode` | Set interaction mode (`direct` / `collaborative` / `supervised`) |
 | DELETE | `/api/conversations/:id` | Delete conversation |
 | POST | `/api/conversations/:id/switch` | Switch active conversation |
 | GET | `/events` | SSE stream of all runtime events |
@@ -180,7 +207,7 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 ### Key Patterns
 
 - **EventBus pub/sub**: `SseHub`, `TerminalTranscriptStore`, and `RunManager` all subscribe to `RuntimeEvent` variants on a shared bus
-- **Per-agent serial queue**: Each agent runs one CLI process at a time; additional tasks queue automatically
+- **Per-agent serial queue**: Each employee runs one task at a time (one ACP run per employee); additional tasks queue automatically
 - **Private context injection**: Each agent prompt is wrapped with a private routing context block; leaked markers are stripped from replies. Precedence: app fixed rules → workspace config → agent role instruction
 - **Multi-conversation parallel**: Multiple conversations can run agents simultaneously via a context map with LRU eviction
 - **In-memory state**: Messages and agent state live in memory per conversation context; file-based persistence for messages, sessions, and transcripts
@@ -193,13 +220,19 @@ The developer agent creates feature branches, commits, pushes, and opens draft P
 ├── conversations/{workspaceId}/{conversationId}/messages/
 │   ├── manifest.json
 │   └── YYYY-MM-DD.ndjson
+├── conversations/{workspaceId}/{conversationId}/attachments/
+│   └── <attachmentId>.<ext>   (committed image attachments)
 ├── transcripts/{workspaceId}/{conversationId}/{agentId}/
 │   └── YYYY-MM-DD-<sequence>.log
 ├── sessions/{workspaceId}/{runtime}/{channelId}/{conversationId}/{agentId}.json
-└── workspaces/{workspaceId}/
-    ├── workspace.json
-    ├── agents.json
-    └── config.json         (workspace-level systemPrompt and rules)
+│   ({runtime} is claude-code | codex | codebuddy; stores ACP session ids and transport metadata)
+├── tmp/attachments/{workspaceId}/{conversationId}/
+│   └── <draftId>.<ext>        (upload drafts pending send)
+├── workspaces/{workspaceId}/
+│   ├── workspace.json
+│   ├── agents.json
+│   └── config.json         (workspace-level systemPrompt and rules)
+└── last-active.json
 ```
 
 ### UI Design System ("Warm Observatory")
@@ -213,7 +246,7 @@ The UI uses a warm cream + deep teal design system, implemented entirely in CSS 
 - **Typography**: Plus Jakarta Sans (Google Fonts import), no Inter/Roboto
 - **Animations**: Custom cubic-bezier easing (`--ease-out`, `--ease-spring`)
 
-When modifying UI: use CSS variables, never hardcode colors. Keep all changes in `styles.css`. JSX changes in `App.tsx` only.
+When modifying UI: use CSS variables, never hardcode colors. Keep styling in `styles.css`; JSX lives in `App.tsx`, `TaskDetailDrawer.tsx`, and `WorkAnalysisPanel.tsx`. Reuse tdesign-react components where a desktop-style control fits.
 
 ### Routing Rules
 

@@ -1,6 +1,6 @@
 ﻿# Orbit
 
-Orbit 是一个本地优先的数字员工协作工作台，可以在相互隔离的工作区和会话中协调多个 CLI 后端数字员工。
+Orbit 是一个本地优先的数字员工协作工作台，可以在相互隔离的工作区和会话中协调多个数字员工。员工由 Claude Code、Codex、CodeBuddy 通过 Agent Client Protocol（ACP）驱动。
 
 ## 安装
 

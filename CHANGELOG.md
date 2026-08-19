@@ -4,6 +4,77 @@
 
 ---
 
+## Unreleased
+
+### New things you can do
+
+- **One protocol for every runtime.** Claude Code, Codex, and CodeBuddy all run
+  over Agent Client Protocol (ACP) v1. The Claude Code (`claude-agent-acp`) and
+  Codex (`codex-acp`) adapters ship bundled with Orbit, so no extra adapter
+  install is needed; CodeBuddy connects through `codebuddy --acp`.
+- **Approve work in the conversation.** Permission requests from digital
+  employees surface as approval cards in chat. The message's approval mode
+  (`ask` or full access) follows the entire handoff chain.
+- **Answer structured questions.** Employees can ask structured elicitation
+  questions in chat, and their native plans are surfaced while they work.
+- **Pick a collaboration mode per conversation.** 普通对话 (direct),
+  简单协作 (collaborative), and 复杂协作 (supervised) modes replace the old
+  always-on routing. New conversations start in 简单协作, and the mode can be
+  switched mid-conversation without losing employee session context.
+- **Delegate to a built-in supervisor.** 复杂协作 enables the internal
+  supervisor (监工) that decomposes goals, schedules employees, tracks
+  progress, recovers from failures, and drives the task to closure.
+- **Build your own digital employee team.** Employees are fully editable:
+  rename them, rewrite their prompts, add or remove them, or apply the built-in
+  software development team template (范同经 / 甄架构 / 蔡一平 / 田小坑).
+  Per-employee permission settings were removed in favor of the message-level
+  approval mode.
+- **Stop everything at once.** Stopping a conversation discards queued tasks
+  and moves running tasks through an explicit cancelling state until the
+  runtime settles, preserving partial output instead of mixing it into the
+  next task.
+
+### Improvements & fixes
+
+- **Redesigned collaboration workspace.** A desktop-style UI with a task
+  detail drawer, execution timelines, and a clearer composer (built with
+  tdesign-react).
+- **Safer rendering.** External links in employee output only open http(s)
+  URLs, guarding against `javascript:` and `data:` URLs; ACP progress chatter
+  no longer leaks into final answers.
+- **More reliable supervision.** The stop button stays visible while the
+  supervisor runs, user messages sent during a supervised run are queued, and
+  interaction expiry timers fire reliably in CI environments.
+
+---
+
+## v1.0.0 — 2026-07-08
+
+### New things you can do
+
+- **Open source 1.0.** Orbit 1.0.0 is publicly installable and auditable under
+  the MIT license, with governance files (`SECURITY.md`,
+  `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`) and public npm/GitHub Release
+  distribution.
+- **No license file required by default.** Standalone startup works without
+  `license.json`; private licensed builds opt in with
+  `ORBIT_REQUIRE_LICENSE=true`.
+
+### Improvements & fixes
+
+- **Install from npm or Release artifacts.** The package publishes as
+  `@kevinforge/orbit` with standalone binaries for Windows x64, Linux x64, and
+  macOS x64/ARM64.
+- **Recover from runtime errors.** An employee in `error` state can be retried
+  by sending a normal unassigned message in the same conversation.
+- **Clearer upstream busy signals.** Claude Code `529 overloaded` failures are
+  summarized as an upstream model service busy condition.
+- **Documented local data.** `docs/DATA_DIRECTORY.md` covers layout, backup,
+  restore, and reset of `~/.orbit`; `docs/TERMINOLOGY_AND_ROUTING.md` defines
+  product terms and assignment markers.
+
+---
+
 ## v0.9.5 — 2026-06-21
 
 ### New things you can do
