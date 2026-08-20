@@ -162,14 +162,6 @@ export class MessageStore {
           runStatus: "cancelled",
           startedAt: message.startedAt ?? message.createdAt,
           completedAt,
-          activity: [
-            ...(message.activity ?? []),
-            {
-              type: "status",
-              text: "Orbit 服务已关闭或重启，已将这次运行标记为中断。",
-              timestamp: completedAt,
-            },
-          ],
         };
         updatedMessages.push(updated);
         abandoned.push(updated);

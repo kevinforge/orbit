@@ -53,6 +53,18 @@ activity, and terminal output. Treat `~/.orbit` as private user data.
 Orbit does not copy your source repository into `~/.orbit`; workspace metadata
 stores a pointer to the project path.
 
+## What Message Shards Persist
+
+Each agent reply message persists the final reply text, the final run status
+and error summary, a compact ordered process timeline (`processTimeline`), and
+the final plan snapshot (`plan`). The process timeline retains runtime-explicit
+narration (excluding the final body and capped at 20,000 characters) plus the
+tool-call and failure counts for each adjacent tool group. Raw tool names,
+inputs, results, and high-frequency run logs stay in server memory and the open
+page, and are not written to `~/.orbit`. After a page refresh the reply card
+restores the final body, plan, ordered process narration, and compact tool-group
+summaries without restoring raw tool details.
+
 ## Back Up Data
 
 Stop Orbit before copying the data directory so message shards, transcripts,

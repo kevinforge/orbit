@@ -73,7 +73,7 @@ export class ConversationContext {
     // can update it at runtime without recreating the context.
     this._workspaceConfig = options.workspaceConfig ?? structuredClone(DEFAULT_WORKSPACE_CONFIG);
     this._globalConfig = options.globalConfig ?? structuredClone(DEFAULT_GLOBAL_CONFIG);
-    this._interactionMode = options.interactionMode ?? "collaborative";
+    this._interactionMode = options.interactionMode ?? "direct";
     this._lastDirectAgentId = options.lastDirectAgentId;
     this._supervisionRuntime = options.supervisionRuntime;
     this._profiles = profiles.filter((profile) => !profile.internal);

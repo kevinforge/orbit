@@ -3,7 +3,8 @@ import { renderMarkdown } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
 import {
@@ -22,9 +23,9 @@ import {
   SendIcon,
   SettingIcon,
   StopCircleIcon,
+  TerminalIcon,
   UsergroupIcon,
 } from "tdesign-icons-react";
-import { TaskDetailDrawer } from "./TaskDetailDrawer.tsx";
 
 const { Avatar, Button, Tooltip } = TDesign;
 
@@ -45,7 +46,7 @@ function interactionModeTooltip(mode: InteractionMode): string {
 
 const initialState: AppState = {
   workspace: { id: "", name: "", path: "" },
-  conversation: { id: "", name: "", interactionMode: "collaborative" },
+  conversation: { id: "", name: "", interactionMode: "direct" },
   agents: [],
   messages: [],
   messageHistory: { hasOlderMessages: false, olderCursor: null },
@@ -73,14 +74,14 @@ function loadActiveView(): ActiveView {
 }
 
 export function resolveApprovalMode(storedMode: string | null): ApprovalMode {
-  return storedMode === "full-access" ? "full-access" : "ask";
+  return storedMode === "ask" ? "ask" : "full-access";
 }
 
 function loadApprovalMode(): ApprovalMode {
   try {
     return resolveApprovalMode(window.localStorage.getItem(APPROVAL_MODE_STORAGE_KEY));
   } catch {
-    return "ask";
+    return "full-access";
   }
 }
 
@@ -134,7 +135,6 @@ export function App() {
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
-  const [selectedTaskMessageId, setSelectedTaskMessageId] = useState<string | null>(null);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
   const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
@@ -304,16 +304,9 @@ export function App() {
   }, [state.agents, state.conversation.supervisionRuntime]);
   const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
   const visibleMessages = useMemo(() => state.messages.filter((message) => !message.discarded), [state.messages]);
-  const selectedTaskMessage = selectedTaskMessageId
-    ? visibleMessages.find((message) => message.id === selectedTaskMessageId) ?? null
-    : null;
-  const latestTaskMessage = useMemo(
-    () => [...visibleMessages].reverse().find((message) => message.kind === "agent" && (message.runId || message.activity?.length)) ?? null,
-    [visibleMessages],
-  );
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
   const hasEnabledAgent = agentIds.length > 0;
-  const interactionMode: InteractionMode = state.conversation.interactionMode ?? "collaborative";
+  const interactionMode: InteractionMode = state.conversation.interactionMode ?? "direct";
   const lastDirectAgentLabel = state.conversation.lastDirectAgentId
     ? agentsById.get(state.conversation.lastDirectAgentId)?.label
     : undefined;
@@ -326,6 +319,8 @@ export function App() {
             message.status ?? "",
             message.content.length,
             message.activity?.length ?? 0,
+            message.processTimeline?.length ?? 0,
+            message.plan ? "plan" : "",
           ].join(":"),
         )
         .join("|"),
@@ -1210,13 +1205,6 @@ export function App() {
               {state.agents.map((agent) => <Avatar key={agent.id} style={{ backgroundColor: agentColor(agent.id) }}>{agent.label.slice(0, 1)}</Avatar>)}
             </Avatar.Group>
             <span className="headerMeta">{state.agents.length} 人在线</span>
-            <Button
-              className="headerTaskButton"
-              variant="text"
-              icon={<ChatBubbleHistoryIcon />}
-              disabled={!latestTaskMessage}
-              onClick={() => latestTaskMessage && setSelectedTaskMessageId(latestTaskMessage.id)}
-            >运行记录 {latestTaskMessage?.activity?.length ?? 0} 条</Button>
             <Button variant="text" shape="square" icon={<MoreIcon />} aria-label="更多操作" />
           </div>
         </header>
@@ -1269,7 +1257,6 @@ export function App() {
                 agent={message.agentId ? agentsById.get(message.agentId) : undefined}
                 parentMessage={message.parentMessageId ? messagesById.get(message.parentMessageId) : undefined}
                 agentsById={agentsById}
-                onOpenTask={() => setSelectedTaskMessageId(message.id)}
               />
             ))
           )}
@@ -1536,14 +1523,6 @@ export function App() {
           onRefreshRuntimes={refreshRuntimeAvailability}
         />
       ) : null}
-      <TaskDetailDrawer
-        visible={Boolean(selectedTaskMessage)}
-        message={selectedTaskMessage}
-        parentMessage={selectedTaskMessage?.parentMessageId ? messagesById.get(selectedTaskMessage.parentMessageId) : undefined}
-        agent={selectedTaskMessage?.agentId ? agentsById.get(selectedTaskMessage.agentId) : undefined}
-        agents={state.agents}
-        onClose={() => setSelectedTaskMessageId(null)}
-      />
       {previewAttachment ? (
         <div className="imagePreviewOverlay" onClick={() => setPreviewAttachment(null)}>
           <div className="imagePreviewModal" onClick={(e) => e.stopPropagation()}>
@@ -1863,18 +1842,18 @@ function MessageRow({
   agent,
   parentMessage,
   agentsById,
-  onOpenTask,
 }: {
   message: ChatMessage;
   agent?: AgentState;
   parentMessage?: ChatMessage;
   agentsById: Map<AgentId, AgentState>;
-  onOpenTask: () => void;
 }) {
   const author = message.kind === "user" ? "你" : message.kind === "agent" ? agent?.label ?? message.agentId ?? "数字员工" : "系统";
   const isRunning = message.status === "running";
   const isCancelling = message.status === "cancelling" || message.runStatus === "cancelling";
   const isQueued = message.runStatus === "queued";
+  const isAgentRun = message.kind === "agent" && Boolean(message.runId);
+  const isLiveRun = isAgentRun && (isRunning || isCancelling || isQueued);
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
   const compactHandoffSource = parentMessage?.kind === "agent"
     ? agentsById.get(parentMessage.agentId ?? "")?.label ?? parentMessage.agentId ?? "数字员工"
@@ -1884,6 +1863,7 @@ function MessageRow({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const copyResetTimer = useRef<number | null>(null);
   const canCopyMessage = message.content.trim().length > 0 && !isProgressPlaceholder;
+  const liveResponse = isLiveRun ? resolveLiveResponseText(message.activity) : undefined;
 
   useEffect(() => () => {
     if (copyResetTimer.current !== null) {
@@ -1965,9 +1945,18 @@ function MessageRow({
       ) : handoffSummary && parentMessage?.kind !== "user" ? (
         <div className="handoffSummary" title={handoffSummary}>{handoffSummary}</div>
       ) : null}
+      {isAgentRun
+        ? isLiveRun
+          ? liveResponse
+            ? <SettledRunProcess message={message} live />
+            : <LiveRunProcess message={message} isCancelling={isCancelling} />
+          : <SettledRunProcess message={message} />
+        : null}
       <div className="messageBody">
         {isProgressPlaceholder ? (
-          <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
+          liveResponse?.text
+            ? <MarkdownContent content={liveResponse.text} />
+            : <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
         ) : message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
@@ -1990,8 +1979,237 @@ function MessageRow({
           </div>
         ) : null}
       </div>
-      {message.activity?.length ? <ActivityList activity={message.activity} status={message.status} onOpenDetails={onOpenTask} /> : null}
     </article>
+  );
+}
+
+type ProcessTimelineEntry =
+  | { kind: "text"; text: string; timestamp: string }
+  | { kind: "tools"; activities: ProcessToolActivity[] }
+  | { kind: "tool-summary"; count: number; failedCount: number };
+
+/** Preserve the ACP order while combining adjacent text chunks and tool events. */
+export function buildProcessTimeline(
+  activity: AgentActivityEvent[] | undefined,
+  hiddenAnswerGroup: string | null = null,
+  persistedTimeline?: PersistedProcessTimelineEntry[] | null,
+): ProcessTimelineEntry[] {
+  const timeline: ProcessTimelineEntry[] = [];
+
+  for (const item of activity ?? []) {
+    if (item.type === "process.text") {
+      if (!item.text) continue;
+      if (hiddenAnswerGroup !== null && item.stream === "answer" && item.answerGroup === hiddenAnswerGroup) {
+        continue;
+      }
+      const previous = timeline.at(-1);
+      if (previous?.kind === "text") {
+        previous.text += item.text;
+      } else {
+        timeline.push({ kind: "text", text: item.text, timestamp: item.timestamp });
+      }
+      continue;
+    }
+
+    if (item.type !== "tool.started" && item.type !== "tool.completed" && item.type !== "tool.failed" && item.type !== "error") {
+      continue;
+    }
+
+    const previous = timeline.at(-1);
+    if (previous?.kind === "tools") {
+      previous.activities.push(item);
+    } else {
+      timeline.push({ kind: "tools", activities: [item] });
+    }
+  }
+
+  if (timeline.length === 0 && persistedTimeline?.length) {
+    return persistedTimeline.map((entry) => entry.type === "text"
+      ? { kind: "text", text: entry.text, timestamp: "" }
+      : { kind: "tool-summary", count: entry.count, failedCount: entry.failedCount });
+  }
+  return timeline;
+}
+
+export function resolveLiveResponseText(
+  activity: AgentActivityEvent[] | undefined,
+): { answerGroup: string; text: string } | undefined {
+  if (!activity?.length) return undefined;
+
+  let lastToolIndex = -1;
+  for (let index = activity.length - 1; index >= 0; index -= 1) {
+    const item = activity[index];
+    if (item?.type === "tool.started" || item?.type === "tool.completed" || item?.type === "tool.failed") {
+      lastToolIndex = index;
+      break;
+    }
+  }
+
+  let answerGroup: string | undefined;
+  for (let index = activity.length - 1; index > lastToolIndex; index -= 1) {
+    const item = activity[index];
+    if (item?.type === "process.text" && item.stream === "answer" && item.answerGroup !== undefined && item.text) {
+      answerGroup = item.answerGroup;
+      break;
+    }
+  }
+  if (answerGroup === undefined) return undefined;
+
+  const text = activity
+    .slice(lastToolIndex + 1)
+    .filter((item): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
+      item.type === "process.text"
+      && item.stream === "answer"
+      && item.answerGroup === answerGroup
+      && !item.snapshot
+    ))
+    .map((item) => item.text)
+    .join("");
+  return text ? { answerGroup, text } : undefined;
+}
+
+function toolExecutionLabel(execution: ProcessToolExecution): string {
+  if (execution.status === "failed") return `${execution.name} 执行失败`;
+  if (execution.status === "completed") return `${execution.name} 已完成`;
+  return `正在执行 ${execution.name}`;
+}
+
+function ToolActivityGroup({ activities, live }: { activities: ProcessToolActivity[]; live: boolean }) {
+  const executions = collapseToolExecutions(activities);
+  const latest = executions.at(-1);
+  if (!latest) return null;
+
+  return (
+    <details className={`processToolGroup${live ? " live" : ""}`}>
+      <summary title={latest.input ?? latest.summary ?? toolExecutionLabel(latest)}>
+        <TerminalIcon className="processToolIcon" aria-hidden="true" />
+        <span key={`${latest.key}-${latest.status}`} className={`processToolLatest ${latest.status}`}>{toolExecutionLabel(latest)}</span>
+        {executions.length > 1 ? <span className="processToolCount">{executions.length} 项</span> : null}
+        <ChevronRightIcon className="processToolChevron" aria-hidden="true" />
+      </summary>
+      <ol className="processToolList" aria-label="全部工具执行">
+        {executions.map((execution) => (
+          <li key={execution.key} className={execution.status}>
+            <span className="processToolStatus" aria-hidden="true" />
+            <span className="processToolEntry">
+              <strong>{toolExecutionLabel(execution)}</strong>
+              {execution.input ? <span>{execution.input}</span> : null}
+              {execution.summary ? <span>{execution.summary}</span> : null}
+            </span>
+            <time dateTime={execution.timestamp}>{formatTime(execution.timestamp)}</time>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+function PersistedToolActivityGroup({ count, failedCount }: { count: number; failedCount: number }) {
+  return (
+    <div className="processToolSummary" title="刷新后仅保留工具调用统计">
+      <TerminalIcon className="processToolIcon" aria-hidden="true" />
+      <span>已执行 {count} 次工具调用</span>
+      {failedCount > 0 ? <span className="processToolSummaryError">{failedCount} 次失败</span> : null}
+    </div>
+  );
+}
+
+function ProcessTimeline({ message, live }: { message: ChatMessage; live: boolean }) {
+  const liveResponse = live ? resolveLiveResponseText(message.activity) : undefined;
+  const timeline = buildProcessTimeline(
+    message.activity,
+    liveResponse?.answerGroup ?? null,
+    message.processTimeline,
+  );
+  if (timeline.length === 0) return null;
+  return (
+    <div className="processTimeline">
+      {timeline.map((entry, index) => entry.kind === "text" ? (
+        <div key={`text-${index}`} className="processNarrative">{entry.text}</div>
+      ) : entry.kind === "tools" ? (
+        <ToolActivityGroup key={`tools-${index}`} activities={entry.activities} live={live} />
+      ) : (
+        <PersistedToolActivityGroup key={`tool-summary-${index}`} count={entry.count} failedCount={entry.failedCount} />
+      ))}
+    </div>
+  );
+}
+
+/** 运行中的过程区：Plan 状态板 + ACP 有序过程流。 */
+function LiveRunProcess({ message, isCancelling }: { message: ChatMessage; isCancelling: boolean }) {
+  return (
+    <div className={`liveProcess${isCancelling ? " cancelling" : ""}`} aria-label="执行过程">
+      {message.plan ? <PlanBoard plan={message.plan} /> : null}
+      <ProcessTimeline message={message} live />
+    </div>
+  );
+}
+
+/** 最终正文开始输出或运行结算后的折叠过程区。 */
+function SettledRunProcess({ message, live = false }: { message: ChatMessage; live?: boolean }) {
+  const activity = message.activity ?? [];
+  const plan = message.plan ?? undefined;
+  const liveResponse = live ? resolveLiveResponseText(activity) : undefined;
+  const timeline = buildProcessTimeline(activity, liveResponse?.answerGroup ?? null, message.processTimeline);
+  if (!plan && timeline.length === 0) {
+    return null;
+  }
+
+  const toolStats = timeline.reduce((stats, entry) => {
+    if (entry.kind === "tool-summary") {
+      stats.count += entry.count;
+      stats.failedCount += entry.failedCount;
+    } else if (entry.kind === "tools") {
+      const executions = collapseToolExecutions(entry.activities);
+      stats.count += executions.length;
+      stats.failedCount += executions.filter((execution) => execution.status === "failed").length;
+    }
+    return stats;
+  }, { count: 0, failedCount: 0 });
+
+  return (
+    <details className="settledProcess">
+      <summary>
+        <span className="settledProcessTitle">执行过程</span>
+        <span className="settledProcessMeta">
+          {toolStats.count > 0 ? <span>{toolStats.count} 次工具调用</span> : null}
+          {toolStats.failedCount > 0 ? <span className="settledProcessError">{toolStats.failedCount} 次失败</span> : null}
+          {toolStats.count === 0 && toolStats.failedCount === 0 && (plan || timeline.length > 0) ? <span>过程记录</span> : null}
+        </span>
+        <ChevronRightIcon className="settledProcessChevron" aria-hidden="true" />
+      </summary>
+      <div className="settledProcessBody">
+        {plan ? <PlanBoard plan={plan} /> : null}
+        <ProcessTimeline message={message} live={live} />
+      </div>
+    </details>
+  );
+}
+
+function PlanBoard({ plan }: { plan: AgentPlanSnapshot }) {
+  if (plan.format === "items") {
+    return (
+      <div className="planBoard" aria-label="执行计划">
+        {plan.entries.map((entry, index) => (
+          <div key={index} className={`planStep ${entry.status}`}>
+            <span className="planStepIndicator" aria-hidden="true" />
+            <span className="planStepContent">{entry.content}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (plan.format === "markdown") {
+    return (
+      <div className="planBoard planBoardMarkdown" aria-label="执行计划">
+        <MarkdownContent content={plan.content} />
+      </div>
+    );
+  }
+  return (
+    <div className="planBoard planBoardFile" aria-label="执行计划">
+      计划文件：<code>{plan.uri}</code>
+    </div>
   );
 }
 
@@ -2050,29 +2268,6 @@ function DurationDisplay({ startedAt, completedAt, isRunning }: { startedAt?: st
   }
 
   return <time dateTime={startedAt}>{startLabel}</time>;
-}
-
-function ActivityList({ activity, status, onOpenDetails }: { activity: AgentActivityEvent[]; status?: ChatMessage["status"]; onOpenDetails: () => void }) {
-  const toolCount = activity.filter((item) => item.type === "tool.started").length;
-  const failedCount = activity.filter((item) => item.type === "tool.failed").length;
-  const errorCount = activity.filter((item) => item.type === "error").length;
-  const latest = activity[activity.length - 1];
-  return (
-    <div className="activityPanel collapsed" aria-label="Agent activity">
-      <button className="activityHeader" type="button" onClick={onOpenDetails} aria-label="打开任务详情">
-        <span className={`activityIndicator ${status ?? "done"}`} aria-hidden="true" />
-        <span className="activitySummary">
-          <strong>运行记录</strong>
-          <span>{activity.length} 条</span>
-          {toolCount > 0 ? <span>{toolCount} 个工具</span> : null}
-          {failedCount > 0 ? <span className="activityErrorCount">{failedCount} 个失败</span> : null}
-          {errorCount > 0 ? <span className="activityErrorCount">{errorCount} 个错误</span> : null}
-        </span>
-        {latest ? <span className="activityLatest">{activityText(latest)}</span> : null}
-        <span className="activityOpenLabel">查看详情</span><ChevronRightIcon className="activityChevron" />
-      </button>
-    </div>
-  );
 }
 
 const RUNTIMES: readonly AgentRuntimeKind[] = AGENT_RUNTIME_PRIORITY;
@@ -2700,31 +2895,6 @@ function AgentManagerPanel({
   );
 }
 
-function activityText(item: AgentActivityEvent): string {
-  if (item.type === "tool.started") {
-    return item.input ? `Started ${item.name}: ${item.input}` : `Started ${item.name}`;
-  }
-  if (item.type === "tool.completed") {
-    if (item.name === "tool") {
-      return item.summary ? `Completed: ${item.summary}` : "Completed";
-    }
-    return item.summary ? `Completed ${item.name}: ${item.summary}` : `Completed ${item.name}`;
-  }
-  if (item.type === "tool.failed") {
-    return item.summary ? `Failed ${item.name}: ${item.summary}` : `Failed ${item.name}`;
-  }
-  if (item.type === "error") {
-    return item.message;
-  }
-  if (item.type === "plan.updated") {
-    return "执行计划已更新";
-  }
-  if (item.type === "plan.removed") {
-    return "执行计划已移除";
-  }
-  return item.text;
-}
-
 function MarkdownContent({ content }: { content: string }) {
   const html = renderMarkdown(content);
   return <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />;
@@ -2739,7 +2909,7 @@ function preferredSupervisionRuntime(availability: AppState["runtimeAvailability
   return AGENT_RUNTIME_PRIORITY.find((runtime) => available.has(runtimeKindToCliKey(runtime)));
 }
 
-function applyEvent(state: AppState, event: RuntimeEvent): AppState {
+export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
   if (event.type === "running.updated") {
     return { ...state, runningSummaries: event.summaries };
   }
@@ -2770,7 +2940,9 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
   }
 
   if (event.type === "message.updated") {
-    return upsertMessage(state, event.message);
+    return upsertMessage(state, event.message, {
+      settleTransientActivity: event.settleTransientActivity,
+    });
   }
 
   if (event.type === "agent.status") {
@@ -2819,25 +2991,23 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
         if (message.runId !== event.runId) {
           return message;
         }
-        const activity = [...(message.activity ?? [])];
-        if (event.activity.type === "plan.updated") {
-          let previousIndex = -1;
-          for (let index = activity.length - 1; index >= 0; index -= 1) {
-            const item = activity[index];
-            if (item?.type === "plan.removed" && (
-              event.activity.plan.id === undefined || item.planId === event.activity.plan.id
-            )) break;
-            if (item?.type === "plan.updated" && item.plan.id === event.activity.plan.id) {
-              previousIndex = index;
-              break;
-            }
-          }
-          if (previousIndex >= 0) activity[previousIndex] = event.activity;
-          else activity.push(event.activity);
-        } else {
-          activity.push(event.activity);
+        const activity = event.activity;
+        if (activity.type === "process.text") {
+          return {
+            ...message,
+            activity: appendTransientProcessActivity(message.activity ?? [], activity),
+          };
         }
-        return { ...message, activity };
+        if (activity.type === "plan.updated") {
+          return { ...message, plan: activity.plan };
+        }
+        if (activity.type === "plan.removed") {
+          if (message.plan?.id === undefined || message.plan.id === activity.planId) {
+            return { ...message, plan: undefined };
+          }
+          return message;
+        }
+        return { ...message, activity: appendTransientProcessActivity(message.activity ?? [], activity) };
       }),
     };
   }
@@ -2845,16 +3015,44 @@ function applyEvent(state: AppState, event: RuntimeEvent): AppState {
   return state;
 }
 
-function upsertMessage(state: AppState, nextMessage: ChatMessage): AppState {
+export function upsertMessage(
+  state: AppState,
+  nextMessage: ChatMessage,
+  options?: { settleTransientActivity?: boolean },
+): AppState {
   const index = state.messages.findIndex((message) => message.id === nextMessage.id);
   if (index === -1) {
     return { ...state, messages: [...state.messages, nextMessage] };
   }
 
+  // 中间更新保留页面实时值；终态事件只剔除最终回答分片，保留当前页面的
+  // 过程文本和完整工具明细。刷新后因没有 activity，才会回退到持久化摘要。
   return {
     ...state,
-    messages: state.messages.map((message) => (message.id === nextMessage.id ? nextMessage : message)),
+    messages: state.messages.map((message) => {
+      if (message.id !== nextMessage.id) return message;
+      const settledActivity = options?.settleTransientActivity
+        ? removeSettledAnswerActivity(message.activity)
+        : message.activity;
+      return {
+        ...nextMessage,
+        activity: nextMessage.activity ?? settledActivity,
+        processTimeline: nextMessage.processTimeline === undefined ? message.processTimeline : nextMessage.processTimeline,
+        plan: nextMessage.plan === undefined ? message.plan : nextMessage.plan,
+      };
+    }),
   };
+}
+
+function removeSettledAnswerActivity(activity: AgentActivityEvent[] | undefined): AgentActivityEvent[] | undefined {
+  if (!activity?.length) return activity;
+  const response = resolveLiveResponseText(activity);
+  if (!response) return activity;
+  return activity.filter((item) => !(
+    item.type === "process.text"
+    && item.stream === "answer"
+    && item.answerGroup === response.answerGroup
+  ));
 }
 
 function normalizeState(nextState: AppState): AppState {

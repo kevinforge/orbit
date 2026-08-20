@@ -254,7 +254,7 @@ test("repository documents public terminology and routing marker behavior", () =
   assert.match(terminology, /普通对话/);
   assert.match(terminology, /简单协作/);
   assert.match(terminology, /复杂协作/);
-  assert.match(terminology, /New conversations start in 简单协作/);
+  assert.match(terminology, /New conversations start in 普通对话/);
   assert.match(terminology, /Plain `@display-name` without a colon is a reference only/);
   assert.match(terminology, /Unknown `@display-name:` markers are ignored/);
   assert.match(terminology, /empty assignment/);

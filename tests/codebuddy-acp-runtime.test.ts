@@ -86,6 +86,7 @@ test("starts CodeBuddy exclusively in ACP mode", () => {
 });
 
 test("creates an ACP session and returns streamed agent text", async () => {
+  const activities: AgentActivityEvent[] = [];
   const fake = fakeConnector({
     onPrompt(notify) {
       notify({
@@ -98,7 +99,7 @@ test("creates an ACP session and returns streamed agent text", async () => {
     },
   });
   const runtime = createCodeBuddyAcpRuntime(fake.connector);
-  const handle = runtime.run(runOptions());
+  const handle = runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) }));
 
   assert.equal(await handle.result, "final answer");
   assert.equal(await handle.sessionId, "new-session");
@@ -111,17 +112,40 @@ test("creates an ACP session and returns streamed agent text", async () => {
   const newSession = fake.calls.find((call) => call.method === "session/new")!.value as { cwd: string };
   assert.equal(newSession.cwd, path.resolve("D:/workspace"));
   assert.equal(fake.wasClosed(), true);
+  assert.deepEqual(
+    activities.filter((activity) => activity.type === "process.text").map((activity) => (
+      activity.type === "process.text" ? { text: activity.text, snapshot: Boolean(activity.snapshot) } : null
+    )),
+    [
+      { text: "final answer", snapshot: false },
+      { text: "", snapshot: true },
+    ],
+  );
 });
 
 test("keeps CodeBuddy progress and internal messages out of the final answer", async () => {
   const output: string[] = [];
+  const activities: AgentActivityEvent[] = [];
+  // CodeBuddy 在一个回合内复用同一个顶层 messageId；过程叙述与最终答案的边界
+  // 只能来自 session_info_update._meta["codebuddy.ai/agentPhase"] 的模型响应相位。
+  const messageId = "new-session-1";
   const fake = fakeConnector({
     onPrompt(notify) {
+      const phase = (agentPhase: string) => notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "session_info_update",
+          _meta: { "codebuddy.ai/agentPhase": { phase: agentPhase, startedAt: Date.now() } },
+        },
+      });
+      phase("idle");
+      phase("preparing");
+      phase("model_requesting");
       notify({
         sessionId: "new-session",
         update: {
           sessionUpdate: "agent_message_chunk",
-          messageId: "progress-1",
+          messageId,
           content: { type: "text", text: "CHECKING" },
         },
       });
@@ -132,11 +156,25 @@ test("keeps CodeBuddy progress and internal messages out of the final answer", a
           content: { type: "text", text: "hidden reasoning" },
         },
       });
+      phase("model_streaming");
+      phase("model_done");
+      phase("tool_executing");
       notify({
         sessionId: "new-session",
         update: {
           sessionUpdate: "agent_message_chunk",
-          messageId: "final-1",
+          messageId,
+          content: { type: "text", text: "member progress" },
+          _meta: { "codebuddy.ai/memberEvent": { type: "message" } },
+        },
+      });
+      phase("idle");
+      phase("model_requesting");
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId,
           content: { type: "text", text: "FINAL_CODEBUDDY" },
         },
       });
@@ -144,29 +182,137 @@ test("keeps CodeBuddy progress and internal messages out of the final answer", a
         sessionId: "new-session",
         update: {
           sessionUpdate: "agent_message_chunk",
-          messageId: "member-1",
-          content: { type: "text", text: "member progress" },
-          _meta: { "codebuddy.ai/memberEvent": { type: "message" } },
+          messageId,
+          content: { type: "text", text: "internal compact summary" },
+          _meta: { "codebuddy.ai/isCompactInternal": true },
+        },
+      });
+      phase("model_done");
+      phase("idle");
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+
+  assert.equal(
+    await runtime.run(runOptions({
+      onOutput: (text: string) => output.push(text),
+      onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+    })).result,
+    "FINAL_CODEBUDDY",
+  );
+  assert.deepEqual(output, ["CHECKING", "member progress", "FINAL_CODEBUDDY"]);
+
+  const processText = activities.filter((activity) => activity.type === "process.text");
+  assert.deepEqual(
+    processText.map((activity) => (activity.type === "process.text" ? { text: activity.text, snapshot: Boolean(activity.snapshot) } : null)),
+    [
+      { text: "CHECKING", snapshot: false },
+      { text: "member progress", snapshot: false },
+      { text: "FINAL_CODEBUDDY", snapshot: false },
+      { text: "CHECKINGmember progress", snapshot: true },
+    ],
+  );
+});
+
+test("splits CodeBuddy process narration from the final answer using agentPhase response boundaries", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const messageId = "new-session-2";
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      const phase = (agentPhase: string) => notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "session_info_update",
+          _meta: { "codebuddy.ai/agentPhase": { phase: agentPhase, startedAt: Date.now() } },
+        },
+      });
+      phase("model_requesting");
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId,
+          content: { type: "text", text: "Let me check the build. " },
+        },
+      });
+      phase("model_done");
+      phase("tool_executing");
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Run tests",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "npm test" },
+        },
+      });
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "completed",
+          rawOutput: "passed",
+        },
+      });
+      phase("model_requesting");
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId,
+          content: { type: "text", text: "Tests passed." },
+        },
+      });
+      phase("model_done");
+      phase("idle");
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  const result = await runtime.run(runOptions({
+    onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+  })).result;
+
+  assert.equal(result, "Tests passed.");
+  const processText = activities.filter((activity) => activity.type === "process.text");
+  assert.deepEqual(
+    processText.map((activity) => (activity.type === "process.text" ? { text: activity.text, snapshot: Boolean(activity.snapshot) } : null)),
+    [
+      { text: "Let me check the build. ", snapshot: false },
+      { text: "Tests passed.", snapshot: false },
+      { text: "Let me check the build. ", snapshot: true },
+    ],
+  );
+});
+
+test("falls back to a single response group when agentPhase is unavailable", async () => {
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      // 旧版本 CodeBuddy 不发送 agentPhase；同一 messageId 下的全部文本都视为
+      // 最终答案候选，单组兜底不会丢文本。
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "legacy-1",
+          content: { type: "text", text: "first part " },
         },
       });
       notify({
         sessionId: "new-session",
         update: {
           sessionUpdate: "agent_message_chunk",
-          messageId: "compact-1",
-          content: { type: "text", text: "internal compact summary" },
-          _meta: { "codebuddy.ai/isCompactInternal": true },
+          messageId: "legacy-1",
+          content: { type: "text", text: "second part" },
         },
       });
     },
   });
   const runtime = createCodeBuddyAcpRuntime(fake.connector);
 
-  assert.equal(
-    await runtime.run(runOptions({ onOutput: (text: string) => output.push(text) })).result,
-    "FINAL_CODEBUDDY",
-  );
-  assert.deepEqual(output, ["CHECKING", "FINAL_CODEBUDDY", "member progress"]);
+  assert.equal(await runtime.run(runOptions()).result, "first part second part");
 });
 
 test("loads an existing session and suppresses replayed history", async () => {
@@ -310,8 +456,18 @@ test("maps ACP tool lifecycle updates to Orbit activity events", async () => {
   const runtime = createCodeBuddyAcpRuntime(fake.connector);
   await runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) })).result;
 
-  assert.deepEqual(activities.map((activity) => activity.type), ["tool.started", "tool.completed"]);
+  assert.deepEqual(activities.map((activity) => activity.type), ["tool.started", "tool.completed", "process.text", "process.text"]);
   assert.equal(activities[0]?.type === "tool.started" && activities[0].name, "Read package.json");
+  assert.equal(activities[0]?.type === "tool.started" && activities[0].toolCallId, "tool-1");
+  assert.equal(activities[1]?.type === "tool.completed" && activities[1].toolCallId, "tool-1");
+  assert.ok(
+    activities[2]?.type === "process.text" && activities[2].text === "complete" && !activities[2].snapshot,
+    "the final answer streams as a process.text delta while the run is live",
+  );
+  assert.ok(
+    activities[3]?.type === "process.text" && activities[3].text === "" && activities[3].snapshot,
+    "the settlement snapshot clears the final answer from the process region",
+  );
 });
 
 test("advertises and maps native ACP plan updates", async () => {

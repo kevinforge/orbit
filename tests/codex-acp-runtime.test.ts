@@ -108,15 +108,34 @@ test("keeps Codex adapter warnings out of the final answer", async () => {
   const runtime = createCodexAcpRuntime(fake.connector);
 
   assert.equal(await runtime.run(runOptions({ onActivity: (activity: unknown) => activities.push(activity) })).result, "clean answer");
-  assert.deepEqual(activities, [{
-    type: "status",
-    text: "Warning: WebSocket unavailable",
-    timestamp: (activities[0] as { timestamp: string }).timestamp,
-  }]);
+  // 诊断告警保持为状态活动；正常答案只在流式期间出现在过程区，
+  // 结算时用空快照清除最终回复文本，避免完成态重复展示。
+  assert.deepEqual(activities, [
+    {
+      type: "status",
+      text: "Warning: WebSocket unavailable",
+      timestamp: (activities[0] as { timestamp: string }).timestamp,
+    },
+    {
+      type: "process.text",
+      text: "clean answer",
+      stream: "answer",
+      answerGroup: "answer-1",
+      timestamp: (activities[1] as { timestamp: string }).timestamp,
+    },
+    {
+      type: "process.text",
+      text: "",
+      snapshot: true,
+      excludedAnswerGroup: "answer-1",
+      timestamp: (activities[2] as { timestamp: string }).timestamp,
+    },
+  ]);
 });
 
 test("uses Codex final-answer phase instead of commentary or thought chunks", async () => {
   const output: string[] = [];
+  const activities: Array<{ type: string; text?: string; snapshot?: boolean }> = [];
   const fake = fakeConnector({
     onPrompt(notify) {
       notify({
@@ -166,10 +185,25 @@ test("uses Codex final-answer phase instead of commentary or thought chunks", as
   const runtime = createCodexAcpRuntime(fake.connector);
 
   assert.equal(
-    await runtime.run(runOptions({ onOutput: (text: string) => output.push(text) })).result,
+    await runtime.run(runOptions({
+      onOutput: (text: string) => output.push(text),
+      onActivity: (activity: { type: string; text?: string; snapshot?: boolean }) => activities.push(activity),
+    })).result,
     "Final answer",
   );
   assert.deepEqual(output, ["Inspecting the project.", "Final ", "answer", "Late commentary"]);
+
+  const processText = activities.filter((activity) => activity.type === "process.text");
+  assert.deepEqual(
+    processText.map((activity) => ({ text: activity.text, snapshot: Boolean(activity.snapshot) })),
+    [
+      { text: "Inspecting the project.", snapshot: false },
+      { text: "Final ", snapshot: false },
+      { text: "answer", snapshot: false },
+      { text: "Late commentary", snapshot: false },
+      { text: "Inspecting the project.Late commentary", snapshot: true },
+    ],
+  );
 });
 
 test("creates a Codex ACP session and returns streamed text", async () => {

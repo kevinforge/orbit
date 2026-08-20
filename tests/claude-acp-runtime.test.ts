@@ -12,6 +12,7 @@ import {
   type ClaudeAcpConnector,
 } from "../src/core/claude-acp-runtime.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
+import type { AgentActivityEvent } from "../src/shared/types.ts";
 
 type FakeOptions = {
   capabilities?: Awaited<ReturnType<ClaudeAcpConnection["initialize"]>>["agentCapabilities"];
@@ -82,6 +83,7 @@ test("supports a configured Claude ACP command path", () => {
 });
 
 test("creates a Claude ACP session and advertises elicitation", async () => {
+  const activities: AgentActivityEvent[] = [];
   const fake = fakeConnector({
     onPrompt(notify) {
       notify({
@@ -94,7 +96,7 @@ test("creates a Claude ACP session and advertises elicitation", async () => {
     },
   });
   const runtime = createClaudeAcpRuntime(fake.connector);
-  const handle = runtime.run(runOptions());
+  const handle = runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) }));
 
   assert.equal(runtime.kind, "claude-code");
   assert.equal(runtime.transport, "acp");
@@ -104,6 +106,15 @@ test("creates a Claude ACP session and advertises elicitation", async () => {
     clientCapabilities: { elicitation?: { form?: object; url?: object } };
   };
   assert.deepEqual(initialize.clientCapabilities.elicitation, { form: {}, url: {} });
+  assert.deepEqual(
+    activities.filter((activity) => activity.type === "process.text").map((activity) => (
+      activity.type === "process.text" ? { text: activity.text, snapshot: Boolean(activity.snapshot) } : null
+    )),
+    [
+      { text: "Claude answer", snapshot: false },
+      { text: "", snapshot: true },
+    ],
+  );
 });
 
 test("returns only Claude's last assistant message while preserving visible progress output", async () => {

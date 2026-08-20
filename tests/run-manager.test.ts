@@ -5,7 +5,18 @@ import { EventBus } from "../src/core/event-bus.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
 import { MessageStore } from "../src/core/message-store.ts";
 import { classifyTerminalActivities, classifyTerminalActivity, RunManager } from "../src/core/run-manager.ts";
-import type { AgentId, ChatMessage, RunResult } from "../src/shared/types.ts";
+import type { AgentActivityEvent, AgentId, ChatMessage, RunResult, RuntimeEvent } from "../src/shared/types.ts";
+
+/** 捕获某个 run 的实时 run.activity 事件（工具/状态/过程文本都只走这条通道）。 */
+function captureRunActivity(eventBus: EventBus, runId: string): AgentActivityEvent[] {
+  const activities: AgentActivityEvent[] = [];
+  eventBus.subscribe((event: RuntimeEvent) => {
+    if (event.type === "run.activity" && event.runId === runId) {
+      activities.push(event.activity);
+    }
+  });
+  return activities;
+}
 
 type Deferred = {
   promise: Promise<RunResult>;
@@ -158,7 +169,230 @@ test("propagates the source approval mode to the agent run and result message", 
   assert.equal(messages.get(run.resultMessageId)?.approvalMode, "full-access");
 });
 
-test("persists bounded native plans and replaces earlier snapshots of the same plan", async () => {
+test("keeps the latest bounded plan snapshot live and persists it only at settlement", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const pending = deferred();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+  const run = manager.enqueue("developer", "work", createSourceMessage());
+  const activities = captureRunActivity(eventBus, run.id);
+
+  eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity: {
+      type: "plan.updated",
+      plan: { id: "plan-1", format: "markdown", content: "first" },
+      timestamp: new Date().toISOString(),
+    },
+  });
+  eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity: {
+      type: "plan.updated",
+      plan: { id: "plan-1", format: "markdown", content: "x".repeat(20_000) },
+      timestamp: new Date().toISOString(),
+    },
+  });
+
+  // 运行中：Plan 快照只走实时事件，不写入持久化消息。
+  assert.equal(messages.get(run.resultMessageId)?.activity, undefined);
+  const planEvents = activities.filter((item) => item.type === "plan.updated");
+  assert.equal(planEvents.length, 2);
+  assert.equal(planEvents[1]?.type === "plan.updated" && planEvents[1].plan.format === "markdown" && planEvents[1].plan.content.length, 10_000);
+
+  pending.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const settled = messages.get(run.resultMessageId);
+  assert.equal(settled?.plan?.format, "markdown");
+  if (settled?.plan?.format === "markdown") {
+    assert.equal(settled.plan.id, "plan-1");
+    assert.equal(settled.plan.content.length, 10_000);
+  }
+  // 结算后：工具/状态活动仍然不落盘。
+  assert.equal(settled?.activity, undefined);
+});
+
+test("settlement explicitly clears an absent process timeline and a removed plan", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const pending = deferred();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return mockAgentRunner(() => pending.promise);
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+  const run = manager.enqueue("developer", "work", createSourceMessage());
+  const publish = (activity: AgentActivityEvent) => eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity,
+  });
+  publish({
+    type: "plan.updated",
+    plan: { id: "plan-1", format: "markdown", content: "temporary" },
+    timestamp: new Date().toISOString(),
+  });
+  publish({ type: "plan.removed", planId: "plan-1", timestamp: new Date().toISOString() });
+
+  pending.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const settled = messages.get(run.resultMessageId);
+  assert.equal(settled?.processTimeline, null);
+  assert.equal(settled?.plan, null);
+  assert.match(JSON.stringify(settled), /"processTimeline":null/);
+  assert.match(JSON.stringify(settled), /"plan":null/);
+});
+
+test("projects the ordered live process stream and plan without persisting it", () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const pending = deferred();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+  const run = manager.enqueue("developer", "work", createSourceMessage());
+  const publish = (activity: AgentActivityEvent) => eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity,
+  });
+  publish({ type: "status", text: "等待审批：运行测试", timestamp: new Date().toISOString() });
+  publish({ type: "process.text", text: "正在检查", timestamp: new Date().toISOString() });
+  publish({ type: "plan.updated", plan: { format: "items", entries: [{ content: "检查文件", priority: "high", status: "in_progress" }] }, timestamp: new Date().toISOString() });
+  publish({ type: "tool.started", name: "Read", timestamp: new Date().toISOString() });
+
+  const projected = manager.projectLiveProcessState(messages.list());
+  const resultMessage = projected.find((message) => message.id === run.resultMessageId);
+  assert.equal(resultMessage?.plan?.format, "items");
+  assert.deepEqual(
+    resultMessage?.activity?.filter((item) => item.type === "process.text" || item.type.startsWith("tool.")).map((item) => item.type),
+    ["process.text", "tool.started"],
+  );
+  assert.ok(resultMessage?.activity?.some((item) => item.type === "status" && item.text === "等待审批：运行测试"));
+  assert.equal(messages.get(run.resultMessageId)?.activity, undefined, "projection must not persist tool activity");
+});
+
+test("persists an ordered compact process timeline and plan while raw tool activity stays live-only", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const events: RuntimeEvent[] = [];
+  eventBus.subscribe((event) => events.push(event));
+  const pending = deferred();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+  const run = manager.enqueue("developer", "work", createSourceMessage());
+  const activities = captureRunActivity(eventBus, run.id);
+
+  const publish = (activity: AgentActivityEvent) => eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity,
+  });
+  const ts = () => new Date().toISOString();
+
+  // 流式过程文本（增量）+ 工具活动 + 最终 Plan + 结算快照。
+  publish({ type: "process.text", text: "先检查", stream: "progress", answerGroup: "", timestamp: ts() });
+  publish({ type: "process.text", text: "相关文件。", stream: "progress", answerGroup: "", timestamp: ts() });
+  publish({ type: "tool.started", toolCallId: "read-1", name: "Read", input: "package.json", timestamp: ts() });
+  publish({ type: "tool.completed", toolCallId: "read-1", name: "Read", timestamp: ts() });
+  publish({ type: "tool.started", toolCallId: "search-1", name: "Search", timestamp: ts() });
+  publish({ type: "tool.failed", toolCallId: "search-1", name: "Search", summary: "not found", timestamp: ts() });
+  publish({ type: "process.text", text: "继续验证。", stream: "progress", answerGroup: "", timestamp: ts() });
+  publish({ type: "tool.started", toolCallId: "test-1", name: "Test", timestamp: ts() });
+  publish({ type: "tool.completed", toolCallId: "test-1", name: "Test", timestamp: ts() });
+  publish({ type: "plan.updated", plan: { format: "items", entries: [{ content: "检查文件", priority: "high", status: "completed" }] }, timestamp: ts() });
+  publish({ type: "process.text", text: "最终回复正文", stream: "answer", answerGroup: "response-final", timestamp: ts() });
+  publish({ type: "process.text", text: "先检查相关文件。继续验证。", snapshot: true, excludedAnswerGroup: "response-final", timestamp: ts() });
+
+  // 运行中：实时流按序收到全部事件，持久化消息没有任何 activity。
+  assert.equal(activities.length, 12);
+  assert.deepEqual(
+    activities.map((item) => item.type),
+    ["process.text", "process.text", "tool.started", "tool.completed", "tool.started", "tool.failed", "process.text", "tool.started", "tool.completed", "plan.updated", "process.text", "process.text"],
+  );
+  assert.equal(messages.get(run.resultMessageId)?.activity, undefined);
+
+  pending.resolve({ content: "最终回复正文" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const settled = messages.get(run.resultMessageId);
+  // 刷新后可恢复：最终正文、轻量有序过程、Plan；原始工具活动不恢复。
+  assert.equal(settled?.content, "最终回复正文");
+  assert.deepEqual(settled?.processTimeline, [
+    { type: "text", text: "先检查相关文件。" },
+    { type: "tools", count: 2, failedCount: 1 },
+    { type: "text", text: "继续验证。" },
+    { type: "tools", count: 1, failedCount: 0 },
+  ]);
+  assert.equal(settled?.plan?.format, "items");
+  assert.equal(settled?.activity, undefined);
+  assert.ok(events.some((event) => (
+    event.type === "message.updated"
+    && event.message.id === run.resultMessageId
+    && event.settleTransientActivity === true
+  )), "terminal message update must settle client-only activity");
+});
+
+test("caps persisted process timeline text at settlement", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
   const pending = deferred();
@@ -184,32 +418,15 @@ test("persists bounded native plans and replaces earlier snapshots of the same p
     conversationId: "test-conv",
     agentId: "developer",
     runId: run.id,
-    activity: {
-      type: "plan.updated",
-      plan: { id: "plan-1", format: "markdown", content: "first" },
-      timestamp: new Date().toISOString(),
-    },
+    activity: { type: "process.text", text: "x".repeat(30_000), timestamp: new Date().toISOString() },
   });
-  eventBus.publish({
-    type: "runtime.activity",
-    conversationId: "test-conv",
-    agentId: "developer",
-    runId: run.id,
-    activity: {
-      type: "plan.updated",
-      plan: { id: "plan-1", format: "markdown", content: "x".repeat(20_000) },
-      timestamp: new Date().toISOString(),
-    },
-  });
-
-  const runningPlans = messages.get(run.resultMessageId)?.activity?.filter((item) => item.type === "plan.updated") ?? [];
-  assert.equal(runningPlans.length, 1);
-  assert.equal(runningPlans[0]?.type === "plan.updated" && runningPlans[0].plan.format === "markdown" && runningPlans[0].plan.content.length, 10_000);
 
   pending.resolve({ content: "done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const completedPlans = messages.get(run.resultMessageId)?.activity?.filter((item) => item.type === "plan.updated") ?? [];
-  assert.equal(completedPlans.length, 1);
+  const processTimeline = messages.get(run.resultMessageId)?.processTimeline ?? [];
+  const processText = processTimeline.find((entry) => entry.type === "text")?.text ?? "";
+  assert.equal(processText.length, 20_000);
+  assert.ok(processText.endsWith("…"));
 });
 
 test("treats ACP cancellation after permission rejection as a cancelled run", async () => {
@@ -246,7 +463,7 @@ test("treats ACP cancellation after permission rejection as a cancelled run", as
   assert.equal(message?.content, "developer 权限申请已拒绝，任务已停止。");
 });
 
-test("terminal chunks append visible activity to the running message", async () => {
+test("terminal chunks stream visible tool activity without persisting it", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
   const first = deferred();
@@ -276,13 +493,16 @@ test("terminal chunks append visible activity to the running message", async () 
 
   const source = createSourceMessage();
   const run = manager.enqueue("developer", "first", source);
+  const activities = captureRunActivity(eventBus, run.id);
 
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: "Running Bash(command)" });
-  const runningMessage = messages.get(run.resultMessageId);
-  assert.ok(runningMessage?.activity?.some((activity) => activity.type === "tool.started" && activity.name === "Bash"));
+  assert.ok(activities.some((activity) => activity.type === "tool.started" && activity.name === "Bash"));
+  // 工具活动只存在于实时流，运行中与结算后都不落盘。
+  assert.equal(messages.get(run.resultMessageId)?.activity, undefined);
 
   first.resolve({ content: "done" });
   await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(messages.get(run.resultMessageId)?.activity, undefined);
 });
 
 test("classifies noisy terminal output without exposing raw text", () => {
@@ -518,6 +738,7 @@ test("split Claude tool_use across two terminal chunks still produces tool.start
   });
 
   const run = manager.enqueue("developer", "split tool_use test", createSourceMessage());
+  const activities = captureRunActivity(eventBus, run.id);
 
   const fullJson = JSON.stringify({
     type: "assistant",
@@ -527,8 +748,7 @@ test("split Claude tool_use across two terminal chunks still produces tool.start
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: fullJson.slice(0, mid) });
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: fullJson.slice(mid) });
 
-  const msg = messages.get(run.resultMessageId);
-  const toolStarted = msg?.activity?.find((a) => a.type === "tool.started");
+  const toolStarted = activities.find((a) => a.type === "tool.started");
   assert.ok(toolStarted, "Expected tool.started from split tool_use JSON");
   if (toolStarted?.type === "tool.started") {
     assert.equal(toolStarted.name, "Read");
@@ -567,6 +787,7 @@ test("split Claude tool_use_result across chunks still produces tool.completed w
   });
 
   const run = manager.enqueue("developer", "split result test", createSourceMessage());
+  const activities = captureRunActivity(eventBus, run.id);
 
   const started = JSON.stringify({
     type: "assistant",
@@ -582,8 +803,7 @@ test("split Claude tool_use_result across chunks still produces tool.completed w
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: resultJson.slice(0, mid) });
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: resultJson.slice(mid) });
 
-  const msg = messages.get(run.resultMessageId);
-  const toolCompleted = msg?.activity?.find((a) => a.type === "tool.completed");
+  const toolCompleted = activities.find((a) => a.type === "tool.completed");
   assert.ok(toolCompleted, "Expected tool.completed from split tool_use_result JSON");
   if (toolCompleted?.type === "tool.completed") {
     assert.equal(toolCompleted.name, "Bash");
@@ -622,6 +842,7 @@ test("split Claude tool_use_result error across chunks still produces tool.faile
   });
 
   const run = manager.enqueue("developer", "split failed result test", createSourceMessage());
+  const activities = captureRunActivity(eventBus, run.id);
 
   const started = JSON.stringify({
     type: "assistant",
@@ -637,8 +858,7 @@ test("split Claude tool_use_result error across chunks still produces tool.faile
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: failedJson.slice(0, mid) });
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: failedJson.slice(mid) });
 
-  const msg = messages.get(run.resultMessageId);
-  const toolFailed = msg?.activity?.find((a) => a.type === "tool.failed");
+  const toolFailed = activities.find((a) => a.type === "tool.failed");
   assert.ok(toolFailed, "Expected tool.failed from split error tool_use_result JSON");
   if (toolFailed?.type === "tool.failed") {
     assert.equal(toolFailed.name, "Bash");
@@ -677,6 +897,7 @@ test("split Codex command_execution completion across chunks still produces tool
   });
 
   const run = manager.enqueue("developer", "split codex test", createSourceMessage());
+  const activities = captureRunActivity(eventBus, run.id);
 
   const started = JSON.stringify({
     type: "item.started",
@@ -692,8 +913,7 @@ test("split Codex command_execution completion across chunks still produces tool
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: completedJson.slice(0, mid) });
   eventBus.publish({ type: "terminal.chunk", conversationId: "test-conv", agentId: "developer", runId: activeRunId, text: completedJson.slice(mid) });
 
-  const msg = messages.get(run.resultMessageId);
-  const toolCompleted = msg?.activity?.find((a) => a.type === "tool.completed");
+  const toolCompleted = activities.find((a) => a.type === "tool.completed");
   assert.ok(toolCompleted, "Expected tool.completed from split Codex command_execution JSON");
   if (toolCompleted?.type === "tool.completed") {
     assert.equal(toolCompleted.name, "Command");
@@ -783,6 +1003,7 @@ test("cancel a running run triggers interrupt and succeeds", async () => {
 
   const source = createSourceMessage();
   const run = manager.enqueue("developer", "work", source);
+  const activities = captureRunActivity(eventBus, run.id);
   assert.equal(run.status, "running");
 
   const result = manager.cancel(run.id);
@@ -797,7 +1018,8 @@ test("cancel a running run triggers interrupt and succeeds", async () => {
   // Verify run.cancelled event was published after the runtime settled
   const msg = messages.get(run.resultMessageId);
   assert.equal(msg?.status, "cancelled");
-  assert.ok(msg?.activity?.some((a) => "text" in a && a.text === "运行已取消。"));
+  assert.ok(activities.some((a) => a.type === "status" && a.text === "运行已取消。"));
+  assert.equal(msg?.activity, undefined, "cancel status stays live-only and is not persisted");
 });
 
 test("cancelling a running run starts the next queued run (no stall, FIFO preserved)", async () => {
@@ -877,7 +1099,7 @@ test("cancel a non-existent run returns not_found error", async () => {
   assert.equal(result.reason, "not_found");
 });
 
-test("cancel an already-completed run returns not_cancellable", async () => {
+test("completed runs are released while retaining a short-lived cancellation result", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
   const first = deferred();
@@ -932,6 +1154,7 @@ test("cancel publishes run.cancelled event for queued runs", async () => {
 
   const result = manager.cancel(queued.id);
   assert.equal(result.ok, true);
+  assert.equal(manager.cancel(queued.id).reason, "not_cancellable");
 
   const cancelledEvents = events.filter((e) => e.type === "run.cancelled");
   assert.equal(cancelledEvents.length, 1, "should publish one run.cancelled event");
@@ -967,6 +1190,7 @@ test("cancel a running run publishes run.cancelled event", async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   const cancelledEvents = events.filter((e) => e.type === "run.cancelled");
   assert.equal(cancelledEvents.length, 1, "interrupted running runs should publish run.cancelled");
+  assert.equal(manager.cancel(run.id).reason, "not_cancellable");
 });
 
 test("queued run cancel sets runStatus on message", async () => {
@@ -1035,6 +1259,7 @@ test("run failures store a concise error instead of raw stream output", async ()
   });
 
   const run = manager.enqueue("developer", "first", createSourceMessage());
+  const activities = captureRunActivity(eventBus, run.id);
   const rawEvent = JSON.stringify({ type: "system", subtype: "hook_started", hook_id: "x".repeat(5_000) });
   failure.reject(new Error(rawEvent.repeat(100)));
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1044,9 +1269,10 @@ test("run failures store a concise error instead of raw stream output", async ()
   assert.ok((failed?.content.length ?? 0) < 2_100, `content was too long: ${failed?.content.length}`);
   assert.ok(!failed?.content.includes("hook_id\":\"" + "x".repeat(100)), "raw JSON should not be persisted in content");
 
-  const lastActivity = failed?.activity?.at(-1);
+  const lastActivity = activities.at(-1);
   assert.equal(lastActivity?.type, "status");
   assert.ok(lastActivity?.type === "status" && lastActivity.text.length < 2_100);
+  assert.equal(failed?.activity, undefined, "failure status stays live-only and is not persisted");
 });
 
 test("overloaded runtime failures are summarized without repeated provider noise", async () => {
@@ -1075,6 +1301,7 @@ test("overloaded runtime failures are summarized without repeated provider noise
   });
 
   const run = manager.enqueue("supervisor", "first", createSourceMessage());
+  const activities = captureRunActivity(eventBus, run.id);
   const rawError = "overloaded overloaded overloaded server_error API Error: 529 [1305] overloaded";
   eventBus.publish({
     type: "terminal.chunk",
@@ -1091,7 +1318,7 @@ test("overloaded runtime failures are summarized without repeated provider noise
   assert.ok(failed?.content.includes("529 overloaded"), `expected concise overloaded summary, got: ${failed?.content}`);
   assert.equal((failed?.content.match(/overloaded/g) ?? []).length, 1);
 
-  const errorActivity = failed?.activity?.find((activity) => activity.type === "error");
+  const errorActivity = activities.find((activity) => activity.type === "error");
   assert.ok(errorActivity?.type === "error" && errorActivity.message.includes("529 overloaded"));
 });
 
@@ -1541,6 +1768,10 @@ test("run lifecycle content and activity do not leak the raw 'run' codeword", as
   const completed = deferred();   // run3: completes
   const failing = deferred();     // run4: fails
   const sendQueue = [interrupted, completed, failing];
+  const liveActivities: AgentActivityEvent[] = [];
+  eventBus.subscribe((event: RuntimeEvent) => {
+    if (event.type === "run.activity") liveActivities.push(event.activity);
+  });
 
   const manager = new RunManager({
     conversationId: "test-conv",
@@ -1573,7 +1804,8 @@ test("run lifecycle content and activity do not leak the raw 'run' codeword", as
   failing.reject(new Error("boom"));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  // Scan every persisted message's content + status/error activity text.
+  // Scan every persisted message's content plus the live status/error activity
+  // stream — both surfaces carry user-visible lifecycle text today.
   const collected: string[] = [];
   for (const message of messages.list()) {
     collected.push(message.content ?? "");
@@ -1581,6 +1813,10 @@ test("run lifecycle content and activity do not leak the raw 'run' codeword", as
       if (activity.type === "status") collected.push(activity.text);
       else if (activity.type === "error") collected.push(activity.message);
     }
+  }
+  for (const activity of liveActivities) {
+    if (activity.type === "status") collected.push(activity.text);
+    else if (activity.type === "error") collected.push(activity.message);
   }
   const joined = collected.join("\n");
   assert.equal(/\brun\b/i.test(joined), false, `expected no bare 'run' codeword in lifecycle text, got: ${joined}`);

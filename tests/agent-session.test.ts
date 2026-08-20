@@ -590,6 +590,7 @@ test("publishes and resolves runtime permission requests", async () => {
   assert.equal(pending.length, 1);
   assert.equal(pending[0]!.id, "run-approval:tool-1");
   assert.ok(events.some((event) => event.type === "permission.requested"));
+  assert.ok(events.some((event) => event.type === "runtime.activity"), "permission status should enter the runtime activity pipeline");
 
   assert.equal(session.resolvePermission(pending[0]!.id, "allow"), true);
   assert.equal(await decisionPromise, "allow");
@@ -688,6 +689,7 @@ test("publishes and resolves runtime elicitation requests", async () => {
   const pending = session.pendingElicitations();
   assert.equal(pending.length, 1);
   assert.ok(events.some((event) => event.type === "elicitation.requested"));
+  assert.ok(events.some((event) => event.type === "runtime.activity"), "elicitation status should enter the runtime activity pipeline");
 
   assert.equal(session.resolveElicitation(pending[0]!.id, { action: "accept", content: { strategy: "safe" } }), true);
   assert.deepEqual(await responsePromise, { action: "accept", content: { strategy: "safe" } });

@@ -19,7 +19,7 @@ Use these terms in docs, issues, PRs, screenshots, and user-facing copy.
 - **Interaction mode**: the per-conversation collaboration mode, selected from
   the composer before or during a conversation: 普通对话 (direct chat with one
   digital employee), 简单协作 (lightweight collaboration), or 复杂协作
-  (supervised collaboration). New conversations start in 简单协作.
+  (supervised collaboration). New conversations start in 普通对话.
 - **Supervisor**: the built-in coordinator enabled by 复杂协作. It decomposes
   the goal, schedules digital employees, tracks progress, recovers from
   failures, and drives the task to closure. It is not a user-configured digital

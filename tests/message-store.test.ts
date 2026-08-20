@@ -95,6 +95,42 @@ test("persisted store round-trips messages to file", () => {
   }
 });
 
+test("persisted store round-trips the compact process timeline", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
+  const filePath = path.join(dir, "messages.json");
+  try {
+    const store = new MessageStore(filePath);
+    store.append({
+      kind: "agent",
+      agentId: "dev",
+      content: "final answer",
+      status: "done",
+      processTimeline: [
+        { type: "text", text: "先检查文件。" },
+        { type: "tools", count: 4, failedCount: 1 },
+        { type: "text", text: "继续运行测试。" },
+        { type: "tools", count: 2, failedCount: 0 },
+      ],
+      plan: {
+        format: "items",
+        entries: [{ content: "完成验证", priority: "high", status: "completed" }],
+      },
+    });
+
+    const loaded = new MessageStore(filePath).list()[0];
+    assert.deepEqual(loaded?.processTimeline, [
+      { type: "text", text: "先检查文件。" },
+      { type: "tools", count: 4, failedCount: 1 },
+      { type: "text", text: "继续运行测试。" },
+      { type: "tools", count: 2, failedCount: 0 },
+    ]);
+    assert.equal(loaded?.plan?.format, "items");
+    assert.equal(loaded?.activity, undefined);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("persisted store migrates legacy messages.json into date shards", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-test-"));
   const filePath = path.join(dir, "messages.json");
@@ -634,7 +670,10 @@ test("markAbandonedActiveRuns cancels persisted running and queued messages", ()
     const reloaded = new MessageStore(filePath);
     assert.equal(reloaded.get(running.id)?.runStatus, "cancelled");
     assert.equal(reloaded.get(queued.id)?.runStatus, "cancelled");
-    assert.ok(reloaded.get(running.id)?.activity?.some((event) => "text" in event && event.text.includes("标记为中断")));
+    // 中断说明落在 content 中；不再追加仅用于实时展示的 activity 事件。
+    const legacyActivity = reloaded.get(running.id)?.activity ?? [];
+    assert.equal(legacyActivity.length, 1);
+    assert.equal("text" in legacyActivity[0] ? legacyActivity[0].text : "", "Run started.");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -26,9 +26,10 @@ function state(conversationId: string, messages: ChatMessage[]): AppState {
 }
 
 test("approval and view preferences fall back safely", () => {
-  assert.equal(resolveApprovalMode(null), "ask");
+  assert.equal(resolveApprovalMode(null), "full-access");
+  assert.equal(resolveApprovalMode("ask"), "ask");
   assert.equal(resolveApprovalMode("full-access"), "full-access");
-  assert.equal(resolveApprovalMode("unknown"), "ask");
+  assert.equal(resolveApprovalMode("unknown"), "full-access");
   assert.equal(resolveActiveView("analysis"), "analysis");
   assert.equal(resolveActiveView("unknown"), "conversation");
 });

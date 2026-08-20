@@ -56,7 +56,7 @@ The runtime no longer uses PTY sessions or CLI hooks. A run is considered comple
 | `src/core/history-retention.ts` | Best-effort cleanup for old message shards and transcript segments |
 | `src/core/claude-output-detector.ts` | Clean final answer validation and stream event mapping |
 | `src/server/conversation-context.ts` | Bundles per-conversation runtime state (stores, agents, router) |
-| `src/ui/App.tsx` | Chat UI, agent buttons, composer, workspace/conversation selectors |
+| `src/ui/App.tsx` | Chat UI, agent buttons, composer, workspace/conversation selectors, and the reply-card process region (live plan board and ordered text/tool timeline; settled collapsed 执行过程) |
 
 ## Agents
 
@@ -215,27 +215,31 @@ codebuddy --acp
 All three runtimes use ACP v1 over newline-delimited JSON-RPC on stdio. Runtime events are converted into:
 
 - final assistant text
+- process text (`process.text` activity events)
 - tool/activity events
 - runtime output for diagnostics
 
-ACP message chunks are grouped by assistant message ID. Orbit keeps visible progress in runtime output, ignores hidden thought chunks, and stores only the explicit final phase or the last main assistant message as the chat result. Each newline-delimited JSON frame is bounded independently, so long tasks remain supported while a malformed or unbounded frame only fails its own run. Stderr is retained in a bounded diagnostic tail.
+ACP message chunks are grouped into model responses. Claude Code and Codex group by assistant message ID (Codex marks `final_answer` phases explicitly and treats `commentary` as process narration); CodeBuddy reuses one top-level message ID per turn, so its adapter watches the `phase` field in `session_info_update._meta["codebuddy.ai/agentPhase"]` and increments a response index on each `model_requesting`/`model_streaming` boundary, falling back to a single group when phases are absent. Orbit ignores hidden thought chunks, and the final answer is the explicit final phase or the last main assistant message group; earlier groups become process text. Each newline-delimited JSON frame is bounded independently, so long tasks remain supported while a malformed or unbounded frame only fails its own run. Stderr is retained in a bounded diagnostic tail.
 
 The ACP runner registry is the single source for built-in runtime definitions, instances, and availability probes. A successfully completed turn releases its adapter process into an idle pool for a short TTL. Reuse is restricted to the same conversation, employee, workspace, command, and approval mode. Sessions remain independent, and a failed, cancelled, interrupted, or unhealthy process is destroyed instead of returned to the pool. Shutdown drains the pool explicitly.
 
-Backend sessions are restored through ACP when they are not already loaded in a reused process. Cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for "ask" and `agent-full-access` for "full access". Orbit advertises ACP plan updates and elicitation support for form and URL modes. Native plan snapshots are stored as run activity and displayed in the task drawer.
+Backend sessions are restored through ACP when they are not already loaded in a reused process. Cancellation uses `session/cancel` before Orbit terminates an unresponsive process after a short grace period. ACP permission requests are controlled by the message's approval mode; no bypass-permissions CLI flag is used. Codex starts in `agent` mode for "ask" and `agent-full-access` for "full access". Orbit advertises ACP plan updates and elicitation support for form and URL modes. Native plan snapshots are carried on the run and displayed on the reply card's plan board.
 
 The composer stores an `ApprovalMode` on each user message, and `RunManager` copies it to result messages so downstream handoffs preserve the same choice. In `ask` mode, `AgentSession` publishes a `permission.requested` event and keeps the ACP request pending until the local HTTP approval endpoint resolves it. In `full-access` mode, ACP requests are approved automatically for that task. Both modes select ACP one-time decisions only. Interrupting or stopping a run rejects and clears any pending request. Permission and elicitation requests also expire after 30 minutes so abandoned agent turns cannot wait forever. Elicitation uses separate `elicitation.requested` and `elicitation.resolved` events and `/api/elicitations/resolve`, so user input is not treated as a security approval.
 
 ## Activity Stream
 
-Activity events are derived from runtime stream output or ACP session updates and shown in the chat card:
+Activity events are derived from runtime stream output or ACP session updates and shown inside the reply card:
 
 - run accepted / started / completed / failed
 - tool started / completed / failed
 - native ACP plan updated / removed
 - runtime produced output
+- `process.text` — runtime-explicit process narration with two semantics: incremental `text` deltas for streaming, and `snapshot: true` for a settlement snapshot. Live deltas carry their progress/answer stream and ACP answer-group identity, so settlement removes only the group selected as the final reply while preserving the original ordering of earlier text and tool events.
 
-The UI keeps running activities expanded and scrolls to the latest event. Completed cards are collapsed by default and can be expanded manually.
+Plan updates keep only the latest snapshot on the run. Process text and tool lifecycle events share one ordered, in-memory timeline. Adjacent tools form a compact execution group whose summary follows the newest tool, remains on the final tool after completion, and expands to show every invocation. While a run is live, the reply card shows the plan followed by this low-emphasis timeline on the same background as the reply body. Once the final answer group begins, the same render collapses the process region and streams answer deltas directly into the reply body instead of waiting for run settlement; an unexpected later tool event returns that candidate group to the process timeline as a defensive fallback. After the run settles (completed, failed, cancelled, interrupted, or permission rejected), the timeline remains in the collapsed `执行过程` section and the final reply body remains separate.
+
+Raw tool activity and tool results are live-only: they flow through the in-memory run state and the `run.activity` SSE event to the currently open page and are never persisted. At settlement, Orbit writes a compact ordered `processTimeline` containing process-text segments and count/failure summaries for adjacent tool groups, plus the final Plan snapshot. This preserves the text/tool interleaving and aggregate counts across a refresh without storing tool names, inputs, or results. Settlement messages use explicit `null` values when either `processTimeline` or `plan` is absent, while `undefined` still means an intermediate update did not address the field. Their terminal `message.updated` event sets `settleTransientActivity`: clients remove only the final answer group from their live activity while retaining the current page's process text and full tool details; after a refresh, the absent live activity falls back to the durable summary. Terminal runs are removed from the in-memory run index after their message and lifecycle events are published; a bounded five-minute run-id index preserves the API's `409 not_cancellable` response for immediate retries without retaining the run payload. While a run is active, `/api/state` overlays its in-memory ordered activity and Plan onto the stored message projection so switching away and back restores the full live timeline without writing raw tool activity to disk.
 
 ## State
 

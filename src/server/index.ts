@@ -37,7 +37,7 @@ const requestedPort = Number(process.env.ORBIT_PORT ?? DEFAULT_PORT);
 let activePort = requestedPort;
 const UNTITLED_CONVERSATION_NAME = "新会话";
 const EMPTY_WORKSPACE: WorkspaceInfo = { id: "", name: "", path: "" };
-const EMPTY_CONVERSATION: ConversationInfo = { id: "", name: "", interactionMode: "collaborative" };
+const EMPTY_CONVERSATION: ConversationInfo = { id: "", name: "", interactionMode: "direct" };
 
 function toActiveConversation(conversation: Conversation | {
   id: string;
@@ -49,7 +49,7 @@ function toActiveConversation(conversation: Conversation | {
   return {
     id: conversation.id,
     name: conversation.name,
-    interactionMode: conversation.interactionMode ?? "collaborative",
+    interactionMode: conversation.interactionMode ?? "direct",
     lastDirectAgentId: conversation.lastDirectAgentId,
     supervisionRuntime: conversation.supervisionRuntime,
   };
@@ -477,11 +477,12 @@ const server = http.createServer(async (req, res) => {
     // State
     if (req.method === "GET" && url.pathname === "/api/state") {
       const ctx = getActiveContext();
+      const messages = ctx?.messages.list() ?? [];
       sendJson(res, 200, {
         workspace: activeWorkspace,
         conversation: activeConversation,
         agents: currentAgentStates(),
-        messages: ctx?.messages.list() ?? [],
+        messages: ctx?.runManager.projectLiveProcessState(messages) ?? messages,
         messageHistory: ctx?.messages.historyState() ?? emptyMessageHistory(),
         terminal: ctx?.transcripts.all() ?? {},
         runningSummaries: buildRunningSummaries(),
@@ -1357,7 +1358,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     status: "sent",
     attachments,
     approvalMode,
-    interactionMode: activeConversation.interactionMode ?? "collaborative",
+    interactionMode: activeConversation.interactionMode ?? "direct",
   });
   eventBus.publish({ type: "message.created", conversationId: activeConversationId, message: userMessage });
   context.messageRouter.process(userMessage);

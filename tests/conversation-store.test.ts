@@ -20,7 +20,7 @@ test("create returns a conversation with generated id and timestamps", () => {
   assert.equal(conv.name, "My Conversation");
   assert.ok(conv.createdAt);
   assert.ok(conv.lastOpenedAt);
-  assert.equal(conv.interactionMode, "collaborative");
+  assert.equal(conv.interactionMode, "direct");
 });
 
 test("interaction mode persists across repeated switches", () => {
@@ -51,7 +51,7 @@ test("last direct employee persists alongside mode switches away and back", () =
   assert.equal(reloaded.lastDirectAgentId, "developer");
 });
 
-test("invalid interaction mode falls back to collaborative on reload", () => {
+test("invalid interaction mode falls back to direct on reload", () => {
   const dir = tmpDir();
   const store = new ConversationStore(dir);
   const conv = store.create("ws1", "Legacy data");
@@ -63,7 +63,7 @@ test("invalid interaction mode falls back to collaborative on reload", () => {
   fs.writeFileSync(file, JSON.stringify(raw));
 
   const reloaded = new ConversationStore(dir).get("ws1", conv.id)!;
-  assert.equal(reloaded.interactionMode, "collaborative");
+  assert.equal(reloaded.interactionMode, "direct");
 });
 
 test("list returns conversations for a workspace sorted by lastOpenedAt descending", () => {

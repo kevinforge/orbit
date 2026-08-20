@@ -317,7 +317,7 @@ export class AgentSession {
         permission,
       });
       this.options.eventBus.publish({
-        type: "run.activity",
+        type: "runtime.activity",
         conversationId: this.options.conversationId,
         agentId: this.id,
         runId,
@@ -361,7 +361,7 @@ export class AgentSession {
         elicitation,
       });
       this.options.eventBus.publish({
-        type: "run.activity",
+        type: "runtime.activity",
         conversationId: this.options.conversationId,
         agentId: this.id,
         runId,
@@ -389,7 +389,7 @@ export class AgentSession {
       requestId: pending.permission.id,
     });
     this.options.eventBus.publish({
-      type: "run.activity",
+      type: "runtime.activity",
       conversationId: this.options.conversationId,
       agentId: this.id,
       runId: pending.permission.runId,
@@ -431,7 +431,7 @@ export class AgentSession {
     });
     if (activityText) {
       this.options.eventBus.publish({
-        type: "run.activity",
+        type: "runtime.activity",
         conversationId: this.options.conversationId,
         agentId: this.id,
         runId: pending.elicitation.runId,
