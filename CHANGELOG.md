@@ -10,6 +10,33 @@ No notable changes yet.
 
 ---
 
+## v1.2.0 — 2026-08-21
+
+### New things you can do
+
+- **See the work behind every answer.** ACP process narration, native plans, and
+  ordered tool calls now appear inside the digital employee reply card.
+- **Keep the full live process visible.** While a task is running, the process
+  timeline streams in order and tool groups can be expanded to inspect every
+  invocation.
+- **Use a lighter completed view.** Completed cards collapse the process region
+  by default; after a refresh, durable process text and compact tool counts are
+  restored without persisting raw tool inputs or results.
+
+### Improvements & fixes
+
+- All three ACP runtimes are covered: Claude Code, Codex, and CodeBuddy. CodeBuddy
+  response boundaries are detected from its native agent phase metadata.
+- Native Plan snapshots now live on the reply card instead of a separate task
+  details drawer.
+- Terminal runs release their full in-memory activity after settlement while
+  retaining a bounded short-lived cancellation result.
+- New conversations start in 普通对话, with 简单协作 and 复杂协作 available from
+  the composer.
+- Added the `find-simplifications` and `simplify-code` project Skills.
+
+---
+
 ## v1.1.0 — 2026-08-19
 
 ### New things you can do
