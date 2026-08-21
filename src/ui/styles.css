@@ -1083,180 +1083,335 @@ button:active:not(:disabled) {
   line-height: 1.65;
 }
 
-/* ── Activity Panel ────────────────────────────────────────── */
+/* ── 过程区（运行中 + 结算后的执行过程） ────────────────────── */
 
-.activityPanel {
+.liveProcess {
   display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  padding: 12px 14px;
+  gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 4px 0 10px;
+  padding: 2px 0;
+  background: transparent;
+}
+
+.liveProcess.cancelling {
+  opacity: 0.72;
+}
+
+.processTimeline {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.processNarrative {
+  min-width: 0;
+  max-width: 100%;
   color: var(--text-secondary);
-  background: var(--bg-muted);
+  font-size: 13.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.processToolGroup {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text-muted);
   font-size: 12px;
-  transition: all var(--transition-base);
 }
 
-.activityPanel:hover {
-  border-color: var(--border);
-  box-shadow: var(--shadow-xs);
-}
-
-.sidebarCollapsed .conversationHeader {
-  padding-left: 82px;
-}
-
-.activityHeader {
+.processToolSummary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.processToolSummaryError {
+  color: var(--error);
+}
+
+.processToolGroup summary {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.processToolGroup summary::-webkit-details-marker {
+  display: none;
+}
+
+.processToolGroup summary:hover {
+  color: var(--text-secondary);
+}
+
+.processToolIcon {
+  width: 15px;
+  height: 15px;
+  color: currentColor;
+}
+
+.processToolLatest {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.processToolLatest.failed {
+  color: var(--error);
+}
+
+.processToolCount {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.processToolChevron {
+  width: 13px;
+  height: 13px;
+  transition: transform var(--transition-base);
+}
+
+.processToolGroup[open] > summary .processToolChevron {
+  transform: rotate(90deg);
+}
+
+.processToolGroup.live .processToolLatest {
+  animation: processToolIn 180ms var(--ease-out) both;
+}
+
+@keyframes processToolIn {
+  from {
+    opacity: 0.35;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.processToolList {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  max-height: 220px;
+  margin: 6px 0 4px 7px;
+  padding: 2px 0 2px 16px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border-light);
+  list-style: none;
+  scrollbar-gutter: stable;
+}
+
+.processToolList li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
   min-width: 0;
 }
 
-.activitySummary {
+.processToolStatus {
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.processToolList li.running .processToolStatus {
+  background: var(--accent);
+}
+
+.processToolList li.completed .processToolStatus {
+  background: var(--success);
+}
+
+.processToolList li.failed .processToolStatus {
+  background: var(--error);
+}
+
+.processToolEntry {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.processToolEntry strong {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.processToolEntry span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.processToolList li.failed .processToolEntry strong {
+  color: var(--error);
+}
+
+.processToolList time {
+  padding-top: 1px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Plan 状态板：运行中与结算后的执行过程共用 */
+.planBoard {
+  display: grid;
+  gap: 6px;
+}
+
+.planStep {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.planStepIndicator {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-surface);
+}
+
+.planStep.in_progress .planStepIndicator {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.planStep.completed {
+  color: var(--text-muted);
+}
+
+.planStep.completed .planStepIndicator {
+  border-color: var(--success);
+  background: var(--success);
+}
+
+.planBoardMarkdown .markdown {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.planBoardFile {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+/* 结算后默认折叠的「执行过程」 */
+.settledProcess {
+  margin: 2px 0 10px;
+  min-width: 0;
+  max-width: 100%;
+  background: transparent;
+  font-size: 12px;
+}
+
+.settledProcess summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.settledProcess summary::-webkit-details-marker {
+  display: none;
+}
+
+.settledProcess summary:hover {
+  color: var(--text-secondary);
+}
+
+.settledProcessTitle {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.settledProcessMeta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  min-width: 0;
 }
 
-.activitySummary strong {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.activitySummary span {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  padding: 1px 8px;
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-  font-size: 10.5px;
-  font-weight: 600;
-}
-
-.activitySummary .activityErrorCount {
-  border-color: var(--error-border);
-  color: var(--error);
-  background: var(--error-subtle);
-}
-
-.activityHeader button {
-  flex: 0 0 auto;
-  min-height: 26px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0 10px;
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.activityHeader button:hover {
-  border-color: var(--accent-border);
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
-.activityLatest {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.activityTimeline {
-  display: grid;
-  gap: 0;
-  min-width: 0;
-  max-height: 210px;
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-gutter: stable;
-  position: relative;
-}
-
-.activityPanel.collapsed .activityTimeline {
-  max-height: none;
-  overflow: visible;
-}
-
-.activityItem {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 0;
-  min-width: 0;
-  color: var(--text-secondary);
-  position: relative;
-  padding: 4px 0;
-}
-
-.activityItem::before {
-  content: "";
-  position: absolute;
-  left: 5.5px;
-  top: 0;
-  bottom: 0;
-  width: 1.5px;
-  background: linear-gradient(180deg, var(--accent-border) 0%, var(--success-border) 100%);
-  opacity: 0.6;
-}
-
-.activityItem:last-child::before {
-  bottom: 50%;
-}
-
-.activityDot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--border);
-  position: relative;
-  z-index: 1;
-  margin: 5px 6px 0 3px;
-  justify-self: center;
-}
-
-.activityItem.tool-started .activityDot {
-  background: var(--accent);
-  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.15);
-}
-
-.activityItem.tool-completed .activityDot {
-  background: var(--success);
-  box-shadow: 0 0 0 2px rgba(21, 128, 61, 0.15);
-}
-
-.activityItem.tool-failed .activityDot,
-.activityItem.error .activityDot {
-  background: var(--error);
-  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.15);
-}
-
-.activityText {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  padding-left: 8px;
-}
-
-.activityItem time {
+.settledProcessMeta span {
+  padding: 0;
   color: var(--text-muted);
+  background: transparent;
   font-size: 11px;
-  white-space: nowrap;
-  padding-left: 8px;
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
 
-.activityItem.error .activityText,
-.activityItem.tool-failed .activityText {
+.settledProcessMeta .settledProcessError {
   color: var(--error);
+}
+
+.settledProcessChevron {
+  margin-left: auto;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  transition: transform var(--transition-base);
+}
+
+.settledProcess[open] > summary .settledProcessChevron {
+  transform: rotate(90deg);
+}
+
+.settledProcessBody {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 0 4px;
+}
+
+.sidebarCollapsed .conversationHeader {
+  padding-left: 82px;
 }
 
 /* ── Markdown ──────────────────────────────────────────────── */
@@ -4333,19 +4488,19 @@ button:active:not(:disabled) {
 /* ── Scrollbar ─────────────────────────────────────────────── */
 
 .messages::-webkit-scrollbar,
-.activityTimeline::-webkit-scrollbar,
+.processToolList::-webkit-scrollbar,
 .settingsBody::-webkit-scrollbar {
   width: 5px;
 }
 
 .messages::-webkit-scrollbar-track,
-.activityTimeline::-webkit-scrollbar-track,
+.processToolList::-webkit-scrollbar-track,
 .settingsBody::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .messages::-webkit-scrollbar-thumb,
-.activityTimeline::-webkit-scrollbar-thumb,
+.processToolList::-webkit-scrollbar-thumb,
 .settingsBody::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 3px;
@@ -4353,7 +4508,7 @@ button:active:not(:disabled) {
 }
 
 .messages::-webkit-scrollbar-thumb:hover,
-.activityTimeline::-webkit-scrollbar-thumb:hover,
+.processToolList::-webkit-scrollbar-thumb:hover,
 .settingsBody::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
@@ -5235,107 +5390,6 @@ button:active:not(:disabled) {
     display: none;
   }
 
-  .activityPanel {
-    display: block;
-    margin-top: 12px;
-    padding: 8px 0 0;
-    border: 0;
-    border-top: 1px solid var(--border-light);
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .activityHeader {
-    display: flex;
-    width: 100%;
-    min-height: 24px;
-    align-items: center;
-    gap: 8px;
-    padding: 2px 0;
-    border: 0;
-    border-radius: 6px;
-    color: var(--text-secondary);
-    background: transparent;
-    text-align: left;
-    appearance: none;
-  }
-
-  .activityHeader:hover {
-    background: var(--bg-hover);
-  }
-
-  .activityIndicator {
-    width: 6px;
-    height: 6px;
-    flex: 0 0 6px;
-    border-radius: 50%;
-    background: var(--text-muted);
-  }
-
-  .activityIndicator.running,
-  .activityIndicator.starting {
-    background: var(--warning);
-  }
-
-  .activityIndicator.error {
-    background: var(--error);
-  }
-
-  .activityIndicator.done {
-    background: var(--success);
-  }
-
-  .activitySummary {
-    display: inline-flex;
-    min-width: max-content;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .activitySummary strong {
-    color: var(--text-secondary);
-    font-size: 11.5px;
-    font-weight: 680;
-  }
-
-  .activitySummary span {
-    padding: 0;
-    border: 0;
-    color: var(--text-muted);
-    background: transparent;
-    font-size: 10.5px;
-  }
-
-  .activityLatest {
-    min-width: 0;
-    flex: 1;
-    margin-left: 12px;
-    overflow: hidden;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
-    text-align: right;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .activityChevron {
-    width: 16px;
-    color: var(--text-muted);
-    font-size: 14px;
-    line-height: 1;
-    text-align: center;
-  }
-
-  .activityTimeline {
-    max-height: 180px;
-    margin: 8px 0 2px 12px;
-    padding: 6px 0 2px 12px;
-    overflow-y: auto;
-    border-left: 1px solid var(--border);
-  }
-
   .composer {
     padding: 12px 34px 18px;
     border-top: 1px solid var(--border);
@@ -6034,10 +6088,6 @@ button:active:not(:disabled) {
     font-weight: 400;
   }
 
-  .headerTaskButton.t-button {
-    color: var(--text-secondary);
-  }
-
   .messages {
     gap: 24px;
     padding: 30px max(48px, calc((100% - 920px) / 2)) 36px;
@@ -6103,35 +6153,6 @@ button:active:not(:disabled) {
     border: 0;
     border-radius: 4px;
     font-size: 10px;
-  }
-
-  .activityPanel {
-    margin-top: 14px;
-    padding-top: 8px;
-    border-top: 1px solid var(--border-light);
-  }
-
-  .activityHeader {
-    min-height: 30px;
-    padding: 4px 6px;
-    border-radius: 4px;
-  }
-
-  .activityLatest {
-    color: var(--text-muted);
-    text-align: right;
-  }
-
-  .activityOpenLabel {
-    flex: 0 0 auto;
-    color: var(--accent);
-    font-size: 11px;
-  }
-
-  .activityChevron {
-    width: 14px;
-    height: 14px;
-    color: var(--accent);
   }
 
   .composer {
@@ -6225,268 +6246,6 @@ button:active:not(:disabled) {
     border-radius: 6px;
     box-shadow: 0 16px 48px rgba(15, 35, 70, 0.18);
   }
-}
-
-.taskDetailDrawer .t-drawer__mask {
-  background: rgba(20, 30, 45, 0.12);
-}
-
-.taskDetailDrawer .t-drawer__content-wrapper {
-  border-left: 1px solid #e5e6eb;
-  box-shadow: -8px 0 24px rgba(15, 35, 70, 0.08);
-}
-
-.taskDetailDrawer .t-drawer__header {
-  height: 52px;
-  padding: 0 20px;
-  border-bottom: 1px solid #e5e6eb;
-  color: #1d2129;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.taskDetailDrawer .t-drawer__body {
-  padding: 0;
-}
-
-.taskDrawerBody {
-  color: #1d2129;
-}
-
-.taskDrawerSection {
-  padding: 22px 24px;
-  border-bottom: 1px solid #e5e6eb;
-}
-
-.taskDrawerOwner {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-}
-
-.taskDrawerOwner > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.taskDrawerOwner strong,
-.taskDrawerHeading,
-.taskDrawerSectionTitle strong {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-  .taskDrawerOwner span,
-  .taskDrawerAgent small {
-  color: #86909c;
-  font-size: 11px;
-}
-
-.taskDrawerOwner .t-avatar {
-  color: #fff;
-}
-
-.taskDrawerDescription {
-  margin: 16px 0 0;
-  color: #4e5969;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.taskDrawerSectionTitle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.taskDrawerSectionTitle span {
-  color: #4e5969;
-  font-size: 12px;
-}
-
-.taskDrawerFacts {
-  display: grid;
-  gap: 14px;
-  margin: 20px 0 0;
-}
-
-.taskDrawerFacts > div {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  align-items: center;
-}
-
-.taskDrawerFacts dt,
-.taskDrawerFacts dd {
-  margin: 0;
-  font-size: 12px;
-}
-
-.taskDrawerPlanList {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.taskDrawerPlanList li {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-  color: #4e5969;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.taskDrawerPlanMarker {
-  width: 8px;
-  height: 8px;
-  margin-top: 5px;
-  border: 1px solid #c9cdd4;
-  border-radius: 50%;
-  background: #fff;
-}
-
-.taskDrawerPlanList li.in_progress .taskDrawerPlanMarker {
-  border-color: #0052d9;
-  background: #0052d9;
-  box-shadow: 0 0 0 3px rgba(0, 82, 217, 0.1);
-}
-
-.taskDrawerPlanList li.completed {
-  color: #86909c;
-}
-
-.taskDrawerPlanList li.completed .taskDrawerPlanMarker {
-  border-color: #00a870;
-  background: #00a870;
-}
-
-.taskDrawerPlanMarkdown,
-.taskDrawerPlanFile {
-  margin: 0;
-  color: #4e5969;
-  font-size: 12px;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.taskDrawerFacts dt {
-  color: #86909c;
-}
-
-.taskDrawerFacts dd {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: #4e5969;
-}
-
-.taskDrawerHeading {
-  display: block;
-  margin-bottom: 14px;
-}
-
-.taskDrawerAgents {
-  display: grid;
-  gap: 12px;
-}
-
-.taskDrawerAgent {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-}
-
-.taskDrawerAgentDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.taskDrawerAgentName {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.taskDrawerAgentName strong {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.taskDrawerActivity {
-  padding: 0 14px;
-  border-bottom: 0;
-}
-
-.taskDrawerActivity .t-collapse-panel__header {
-  padding: 18px 10px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.taskDrawerActivity .t-collapse-panel__body {
-  overflow: hidden;
-  padding: 0 10px 18px;
-}
-
-.taskDrawerActivity .t-collapse-panel__body--collapsed {
-  padding-bottom: 0;
-}
-
-.taskDrawerTimeline {
-  display: grid;
-  gap: 0;
-  border-left: 1px solid #d9dde4;
-}
-
-.taskDrawerEvent {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 0 0 16px 16px;
-  color: #4e5969;
-  font-size: 12px;
-}
-
-.taskDrawerEventDot {
-  position: absolute;
-  top: 4px;
-  left: -4px;
-  width: 7px;
-  height: 7px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  background: #00a870;
-  box-shadow: 0 0 0 1px #00a870;
-}
-
-.taskDrawerEvent.tool-failed .taskDrawerEventDot,
-.taskDrawerEvent.error .taskDrawerEventDot {
-  background: #d54941;
-  box-shadow: 0 0 0 1px #d54941;
-}
-
-.taskDrawerEvent time {
-  color: #86909c;
-  font-size: 11px;
-}
-
-.taskDrawerEmpty {
-  margin: 0;
-  color: #86909c;
-  font-size: 12px;
 }
 
 /* Keep composer controls together while preserving separate actions. */

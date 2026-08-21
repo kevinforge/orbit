@@ -5,6 +5,8 @@ import type {
   ChatMessage,
   InteractionMode,
   MessageAttachment,
+  AgentPlanSnapshot,
+  PersistedProcessTimelineEntry,
   NewChatMessage,
   RunResult,
   RuntimeEvent,
@@ -14,6 +16,10 @@ import type { EventBus } from "./event-bus.ts";
 import type { MessageStore } from "./message-store.ts";
 import { parseJsonObjects } from "./json-stream-parser.ts";
 import { isAgentRunCancelledError } from "./agent-runtime.ts";
+import { appendTransientProcessActivity, buildPersistedProcessTimeline } from "../shared/process-activity.ts";
+
+const TERMINAL_RUN_RETENTION_MS = 5 * 60 * 1000;
+const MAX_TERMINAL_RUN_INDEX_SIZE = 1024;
 
 type AgentRunner = {
   get(agentId: AgentId): {
@@ -37,7 +43,10 @@ export type ManagedRun = {
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  /** Ordered process text and tool/status activity. Live-only and never persisted. */
   activity: AgentActivityEvent[];
+  /** 最新 Plan 快照（内存态）。结算时随消息持久化，实时经 run.activity 事件推送。 */
+  plan?: AgentPlanSnapshot;
   /** When true, this run's completion will not trigger follow-up assignment routing or supervision. */
   suppressFollowupRouting?: boolean;
   /** Who initiated this run: a user message, an agent's @mention, or the supervisor. */
@@ -63,6 +72,8 @@ export class RunManager {
   private readonly queues = new Map<AgentId, ManagedRun[]>();
   private readonly active = new Map<AgentId, ManagedRun>();
   private readonly runs = new Map<string, ManagedRun>();
+  /** Bounded memory-only compatibility index for recent terminal run ids. */
+  private readonly terminalRunIndex = new Map<string, number>();
   private readonly lastTerminalActivityAt = new Map<string, number>();
   private readonly chunkBuffers = new Map<string, string>();
   private readonly lastToolNames = new Map<string, string>();
@@ -85,6 +96,30 @@ export class RunManager {
       if (queue.length > 0) return true;
     }
     return false;
+  }
+
+  /**
+   * Overlay in-memory process state onto stored messages for a state refresh.
+   * Activity remains transient but is projected while the owning process is alive.
+   */
+  projectLiveProcessState(messages: ChatMessage[]): ChatMessage[] {
+    const activeByMessageId = new Map<string, ManagedRun>();
+    for (const run of this.runs.values()) {
+      if (run.status === "running" || run.status === "cancelling") {
+        activeByMessageId.set(run.resultMessageId, run);
+      }
+    }
+    if (activeByMessageId.size === 0) return messages;
+
+    return messages.map((message) => {
+      const run = activeByMessageId.get(message.id);
+      if (!run) return message;
+      return {
+        ...message,
+        ...(run.activity.length > 0 ? { activity: run.activity } : {}),
+        ...(run.plan ? { plan: run.plan } : {}),
+      };
+    });
   }
 
   cancelAgentRuns(agentId: AgentId): string[] {
@@ -114,9 +149,6 @@ export class RunManager {
     const routeDepth = resolvedOrigin === "supervisor" ? 1 : (sourceMessage.routeDepth ?? 0) + 1;
     const isBusy = this.active.has(agentId);
     const now = new Date().toISOString();
-    const activity = [
-      createActivity(isBusy ? "排队等待执行。" : "已接收任务，开始执行。"),
-    ];
 
     const agentMessage = this.options.messages.add({
       kind: "agent",
@@ -128,7 +160,6 @@ export class RunManager {
       parentMessageId: sourceMessage.id,
       routeDepth,
       interactionMode: sourceMessage.interactionMode,
-      activity,
       approvalMode: sourceMessage.approvalMode ?? "ask",
     } satisfies NewChatMessage);
     this.options.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
@@ -142,12 +173,13 @@ export class RunManager {
       status: isBusy ? "queued" : "running",
       createdAt: now,
       startedAt: isBusy ? undefined : now,
-      activity,
+      activity: [],
       origin: resolvedOrigin,
       interactionMode: sourceMessage.interactionMode,
       sourceAttachments: sourceMessage.attachments?.length ? sourceMessage.attachments : undefined,
     };
     this.runs.set(run.id, run);
+    this.appendActivity(run, isBusy ? "排队等待执行。" : "已接收任务，开始执行。");
 
     if (isBusy) {
       this.getQueue(agentId).push(run);
@@ -160,9 +192,12 @@ export class RunManager {
   }
 
   cancel(runId: string): { ok: boolean; reason?: "not_found" | "not_cancellable" } {
+    this.pruneTerminalRunIndex();
     const run = this.runs.get(runId);
     if (!run) {
-      return { ok: false, reason: "not_found" };
+      return this.terminalRunIndex.has(runId)
+        ? { ok: false, reason: "not_cancellable" }
+        : { ok: false, reason: "not_found" };
     }
 
     if (run.status === "completed" || run.status === "failed" || run.status === "cancelling" || run.status === "cancelled") {
@@ -204,9 +239,12 @@ export class RunManager {
     const updated = this.options.messages.update(run.resultMessageId, {
       status: "cancelling",
       runStatus: "cancelling",
-      activity: run.activity,
     });
-    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({
+      type: "message.updated",
+      conversationId: this.options.conversationId,
+      message: updated,
+    });
   }
 
   private markCancelled(run: ManagedRun, phase: "before start" | "during execution", reason?: string): void {
@@ -235,11 +273,16 @@ export class RunManager {
       content: contentText,
       status: "cancelled",
       runStatus: "cancelled",
-      activity: run.activity,
+      ...this.settleProcessFields(run),
       completedAt: run.completedAt,
       startedAt: run.startedAt,
     });
-    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({
+      type: "message.updated",
+      conversationId: this.options.conversationId,
+      message: updated,
+      settleTransientActivity: true,
+    });
     this.options.eventBus.publish({
       type: "run.cancelled",
       conversationId: this.options.conversationId,
@@ -255,6 +298,7 @@ export class RunManager {
     if (phase === "during execution") {
       this.startNext(run.agentId);
     }
+    this.releaseRun(run);
   }
 
   /** Discard a queued run without writing a visible "cancelled" message.
@@ -274,10 +318,15 @@ export class RunManager {
       discarded: true,
       status: "cancelled",
       runStatus: "cancelled",
-      activity: run.activity,
+      ...this.settleProcessFields(run),
       completedAt: run.completedAt,
     });
-    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({
+      type: "message.updated",
+      conversationId: this.options.conversationId,
+      message: updated,
+      settleTransientActivity: true,
+    });
     this.options.eventBus.publish({
       type: "run.cancelled",
       conversationId: this.options.conversationId,
@@ -285,6 +334,7 @@ export class RunManager {
       runId: run.id,
       resultMessageId: updated.id,
     });
+    this.releaseRun(run);
   }
 
   /** Interrupt the current auto-collaboration chain without killing running CLI processes.
@@ -419,13 +469,18 @@ export class RunManager {
       content: runResult.content,
       status: "done",
       runStatus: "completed",
-      activity: run.activity,
+      ...this.settleProcessFields(run),
       completedAt: run.completedAt,
       startedAt: run.startedAt,
       sessionId: runResult.sessionId,
       runIndex: runResult.runIndex,
     });
-    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({
+      type: "message.updated",
+      conversationId: this.options.conversationId,
+      message: updated,
+      settleTransientActivity: true,
+    });
     this.options.eventBus.publish({
       type: "run.completed",
       conversationId: this.options.conversationId,
@@ -438,6 +493,7 @@ export class RunManager {
       this.options.onRunCompleted(updated);
     }
     this.startNext(run.agentId);
+    this.releaseRun(run);
   }
 
   // Design note: fail() intentionally does NOT check suppressFollowupRouting.
@@ -465,13 +521,19 @@ export class RunManager {
       content: `${this.resolveAgentLabel(run.agentId)} 运行失败：${errorSummary}`,
       status: "error",
       runStatus: "failed",
-      activity: run.activity,
+      ...this.settleProcessFields(run),
       completedAt: run.completedAt,
       startedAt: run.startedAt,
     });
-    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.options.eventBus.publish({
+      type: "message.updated",
+      conversationId: this.options.conversationId,
+      message: updated,
+      settleTransientActivity: true,
+    });
     this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary, interactionMode: run.interactionMode });
     this.startNext(run.agentId);
+    this.releaseRun(run);
   }
 
   private startNext(agentId: AgentId): void {
@@ -485,7 +547,6 @@ export class RunManager {
       content: `${this.resolveAgentLabel(agentId)} is working...`,
       status: "running",
       runStatus: "running",
-      activity: next.activity,
       startedAt,
     });
     this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
@@ -499,17 +560,59 @@ export class RunManager {
 
   private appendActivityEvent(run: ManagedRun, activity: AgentActivityEvent): void {
     const boundedActivity = truncateActivity(activity);
-    if (boundedActivity.type === "plan.updated") {
-      const previousIndex = findPlanActivityIndex(run.activity, boundedActivity.plan.id);
-      if (previousIndex >= 0) run.activity[previousIndex] = boundedActivity;
-      else run.activity.push(boundedActivity);
+    if (boundedActivity.type === "process.text") {
+      run.activity = appendTransientProcessActivity(run.activity, boundedActivity);
+    } else if (boundedActivity.type === "plan.updated") {
+      run.plan = boundedActivity.plan;
+    } else if (boundedActivity.type === "plan.removed") {
+      if (run.plan?.id === undefined || run.plan.id === boundedActivity.planId) {
+        run.plan = undefined;
+      }
     } else {
-      run.activity.push(boundedActivity);
+      run.activity = appendTransientProcessActivity(run.activity, boundedActivity);
     }
-    this.options.messages.update(run.resultMessageId, {
-      activity: run.activity,
-    });
     this.options.eventBus.publish({ type: "run.activity", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, activity: boundedActivity });
+  }
+
+  /** 运行结算时随消息持久化的过程字段。工具/状态活动不落盘，仅在内存与实时流中。 */
+  private settleProcessFields(run: ManagedRun): {
+    processTimeline: PersistedProcessTimelineEntry[] | null;
+    plan: AgentPlanSnapshot | null;
+  } {
+    const processTimeline = buildPersistedProcessTimeline(run.activity, MAX_PROCESS_TEXT_CHARS);
+    return {
+      processTimeline: processTimeline.length > 0 ? processTimeline : null,
+      plan: run.plan ?? null,
+    };
+  }
+
+  private releaseRun(run: ManagedRun): void {
+    this.rememberTerminalRun(run.id);
+    this.runs.delete(run.id);
+    this.lastTerminalActivityAt.delete(run.id);
+    this.chunkBuffers.delete(run.id);
+    this.lastToolNames.delete(run.id);
+  }
+
+  private rememberTerminalRun(runId: string): void {
+    const expiresAt = Date.now() + TERMINAL_RUN_RETENTION_MS;
+    this.pruneTerminalRunIndex(Date.now());
+    this.terminalRunIndex.delete(runId);
+    this.terminalRunIndex.set(runId, expiresAt);
+
+    while (this.terminalRunIndex.size > MAX_TERMINAL_RUN_INDEX_SIZE) {
+      const oldest = this.terminalRunIndex.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.terminalRunIndex.delete(oldest);
+    }
+  }
+
+  private pruneTerminalRunIndex(now = Date.now()): void {
+    for (const [runId, expiresAt] of this.terminalRunIndex) {
+      if (expiresAt <= now) {
+        this.terminalRunIndex.delete(runId);
+      }
+    }
   }
 
   private handleRuntimeEvent(event: RuntimeEvent): void {
@@ -791,6 +894,7 @@ function extractStreamJsonActivities(text: string): AgentActivityEvent[] {
 const MAX_RUN_ERROR_CHARS = 2_000;
 const MAX_ACTIVITY_TEXT_CHARS = 2_000;
 const MAX_TOOL_SUMMARY_CHARS = 120;
+const MAX_PROCESS_TEXT_CHARS = 20_000;
 
 function activityFromCodexItem(item: unknown, eventType: unknown): AgentActivityEvent | null {
   if (!item || typeof item !== "object") {
@@ -878,6 +982,9 @@ function truncateActivity(activity: AgentActivityEvent): AgentActivityEvent {
   if (activity.type === "status") {
     return { ...activity, text: truncateText(activity.text, MAX_ACTIVITY_TEXT_CHARS) };
   }
+  if (activity.type === "process.text") {
+    return { ...activity, text: truncateText(activity.text, MAX_PROCESS_TEXT_CHARS) };
+  }
   if (activity.type === "error") {
     return { ...activity, message: truncateText(activity.message, MAX_ACTIVITY_TEXT_CHARS) };
   }
@@ -912,15 +1019,6 @@ function truncateActivity(activity: AgentActivityEvent): AgentActivityEvent {
     };
   }
   return activity;
-}
-
-function findPlanActivityIndex(activity: AgentActivityEvent[], planId: string | undefined): number {
-  for (let index = activity.length - 1; index >= 0; index -= 1) {
-    const item = activity[index];
-    if (item?.type === "plan.removed" && (planId === undefined || item.planId === planId)) return -1;
-    if (item?.type === "plan.updated" && item.plan.id === planId) return index;
-  }
-  return -1;
 }
 
 function summarizeRunError(error: string): string {

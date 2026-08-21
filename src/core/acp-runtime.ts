@@ -83,6 +83,18 @@ export type AcpCommand = {
 
 export type AcpAnswerChunkDisposition = "candidate" | "final" | "progress" | "ignore";
 
+/**
+ * 每回合共享的分类状态。部分 runtime（如 CodeBuddy）在一个回合内复用同一个
+ * ACP messageId 输出多段模型响应，需要靠会话级信号（agentPhase）划分响应边界，
+ * 用响应序号代替 messageId 作为 answer 分组键。
+ */
+export type AcpTurnState = {
+  /** 当前分片所处的模型响应序号；runtime 通过 observeSessionUpdate 递增。 */
+  modelResponseIndex: number;
+  /** 是否处于一次模型响应中（用于去重递增，避免 requesting→streaming 重复计数）。 */
+  inModelResponse: boolean;
+};
+
 export type AcpRuntimeDefinition = {
   kind: AgentRuntimeKind;
   displayName: string;
@@ -92,6 +104,13 @@ export type AcpRuntimeDefinition = {
   envForRun?: (options: AcpRunOptions) => NodeJS.ProcessEnv;
   isDiagnosticMessage?: (update: SessionNotification["update"]) => boolean;
   classifyAnswerChunk?: (update: SessionNotification["update"]) => AcpAnswerChunkDisposition | undefined;
+  /** 观察所有会话级更新帧，维护 runtime 特定的回合状态（如 CodeBuddy agentPhase 响应边界）。 */
+  observeSessionUpdate?: (update: SessionNotification["update"], turn: AcpTurnState) => void;
+  /**
+   * 解析 answer 分片的分组键；默认使用 ACP messageId。最终答案取"最后一个有内容的组"，
+   * 其余组的文本在结算时归入过程文本（process.text 快照）。
+   */
+  answerGroupKey?: (update: SessionNotification["update"], turn: AcpTurnState) => string | undefined;
 };
 
 const acpConnectionPool = new AcpConnectionPool(spawnAcpConnection);
@@ -118,11 +137,21 @@ type AnswerMessage = {
   finalParts: string[];
 };
 
+type AnswerSegmentKind = "answer" | "progress";
+
+/** 按到达顺序记录的文本分片，用于结算时生成"剔除最终回复正文后"的过程文本快照。 */
+type AnswerSegment = {
+  group: string;
+  kind: AnswerSegmentKind;
+  text: string;
+};
+
 type AnswerState = {
   messages: Map<string, AnswerMessage>;
   order: string[];
   unscopedCandidateParts: string[];
   unscopedFinalParts: string[];
+  segments: AnswerSegment[];
 };
 
 export function createAcpRuntime(
@@ -149,6 +178,7 @@ export function runAcp(
   let closed = false;
   let cancelTimer: NodeJS.Timeout | null = null;
   const answerState = createAnswerState();
+  const turnState = createTurnState();
   const toolStates = new Map<string, ToolState>();
 
   const connectorOptions: AcpRunOptions = {
@@ -165,7 +195,7 @@ export function runAcp(
     if (!acceptingUpdates || notification.sessionId !== activeSessionId) {
       return;
     }
-    handleSessionUpdate(notification, answerState, toolStates, options, definition);
+    handleSessionUpdate(notification, answerState, turnState, toolStates, options, definition);
   });
 
   let resolveSessionId!: (sessionId: string | null) => void;
@@ -230,10 +260,14 @@ export function runAcp(
         throw new Error(`${definition.displayName} ACP refused the request.`);
       }
 
-      const answer = selectFinalAnswer(answerState).trim();
+      const selection = selectFinalAnswer(answerState);
+      const answer = selection.text.trim();
       if (!answer) {
         throw new Error(`${definition.displayName} ACP completed with ${response.stopReason} but no final answer.`);
       }
+      // 结算快照：流式期间所有文本（含将成为最终回复的文本）都以增量形式进入
+      // 过程区；结算时剔除归入最终回复的分组文本，整体替换，保证不重复、不残留。
+      emitProcessTextSnapshot(options, answerState, selection.group);
       succeeded = true;
       return answer;
     } catch (error: unknown) {
@@ -363,11 +397,13 @@ function pathToFileUri(filePath: string): string {
 function handleSessionUpdate(
   notification: SessionNotification,
   answerState: AnswerState,
+  turnState: AcpTurnState,
   toolStates: Map<string, ToolState>,
   options: AcpRunOptions,
   definition: AcpRuntimeDefinition,
 ): void {
   const update = notification.update;
+  definition.observeSessionUpdate?.(update, turnState);
   if (update.sessionUpdate === "plan") {
     emitActivity(options, {
       type: "plan.updated",
@@ -429,9 +465,17 @@ function handleSessionUpdate(
       if (disposition === "ignore") return;
 
       options.onOutput?.(update.content.text);
-      if (disposition === "progress") return;
+      if (disposition === "progress") {
+        // 明确的过程叙述：不进入最终答案候选，直接作为过程文本流式输出。
+        recordSegment(answerState, { group: "", kind: "progress", text: update.content.text });
+        emitProcessText(options, update.content.text, "progress", "");
+        return;
+      }
 
-      appendAnswerChunk(answerState, update, disposition, update.content.text);
+      const answerGroup = appendAnswerChunk(answerState, update, disposition, update.content.text, definition, turnState);
+      // 流式期间当前分组的文本同样进入过程区实时展示；结算快照会剔除
+      // 归入最终回复的部分。
+      emitProcessText(options, update.content.text, "answer", answerGroup);
     }
     return;
   }
@@ -448,6 +492,7 @@ function handleSessionUpdate(
   if (!previous && status !== "completed" && status !== "failed") {
     emitActivity(options, {
       type: "tool.started",
+      toolCallId: update.toolCallId,
       name,
       ...(update.rawInput === undefined ? {} : { input: formatValue(update.rawInput) }),
       timestamp: new Date().toISOString(),
@@ -456,6 +501,7 @@ function handleSessionUpdate(
   if (status === "completed" && previous?.status !== "completed") {
     emitActivity(options, {
       type: "tool.completed",
+      toolCallId: update.toolCallId,
       name,
       ...(update.rawOutput === undefined ? {} : { summary: formatValue(update.rawOutput) }),
       timestamp: new Date().toISOString(),
@@ -464,6 +510,7 @@ function handleSessionUpdate(
   if (status === "failed" && previous?.status !== "failed") {
     emitActivity(options, {
       type: "tool.failed",
+      toolCallId: update.toolCallId,
       name,
       ...(update.rawOutput === undefined ? {} : { summary: formatValue(update.rawOutput) }),
       timestamp: new Date().toISOString(),
@@ -489,7 +536,16 @@ function createAnswerState(): AnswerState {
     order: [],
     unscopedCandidateParts: [],
     unscopedFinalParts: [],
+    segments: [],
   };
+}
+
+function createTurnState(): AcpTurnState {
+  return { modelResponseIndex: 0, inModelResponse: false };
+}
+
+function recordSegment(state: AnswerState, segment: AnswerSegment): void {
+  state.segments.push(segment);
 }
 
 function appendAnswerChunk(
@@ -497,19 +553,22 @@ function appendAnswerChunk(
   update: SessionNotification["update"],
   disposition: "candidate" | "final",
   text: string,
-): void {
-  const messageId = getAgentMessageId(update);
-  if (!messageId) {
+  definition: AcpRuntimeDefinition,
+  turnState: AcpTurnState,
+): string {
+  const group = definition.answerGroupKey?.(update, turnState) ?? getAgentMessageId(update) ?? "";
+  recordSegment(state, { group, kind: "answer", text });
+  if (!group) {
     const parts = disposition === "final" ? state.unscopedFinalParts : state.unscopedCandidateParts;
     parts.push(text);
-    return;
+    return group;
   }
 
-  let message = state.messages.get(messageId);
+  let message = state.messages.get(group);
   if (!message) {
     message = { candidateParts: [], finalParts: [] };
-    state.messages.set(messageId, message);
-    state.order.push(messageId);
+    state.messages.set(group, message);
+    state.order.push(group);
   }
   if (disposition === "final") {
     if (message.candidateParts.length) {
@@ -517,11 +576,12 @@ function appendAnswerChunk(
       message.candidateParts.length = 0;
     }
     message.finalParts.push(text);
-    return;
+    return group;
   }
 
   const parts = message.finalParts.length ? message.finalParts : message.candidateParts;
   parts.push(text);
+  return group;
 }
 
 function getAgentMessageId(update: SessionNotification["update"]): string | undefined {
@@ -540,18 +600,51 @@ function getAgentMessageId(update: SessionNotification["update"]): string | unde
   return typeof nestedMessageId === "string" && nestedMessageId ? nestedMessageId : undefined;
 }
 
-function selectFinalAnswer(state: AnswerState): string {
+function selectFinalAnswer(state: AnswerState): { text: string; group: string } {
   for (let index = state.order.length - 1; index >= 0; index -= 1) {
-    const message = state.messages.get(state.order[index]!);
-    if (message?.finalParts.length) return message.finalParts.join("");
+    const group = state.order[index]!;
+    const message = state.messages.get(group);
+    if (message?.finalParts.length) return { text: message.finalParts.join(""), group };
   }
-  if (state.unscopedFinalParts.length) return state.unscopedFinalParts.join("");
+  if (state.unscopedFinalParts.length) return { text: state.unscopedFinalParts.join(""), group: "" };
 
   for (let index = state.order.length - 1; index >= 0; index -= 1) {
-    const message = state.messages.get(state.order[index]!);
-    if (message?.candidateParts.length) return message.candidateParts.join("");
+    const group = state.order[index]!;
+    const message = state.messages.get(group);
+    if (message?.candidateParts.length) return { text: message.candidateParts.join(""), group };
   }
-  return state.unscopedCandidateParts.join("");
+  return { text: state.unscopedCandidateParts.join(""), group: "" };
+}
+
+function emitProcessText(
+  options: AcpRunOptions,
+  text: string,
+  stream: "progress" | "answer",
+  answerGroup: string,
+): void {
+  if (!text) return;
+  emitActivity(options, {
+    type: "process.text",
+    text,
+    stream,
+    answerGroup,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function emitProcessTextSnapshot(options: AcpRunOptions, state: AnswerState, finalGroup: string): void {
+  if (state.segments.length === 0) return;
+  const text = state.segments
+    .filter((segment) => !(segment.kind === "answer" && segment.group === finalGroup))
+    .map((segment) => segment.text)
+    .join("");
+  emitActivity(options, {
+    type: "process.text",
+    text,
+    snapshot: true,
+    excludedAnswerGroup: finalGroup,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 function emitActivity(options: AcpRunOptions, activity: AgentActivityEvent): void {

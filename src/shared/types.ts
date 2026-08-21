@@ -190,14 +190,35 @@ export type AgentPlanSnapshot =
   | { id: string; format: "markdown"; content: string }
   | { id: string; format: "file"; uri: string };
 
+export type PersistedProcessTimelineEntry =
+  | { type: "text"; text: string }
+  | { type: "tools"; count: number; failedCount: number };
+
 export type AgentActivityEvent =
   | { type: "status"; text: string; timestamp: string }
-  | { type: "tool.started"; name: string; input?: string; timestamp: string }
-  | { type: "tool.completed"; name: string; summary?: string; timestamp: string }
-  | { type: "tool.failed"; name: string; summary?: string; timestamp: string }
+  | { type: "tool.started"; toolCallId?: string; name: string; input?: string; timestamp: string }
+  | { type: "tool.completed"; toolCallId?: string; name: string; summary?: string; timestamp: string }
+  | { type: "tool.failed"; toolCallId?: string; name: string; summary?: string; timestamp: string }
   | { type: "plan.updated"; plan: AgentPlanSnapshot; timestamp: string }
   | { type: "plan.removed"; planId: string; timestamp: string }
-  | { type: "error"; message: string; timestamp: string };
+  | { type: "error"; message: string; timestamp: string }
+  /**
+   * 运行时明确输出的过程文本（模型说明、进度叙述等，不含最终回复正文）。
+   * `text` 为增量分片；`snapshot: true` 时为结算全量替换（例如运行结束时剔除
+   * 已归入最终回复的文本后重写过程区）。仅 delta + 结算快照两种语义，
+   * 消费端按顺序追加或整体替换，避免流式分片乱序与重复。
+   */
+  | {
+      type: "process.text";
+      text: string;
+      snapshot?: boolean;
+      /** ACP answer group used to remove the final reply from the transient process timeline. */
+      answerGroup?: string;
+      stream?: "progress" | "answer";
+      /** Present on a settlement snapshot, including when the selected group is the empty string. */
+      excludedAnswerGroup?: string;
+      timestamp: string;
+    };
 
 export type ChatMessage = {
   id: string;
@@ -214,6 +235,10 @@ export type ChatMessage = {
   /** 模式快照：用户消息在发送时记录当轮 interaction mode，派生运行/转交/监工检查继承该值。 */
   interactionMode?: InteractionMode;
   activity?: AgentActivityEvent[];
+  /** 结算后的轻量过程顺序；工具段仅保留数量与失败数，不保存调用详情。 */
+  processTimeline?: PersistedProcessTimelineEntry[] | null;
+  /** 最终 Plan 快照（运行结束时的最新计划）。`null` 表示结算时明确清空。 */
+  plan?: AgentPlanSnapshot | null;
   startedAt?: string;
   completedAt?: string;
   sessionId?: string;
@@ -314,7 +339,7 @@ export type MessagePage = MessageHistoryState & {
 
 export type RuntimeEvent =
   | { type: "message.created"; conversationId: string; message: ChatMessage }
-  | { type: "message.updated"; conversationId: string; message: ChatMessage }
+  | { type: "message.updated"; conversationId: string; message: ChatMessage; settleTransientActivity?: boolean }
   | { type: "agent.status"; conversationId: string; agentId: AgentId; status: AgentStatus }
   | { type: "runtime.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }

@@ -15,8 +15,8 @@ software development team contains four employees:
 - `@田小坑:` validates behavior and reports regressions.
 
 Every conversation has an interaction mode, selected from the composer:
-普通对话 (direct chat with one employee), 简单协作 (lightweight collaboration,
-the default for new conversations), and 复杂协作 (supervised collaboration).
+普通对话 (direct chat with one employee, the default for new conversations),
+简单协作 (lightweight collaboration), and 复杂协作 (supervised collaboration).
 复杂协作 adds an internal supervisor backed by the selected runtime; it is not
 configured as a fifth employee.
 

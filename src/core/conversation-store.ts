@@ -38,7 +38,7 @@ export class ConversationStore {
       name,
       createdAt: now,
       lastOpenedAt: now,
-      interactionMode: "collaborative",
+      interactionMode: "direct",
     };
     data.conversations.push(conversation);
     this.saveData(workspaceId, data);
@@ -132,10 +132,10 @@ export class ConversationStore {
         conversations: Array.isArray(parsed.conversations)
           ? parsed.conversations.map((conversation) => ({
               ...conversation,
-              // 无旧格式兼容：非法/缺失的 interactionMode 一律回到默认 collaborative
+              // 无旧格式兼容：非法/缺失的 interactionMode 一律回到默认 direct
               interactionMode: isInteractionMode(conversation.interactionMode)
                 ? conversation.interactionMode
-                : "collaborative",
+                : "direct",
             }))
           : [],
       };
