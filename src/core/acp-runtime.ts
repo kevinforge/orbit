@@ -44,7 +44,11 @@ import {
 } from "./acp-output-guard.ts";
 import { AcpConnectionPool } from "./acp-connection-pool.ts";
 
-const CANCEL_GRACE_MS = 1_500;
+/**
+ * 取消宽限期：interrupt 先发 session/cancel 优雅取消；超过该时限仍未结算的
+ * 回合强制销毁连接并收口结果，避免运行永久停留在取消中（issue #136）。
+ */
+export const CANCEL_GRACE_MS = 10_000;
 
 export type AcpRunOptions = AgentRuntimeRunOptions;
 
@@ -176,6 +180,7 @@ export function runAcp(
   let cancelled = false;
   let permissionRejected = false;
   let closed = false;
+  let forcedCancelled = false;
   let cancelTimer: NodeJS.Timeout | null = null;
   const answerState = createAnswerState();
   const turnState = createTurnState();
@@ -208,6 +213,14 @@ export function runAcp(
     };
   });
 
+  // 强制取消收口（issue #136）：runtime 无视 session/cancel 且底层 prompt 永不
+  // 结算时，由该 Promise 结束 handle.result，运行不会永久停留在取消中。
+  let rejectForcedCancel!: (error: AgentRunCancelledError) => void;
+  const forcedCancellation = new Promise<never>((_resolve, reject) => {
+    rejectForcedCancel = reject;
+  });
+  void forcedCancellation.catch(() => undefined);
+
   const close = (destroy = false) => {
     if (closed) return;
     closed = true;
@@ -221,7 +234,30 @@ export function runAcp(
     permissionRejected ? "权限申请未获批准，任务已停止。" : "运行已取消。",
   );
 
-  const result = (async () => {
+  /**
+   * 强制收口：先落定 sessionId（AgentSession 的异常路径会 await 它，不能再次
+   * 无限等待）、停止接受晚到的会话更新、销毁连接终止进程，最后让 handle.result
+   * 以取消错误结束。
+   */
+  const forceCancel = (diagnostic: string) => {
+    if (forcedCancelled || closed) return;
+    forcedCancelled = true;
+    cancelled = true;
+    acceptingUpdates = false;
+    if (cancelTimer) {
+      clearTimeout(cancelTimer);
+      cancelTimer = null;
+    }
+    resolveSessionId(activeSessionId);
+    options.onOutput?.(`${definition.displayName} ${diagnostic}。`);
+    close(true);
+    rejectForcedCancel(new AgentRunCancelledError(
+      `${definition.displayName} ACP turn was force-cancelled: ${diagnostic}`,
+      permissionRejected ? "权限申请未获批准，任务已停止。" : "运行已取消。",
+    ));
+  };
+
+  const turn = (async () => {
     let succeeded = false;
     try {
       const initialized = await connection.initialize({
@@ -246,7 +282,7 @@ export function runAcp(
       );
       resolveSessionId(activeSessionId);
 
-      acceptingUpdates = true;
+      acceptingUpdates = !forcedCancelled;
       const response = await connection.prompt({
         sessionId: activeSessionId,
         prompt: buildPromptContent(options.prompt, options.imagePaths, initialized.agentCapabilities),
@@ -281,17 +317,23 @@ export function runAcp(
       close(!succeeded);
     }
   })();
+  // 与正常回合竞速：强制收口时即使底层 prompt 永不结算，handle.result 也落定。
+  const result: Promise<string> = Promise.race([turn, forcedCancellation]);
 
   const interrupt = () => {
     if (cancelled || closed) return;
     cancelled = true;
     if (!activeSessionId) {
-      close(true);
+      forceCancel("会话尚未建立，已强制终止进程");
       return;
     }
 
-    void connection.cancel(activeSessionId).catch(() => close(true));
-    cancelTimer = setTimeout(() => close(true), CANCEL_GRACE_MS);
+    // 先尝试优雅取消；请求失败或宽限期超时都立即强制收口。
+    void connection.cancel(activeSessionId).catch(() => forceCancel("取消请求失败，已强制终止进程"));
+    cancelTimer = setTimeout(
+      () => forceCancel(`未在 ${CANCEL_GRACE_MS / 1000} 秒内响应取消，已强制终止进程`),
+      CANCEL_GRACE_MS,
+    );
     cancelTimer.unref?.();
   };
 
@@ -901,7 +943,7 @@ function connectionFromProcess(
   });
   const request = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, processFailure]);
 
-  const close = () => {
+  const terminate = () => {
     if (closed) return;
     closed = true;
     const processStillRunning = child.exitCode === null && child.signalCode === null;
@@ -922,6 +964,20 @@ function connectionFromProcess(
     acp.close();
   };
 
+  const close = () => {
+    terminate();
+  };
+
+  /**
+   * 强制销毁（issue #136）：close() 置位 closed 后，进程 exit 事件不再触发
+   * processFailure 拒绝，pending 请求会永久挂在 Promise.race 上。destroy 必须
+   * 显式拒绝 processFailure，让所有未结算的 ACP 请求立即结束。
+   */
+  const destroy = () => {
+    terminate();
+    rejectProcessFailure(new Error(`${displayName} ACP connection was destroyed.`));
+  };
+
   return {
     pid,
     initialize: (params) => request(acp.agent.request(methods.agent.initialize, params)),
@@ -935,6 +991,7 @@ function connectionFromProcess(
     prompt: (params) => request(acp.agent.request(methods.agent.session.prompt, params)),
     cancel: (sessionId) => request(acp.agent.notify(methods.agent.session.cancel, { sessionId })),
     close,
+    destroy,
   };
 }
 

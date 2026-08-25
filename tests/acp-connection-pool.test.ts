@@ -17,6 +17,7 @@ function fakeFactory() {
   let spawnCount = 0;
   let initializeCount = 0;
   let closeCount = 0;
+  let destroyCount = 0;
   const factory: AcpReusableConnectionFactory = () => {
     spawnCount += 1;
     let alive = true;
@@ -32,6 +33,7 @@ function fakeFactory() {
       async prompt() { return { stopReason: "end_turn" }; },
       async cancel() {},
       close() { alive = false; closeCount += 1; },
+      destroy() { alive = false; destroyCount += 1; },
       rebind() {},
       deactivate() {},
       isAlive() { return alive; },
@@ -40,7 +42,7 @@ function fakeFactory() {
   };
   return {
     factory,
-    stats: () => ({ spawnCount, initializeCount, closeCount }),
+    stats: () => ({ spawnCount, initializeCount, closeCount, destroyCount }),
   };
 }
 
@@ -65,7 +67,7 @@ test("ACP pool reuses an initialized process and loaded session before TTL", asy
   const second = pool.acquire(definition, runOptions(), () => {});
   await second.initialize({ protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "Orbit", version: "1" } });
   assert.equal(second.hasSession?.("session-1"), true);
-  assert.deepEqual(fake.stats(), { spawnCount: 1, initializeCount: 1, closeCount: 0 });
+  assert.deepEqual(fake.stats(), { spawnCount: 1, initializeCount: 1, closeCount: 0, destroyCount: 0 });
   second.close();
   pool.dispose();
 });
@@ -78,8 +80,24 @@ test("ACP pool isolates conversations and destroys failed leases", () => {
   const second = pool.acquire(definition, runOptions("conversation-2:agent"), () => {});
   second.destroy?.();
 
-  assert.deepEqual(fake.stats(), { spawnCount: 2, initializeCount: 0, closeCount: 1 });
+  assert.deepEqual(fake.stats(), { spawnCount: 2, initializeCount: 0, closeCount: 0, destroyCount: 1 });
   pool.dispose();
+});
+
+test("destroying a lease terminates the underlying process and never returns it to the idle pool", () => {
+  // Issue #136：强制销毁走底层 destroy（终止进程并结束 pending 请求），
+  // 连接不回空闲池，后续获取必须启动新进程。
+  const fake = fakeFactory();
+  const pool = new AcpConnectionPool(fake.factory, { ttlMs: 1_000 });
+  const connection = pool.acquire(definition, runOptions(), () => {});
+  connection.destroy?.();
+
+  assert.deepEqual(fake.stats(), { spawnCount: 1, initializeCount: 0, closeCount: 0, destroyCount: 1 });
+  assert.equal(pool.size(), 0, "销毁的连接不得留在空闲池中");
+
+  const next = pool.acquire(definition, runOptions(), () => {});
+  assert.equal(fake.stats().spawnCount, 2, "再次获取必须启动新进程");
+  next.destroy?.();
 });
 
 test("ACP pool evicts an idle process after TTL", async () => {
@@ -90,7 +108,7 @@ test("ACP pool evicts an idle process after TTL", async () => {
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   assert.equal(pool.size(), 0);
-  assert.equal(fake.stats().closeCount, 1);
+  assert.equal(fake.stats().destroyCount, 1);
 });
 
 test("ACP pool enforces the idle limit after concurrent leases are released", () => {
@@ -105,6 +123,6 @@ test("ACP pool enforces the idle limit after concurrent leases are released", ()
   third.close();
 
   assert.equal(pool.size(), 2);
-  assert.equal(fake.stats().closeCount, 1);
+  assert.equal(fake.stats().destroyCount, 1);
   pool.dispose();
 });

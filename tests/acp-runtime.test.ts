@@ -1,0 +1,210 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { InitializeResponse, PromptResponse, SessionNotification } from "@agentclientprotocol/sdk";
+
+import {
+  CANCEL_GRACE_MS,
+  runAcp,
+  type AcpConnection,
+  type AcpConnector,
+  type AcpRuntimeDefinition,
+} from "../src/core/acp-runtime.ts";
+import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
+import type { AgentActivityEvent } from "../src/shared/types.ts";
+
+// Issue #136：公共 ACP 取消生命周期。优雅取消走 session/cancel；runtime 无视
+// 取消且 prompt 永不结算时，宽限期后强制销毁连接并收口结果。超时用假定时器
+// 模拟，测试不真实等待 CANCEL_GRACE_MS。
+const definition: AcpRuntimeDefinition = {
+  kind: "codebuddy",
+  displayName: "Fake Agent",
+  buildCommand: () => ({ file: "fake-acp", args: [] }),
+};
+
+type FakeConnectionControls = {
+  hangInitialize?: boolean;
+  hangPrompt?: boolean;
+  promptResponse?: PromptResponse;
+  cancelError?: Error;
+};
+
+function fakeConnector(controls: FakeConnectionControls = {}) {
+  const calls: string[] = [];
+  let notifySessionUpdate: ((notification: SessionNotification) => void) | null = null;
+  const connector: AcpConnector = (_options, notify) => {
+    notifySessionUpdate = notify;
+    const connection: AcpConnection = {
+      pid: 4242,
+      initialize() {
+        calls.push("initialize");
+        return controls.hangInitialize
+          ? new Promise<InitializeResponse>(() => {})
+          : Promise.resolve({ protocolVersion: 1, agentCapabilities: { loadSession: true } });
+      },
+      async newSession() {
+        calls.push("session/new");
+        return { sessionId: "fake-session" };
+      },
+      async loadSession() {},
+      async resumeSession() {},
+      prompt() {
+        calls.push("session/prompt");
+        return controls.hangPrompt
+          ? new Promise<PromptResponse>(() => {})
+          : Promise.resolve(controls.promptResponse ?? { stopReason: "end_turn" });
+      },
+      cancel(sessionId: string) {
+        calls.push(`session/cancel:${sessionId}`);
+        return controls.cancelError ? Promise.reject(controls.cancelError) : Promise.resolve();
+      },
+      close() {
+        calls.push("close");
+      },
+      destroy() {
+        calls.push("destroy");
+      },
+    };
+    return connection;
+  };
+  return {
+    connector,
+    calls,
+    emitSessionUpdate(update: SessionNotification["update"]) {
+      notifySessionUpdate?.({ sessionId: "fake-session", update });
+    },
+  };
+}
+
+function runOptions(overrides: Record<string, unknown> = {}) {
+  return {
+    agentId: "developer",
+    cwd: "D:/workspace",
+    prompt: "hello",
+    ...overrides,
+  };
+}
+
+test("graceful cancel settles the turn through session/cancel", async () => {
+  const fake = fakeConnector({ promptResponse: { stopReason: "cancelled" } });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+  await handle.sessionId;
+
+  handle.process.interrupt();
+
+  await assert.rejects(handle.result, (error: unknown) => {
+    assert.ok(error instanceof AgentRunCancelledError);
+    assert.equal(error.userMessage, "运行已取消。");
+    return true;
+  });
+  assert.ok(fake.calls.includes("session/cancel:fake-session"), "interrupt 必须先发 session/cancel");
+  assert.equal(await handle.sessionId, "fake-session");
+});
+
+test("force-cancels an unresponsive prompt after the cancel grace period", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const output: string[] = [];
+  const fake = fakeConnector({ hangPrompt: true });
+  const handle = runAcp(
+    runOptions({ onOutput: (text: string) => output.push(text) }),
+    definition,
+    fake.connector,
+  );
+  await handle.sessionId;
+
+  handle.process.interrupt();
+  assert.ok(fake.calls.includes("session/cancel:fake-session"));
+  assert.ok(!fake.calls.includes("destroy"), "宽限期内不得强制销毁连接");
+
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+
+  await assert.rejects(handle.result, (error: unknown) => {
+    assert.ok(error instanceof AgentRunCancelledError);
+    assert.match(error.message, /force-cancelled/);
+    assert.equal(error.userMessage, "运行已取消。");
+    return true;
+  });
+  assert.ok(fake.calls.includes("destroy"), "宽限期超时后必须强制销毁连接");
+  assert.equal(output.length, 1, "强制收口只输出一次诊断");
+  assert.match(output[0]!, /已强制终止进程/);
+});
+
+test("forced cancel still settles sessionId so error paths never hang", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fake = fakeConnector({ hangPrompt: true });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+  await handle.sessionId;
+
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+
+  await assert.rejects(handle.result, AgentRunCancelledError);
+  assert.equal(await handle.sessionId, "fake-session", "AgentSession 的异常路径依赖 sessionId 落定");
+});
+
+test("session updates arriving after a forced cancel are ignored", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({ hangPrompt: true });
+  const handle = runAcp(
+    runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) }),
+    definition,
+    fake.connector,
+  );
+  await handle.sessionId;
+
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+  await assert.rejects(handle.result, AgentRunCancelledError);
+
+  fake.emitSessionUpdate({
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "晚到文本" },
+  });
+  assert.deepEqual(activities, [], "强制收口后的会话更新不得进入活动流");
+});
+
+test("a failing session/cancel request force-cancels immediately", async () => {
+  const fake = fakeConnector({ hangPrompt: true, cancelError: new Error("cancel not supported") });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+  await handle.sessionId;
+
+  handle.process.interrupt();
+
+  await assert.rejects(handle.result, (error: unknown) => {
+    assert.ok(error instanceof AgentRunCancelledError);
+    assert.match(error.message, /force-cancelled/);
+    return true;
+  });
+  assert.ok(fake.calls.includes("destroy"), "取消请求失败必须立即强制销毁连接");
+});
+
+test("interrupt before the session is established force-cancels the turn", async () => {
+  const fake = fakeConnector({ hangInitialize: true });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+
+  handle.process.interrupt();
+
+  await assert.rejects(handle.result, (error: unknown) => {
+    assert.ok(error instanceof AgentRunCancelledError);
+    return true;
+  });
+  assert.ok(fake.calls.includes("destroy"));
+  assert.equal(await handle.sessionId, null, "未建立会话时 sessionId 以 null 落定");
+});
+
+test("repeated interrupt requests stay idempotent", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fake = fakeConnector({ hangPrompt: true });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+  await handle.sessionId;
+
+  handle.process.interrupt();
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+  handle.process.interrupt();
+
+  await assert.rejects(handle.result, AgentRunCancelledError);
+  assert.equal(fake.calls.filter((call) => call === "session/cancel:fake-session").length, 1);
+  assert.equal(fake.calls.filter((call) => call === "destroy").length, 1);
+});

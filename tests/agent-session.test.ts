@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { AgentSession } from "../src/core/agent-session.ts";
-import type { AgentRuntime, AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
+import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
 
@@ -549,6 +549,62 @@ test("interrupt followed by result reject should NOT change status to error", as
   // CRITICAL: Status should STILL be idle, NOT error
   // This is the bug we're testing for - catch() should not overwrite idle status
   assert.equal(session.getStatus(), "idle", "status should remain idle after interrupt-induced reject, not become error");
+});
+
+test("interrupt settles pending permissions and elicitations, then forced cancel returns to idle", async () => {
+  // Issue #136：runtime 无视取消被强制收口时，挂起的权限/表单请求必须先被
+  // 清理（权限拒绝、表单取消），会话最终回到 idle 而不是 error。
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  let capturedOptions: AgentRuntimeRunOptions | null = null;
+  let rejectRun!: (error: Error) => void;
+  const resultPromise = new Promise<string>((_resolve, reject) => { rejectRun = reject; });
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      capturedOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: resultPromise,
+        sessionId: Promise.resolve(null),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  session.start();
+  const sendPromise = session.send("run-force", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const permissionDecision = capturedOptions!.requestPermission!({ id: "tool-1", title: "Run tests" });
+  const elicitationResponse = capturedOptions!.requestElicitation!({ message: "Choose", mode: "form" });
+  assert.equal(session.pendingPermissions().length, 1);
+  assert.equal(session.pendingElicitations().length, 1);
+
+  session.interrupt("run-force");
+  assert.equal(await permissionDecision, "reject");
+  assert.deepEqual(await elicitationResponse, { action: "cancel" });
+  assert.equal(session.pendingPermissions().length, 0);
+  assert.equal(session.pendingElicitations().length, 0);
+
+  // 修复后的 runAcp 保证 handle.result 在有限时间内以取消错误收口。
+  rejectRun(new AgentRunCancelledError("CodeBuddy ACP turn was force-cancelled"));
+  try {
+    await sendPromise;
+    assert.fail("send should reject after forced cancel");
+  } catch (error) {
+    assert.ok(error instanceof AgentRunCancelledError);
+  }
+  assert.equal(session.getStatus(), "idle", "强制取消后必须回到 idle，而不是 error");
 });
 
 test("publishes and resolves runtime permission requests", async () => {

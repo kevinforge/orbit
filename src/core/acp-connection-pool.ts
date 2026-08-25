@@ -164,6 +164,13 @@ export class AcpConnectionPool {
     if (this.entries.get(entry.key) === entry) {
       this.entries.delete(entry.key);
     }
+    // 强制销毁与正常释放不同：先解除会话绑定，再走底层 destroy 终止进程并结束
+    // 所有 pending 请求；连接绝不回到空闲池（issue #136）。
+    entry.connection.deactivate();
+    if (entry.connection.destroy) {
+      entry.connection.destroy();
+      return;
+    }
     entry.connection.close();
   }
 }

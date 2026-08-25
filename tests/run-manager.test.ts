@@ -1148,6 +1148,71 @@ test("cancelling a running run starts the next queued run (no stall, FIFO preser
   await new Promise((resolve) => setTimeout(resolve, 0));
 });
 
+test("forced cancel settles the message, releases the slot, and ignores late runtime events", async () => {
+  // Issue #136：runtime 无视取消且 prompt 永不结算时，适配层在宽限期后以
+  // AgentRunCancelledError 强制收口（见 acp-runtime.test.ts）。这里验证
+  // RunManager 收到该结果后的行为：消息落定为已取消、槽位释放、队列推进、
+  // 晚到的 runtime 活动不影响已取消的运行。
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+  const prompts: string[] = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(_runId: string, prompt: string) {
+            prompts.push(prompt);
+            return pending.shift()?.promise ?? Promise.reject(new Error("unexpected run"));
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const r1 = manager.enqueue("developer", "R1", source);
+  const r2 = manager.enqueue("developer", "R2", source);
+  const r1Activities = captureRunActivity(eventBus, r1.id);
+
+  manager.cancel(r1.id);
+  assert.equal(r1.status, "cancelling");
+
+  first.reject(new AgentRunCancelledError("CodeBuddy ACP turn was force-cancelled"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(messages.get(r1.resultMessageId)?.status, "cancelled", "强制收口后消息必须落定为已取消");
+  assert.deepEqual(prompts, ["R1", "R2"], "槽位释放后队列中的下一条必须启动");
+  assert.equal(r2.status, "running");
+
+  const settledActivityCount = r1Activities.length;
+  eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: r1.id,
+    activity: { type: "status", text: "晚到活动", timestamp: new Date().toISOString() },
+  } satisfies RuntimeEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(r1Activities.length, settledActivityCount, "已取消运行不得再接收晚到的活动");
+  assert.ok(
+    !r1Activities.some((activity) => activity.type === "status" && activity.text === "晚到活动"),
+    "晚到的 runtime 活动必须被丢弃",
+  );
+
+  second.resolve({ content: "R2 done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
 test("cancel a non-existent run returns not_found error", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
