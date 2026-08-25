@@ -53,6 +53,11 @@ export type ManagedRun = {
   origin?: RunOrigin;
   /** 模式快照：继承自源消息，决定提示词规则与完成后的路由/监工行为，不受执行中切换全局模式影响。 */
   interactionMode?: InteractionMode;
+  /**
+   * ACP 结算快照标记的最终回答分组（空字符串有效，表示未分组回答）。
+   * 终态 message.updated 据此让客户端显式剔除最终回答分片，无需推断。
+   */
+  excludedAnswerGroup?: string;
   /** Image attachments from the source message, passed to the runtime. */
   sourceAttachments?: MessageAttachment[];
 };
@@ -282,6 +287,8 @@ export class RunManager {
       conversationId: this.options.conversationId,
       message: updated,
       settleTransientActivity: true,
+      // 无结算快照时不携带该字段，客户端保留实时活动、不剔除部分回答。
+      ...(run.excludedAnswerGroup !== undefined ? { excludedAnswerGroup: run.excludedAnswerGroup } : {}),
     });
     this.options.eventBus.publish({
       type: "run.cancelled",
@@ -326,6 +333,8 @@ export class RunManager {
       conversationId: this.options.conversationId,
       message: updated,
       settleTransientActivity: true,
+      // 无结算快照时不携带该字段，客户端保留实时活动、不剔除部分回答。
+      ...(run.excludedAnswerGroup !== undefined ? { excludedAnswerGroup: run.excludedAnswerGroup } : {}),
     });
     this.options.eventBus.publish({
       type: "run.cancelled",
@@ -480,6 +489,8 @@ export class RunManager {
       conversationId: this.options.conversationId,
       message: updated,
       settleTransientActivity: true,
+      // 无结算快照时不携带该字段，客户端保留实时活动、不剔除部分回答。
+      ...(run.excludedAnswerGroup !== undefined ? { excludedAnswerGroup: run.excludedAnswerGroup } : {}),
     });
     this.options.eventBus.publish({
       type: "run.completed",
@@ -530,6 +541,8 @@ export class RunManager {
       conversationId: this.options.conversationId,
       message: updated,
       settleTransientActivity: true,
+      // 无结算快照时不携带该字段，客户端保留实时活动、不剔除部分回答。
+      ...(run.excludedAnswerGroup !== undefined ? { excludedAnswerGroup: run.excludedAnswerGroup } : {}),
     });
     this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary, interactionMode: run.interactionMode });
     this.startNext(run.agentId);
@@ -561,6 +574,10 @@ export class RunManager {
   private appendActivityEvent(run: ManagedRun, activity: AgentActivityEvent): void {
     const boundedActivity = truncateActivity(activity);
     if (boundedActivity.type === "process.text") {
+      // 结算快照显式标记最终回答分组（含空字符串），终态事件原样带给客户端。
+      if (boundedActivity.snapshot && boundedActivity.excludedAnswerGroup !== undefined) {
+        run.excludedAnswerGroup = boundedActivity.excludedAnswerGroup;
+      }
       run.activity = appendTransientProcessActivity(run.activity, boundedActivity);
     } else if (boundedActivity.type === "plan.updated") {
       run.plan = boundedActivity.plan;

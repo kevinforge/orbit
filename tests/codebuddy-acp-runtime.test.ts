@@ -276,14 +276,34 @@ test("splits CodeBuddy process narration from the final answer using agentPhase 
   })).result;
 
   assert.equal(result, "Tests passed.");
+  // Issue #139 回归：文本 → 工具调用/完成 → 新文本 → 回合完成。所有文本按
+  // 到达顺序进入过程时间线；结算快照显式标记最终分组（响应序号分组）。
+  assert.deepEqual(activities.map((activity) => activity.type), [
+    "process.text",
+    "tool.started",
+    "tool.completed",
+    "process.text",
+    "process.text",
+  ]);
   const processText = activities.filter((activity) => activity.type === "process.text");
   assert.deepEqual(
-    processText.map((activity) => (activity.type === "process.text" ? { text: activity.text, snapshot: Boolean(activity.snapshot) } : null)),
+    processText.map((activity) => (activity.type === "process.text"
+      ? { text: activity.text, snapshot: Boolean(activity.snapshot), stream: activity.stream, answerGroup: activity.answerGroup }
+      : null)),
     [
-      { text: "Let me check the build. ", snapshot: false },
-      { text: "Tests passed.", snapshot: false },
-      { text: "Let me check the build. ", snapshot: true },
+      { text: "Let me check the build. ", snapshot: false, stream: "answer", answerGroup: "codebuddy-response-1" },
+      { text: "Tests passed.", snapshot: false, stream: "answer", answerGroup: "codebuddy-response-2" },
+      { text: "Let me check the build. ", snapshot: true, stream: undefined, answerGroup: undefined },
     ],
+  );
+  const snapshot = processText.at(-1);
+  assert.ok(
+    snapshot?.type === "process.text" && snapshot.excludedAnswerGroup === "codebuddy-response-2",
+    "settlement snapshot must explicitly mark the final answer group",
+  );
+  assert.ok(
+    snapshot?.type === "process.text" && !snapshot.text.includes("Tests passed."),
+    "snapshot text must exclude the final answer group",
   );
 });
 

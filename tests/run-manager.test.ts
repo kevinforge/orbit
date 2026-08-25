@@ -385,11 +385,71 @@ test("persists an ordered compact process timeline and plan while raw tool activ
   ]);
   assert.equal(settled?.plan?.format, "items");
   assert.equal(settled?.activity, undefined);
-  assert.ok(events.some((event) => (
+  // 结算事件显式携带最终回答分组：客户端无需按"最后一次工具调用后"推断剔除对象。
+  const terminalUpdate = events.find((event) => (
     event.type === "message.updated"
     && event.message.id === run.resultMessageId
     && event.settleTransientActivity === true
-  )), "terminal message update must settle client-only activity");
+  ));
+  assert.ok(terminalUpdate, "terminal message update must settle client-only activity");
+  assert.equal(
+    terminalUpdate?.type === "message.updated" ? terminalUpdate.excludedAnswerGroup : undefined,
+    "response-final",
+    "terminal message update must carry the settlement snapshot's excluded answer group",
+  );
+  // 持久化时间线由剔除后的内存 activity 生成，不包含最终回复正文。
+  assert.ok(
+    settled?.processTimeline?.every((entry) => entry.type !== "text" || !entry.text.includes("最终回复正文")),
+    "persisted process timeline must exclude the final answer text",
+  );
+});
+
+test("terminal events without a settlement snapshot omit excludedAnswerGroup so partial answers survive", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const events: RuntimeEvent[] = [];
+  eventBus.subscribe((event) => events.push(event));
+  const pending = deferred();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+  const run = manager.enqueue("developer", "work", createSourceMessage());
+
+  // 崩溃前的部分回答：没有结算快照，也就没有 excludedAnswerGroup。
+  eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity: { type: "process.text", text: "部分回答", stream: "answer", answerGroup: "partial-1", timestamp: new Date().toISOString() },
+  });
+
+  pending.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const terminalUpdate = events.find((event) => (
+    event.type === "message.updated"
+    && event.message.id === run.resultMessageId
+    && event.settleTransientActivity === true
+  ));
+  assert.ok(terminalUpdate, "terminal message update must exist");
+  assert.equal(
+    terminalUpdate?.type === "message.updated" ? "excludedAnswerGroup" in terminalUpdate : true,
+    false,
+    "terminal events must omit excludedAnswerGroup when no settlement snapshot arrived",
+  );
 });
 
 test("caps persisted process timeline text at settlement", async () => {

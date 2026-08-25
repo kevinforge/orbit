@@ -1863,7 +1863,6 @@ function MessageRow({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const copyResetTimer = useRef<number | null>(null);
   const canCopyMessage = message.content.trim().length > 0 && !isProgressPlaceholder;
-  const liveResponse = isLiveRun ? resolveLiveResponseText(message.activity) : undefined;
 
   useEffect(() => () => {
     if (copyResetTimer.current !== null) {
@@ -1947,16 +1946,12 @@ function MessageRow({
       ) : null}
       {isAgentRun
         ? isLiveRun
-          ? liveResponse
-            ? <SettledRunProcess message={message} live />
-            : <LiveRunProcess message={message} isCancelling={isCancelling} />
+          ? <LiveRunProcess message={message} isCancelling={isCancelling} />
           : <SettledRunProcess message={message} />
         : null}
       <div className="messageBody">
         {isProgressPlaceholder ? (
-          liveResponse?.text
-            ? <MarkdownContent content={liveResponse.text} />
-            : <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
+          <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
         ) : message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
@@ -1984,14 +1979,13 @@ function MessageRow({
 }
 
 type ProcessTimelineEntry =
-  | { kind: "text"; text: string; timestamp: string }
+  | { kind: "text"; text: string; timestamp: string; stream: "progress" | "answer" }
   | { kind: "tools"; activities: ProcessToolActivity[] }
   | { kind: "tool-summary"; count: number; failedCount: number };
 
-/** Preserve the ACP order while combining adjacent text chunks and tool events. */
+/** Preserve the ACP order while combining adjacent same-stream text chunks and tool events. */
 export function buildProcessTimeline(
   activity: AgentActivityEvent[] | undefined,
-  hiddenAnswerGroup: string | null = null,
   persistedTimeline?: PersistedProcessTimelineEntry[] | null,
 ): ProcessTimelineEntry[] {
   const timeline: ProcessTimelineEntry[] = [];
@@ -1999,14 +1993,13 @@ export function buildProcessTimeline(
   for (const item of activity ?? []) {
     if (item.type === "process.text") {
       if (!item.text) continue;
-      if (hiddenAnswerGroup !== null && item.stream === "answer" && item.answerGroup === hiddenAnswerGroup) {
-        continue;
-      }
+      const stream = item.stream ?? "progress";
       const previous = timeline.at(-1);
-      if (previous?.kind === "text") {
+      // 仅相邻同 stream 的文本合并，避免过程叙述与回答正文混入同一文本块。
+      if (previous?.kind === "text" && previous.stream === stream) {
         previous.text += item.text;
       } else {
-        timeline.push({ kind: "text", text: item.text, timestamp: item.timestamp });
+        timeline.push({ kind: "text", text: item.text, timestamp: item.timestamp, stream });
       }
       continue;
     }
@@ -2025,47 +2018,10 @@ export function buildProcessTimeline(
 
   if (timeline.length === 0 && persistedTimeline?.length) {
     return persistedTimeline.map((entry) => entry.type === "text"
-      ? { kind: "text", text: entry.text, timestamp: "" }
+      ? { kind: "text", text: entry.text, timestamp: "", stream: "progress" as const }
       : { kind: "tool-summary", count: entry.count, failedCount: entry.failedCount });
   }
   return timeline;
-}
-
-export function resolveLiveResponseText(
-  activity: AgentActivityEvent[] | undefined,
-): { answerGroup: string; text: string } | undefined {
-  if (!activity?.length) return undefined;
-
-  let lastToolIndex = -1;
-  for (let index = activity.length - 1; index >= 0; index -= 1) {
-    const item = activity[index];
-    if (item?.type === "tool.started" || item?.type === "tool.completed" || item?.type === "tool.failed") {
-      lastToolIndex = index;
-      break;
-    }
-  }
-
-  let answerGroup: string | undefined;
-  for (let index = activity.length - 1; index > lastToolIndex; index -= 1) {
-    const item = activity[index];
-    if (item?.type === "process.text" && item.stream === "answer" && item.answerGroup !== undefined && item.text) {
-      answerGroup = item.answerGroup;
-      break;
-    }
-  }
-  if (answerGroup === undefined) return undefined;
-
-  const text = activity
-    .slice(lastToolIndex + 1)
-    .filter((item): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
-      item.type === "process.text"
-      && item.stream === "answer"
-      && item.answerGroup === answerGroup
-      && !item.snapshot
-    ))
-    .map((item) => item.text)
-    .join("");
-  return text ? { answerGroup, text } : undefined;
 }
 
 function toolExecutionLabel(execution: ProcessToolExecution): string {
@@ -2114,18 +2070,16 @@ function PersistedToolActivityGroup({ count, failedCount }: { count: number; fai
   );
 }
 
-function ProcessTimeline({ message, live }: { message: ChatMessage; live: boolean }) {
-  const liveResponse = live ? resolveLiveResponseText(message.activity) : undefined;
-  const timeline = buildProcessTimeline(
-    message.activity,
-    liveResponse?.answerGroup ?? null,
-    message.processTimeline,
-  );
+function ProcessTimeline({ message, live = false }: { message: ChatMessage; live?: boolean }) {
+  const timeline = buildProcessTimeline(message.activity, message.processTimeline);
   if (timeline.length === 0) return null;
   return (
     <div className="processTimeline">
       {timeline.map((entry, index) => entry.kind === "text" ? (
-        <div key={`text-${index}`} className="processNarrative">{entry.text}</div>
+        <div
+          key={`text-${index}`}
+          className={live && entry.stream === "answer" ? "processNarrative answer" : "processNarrative"}
+        >{entry.text}</div>
       ) : entry.kind === "tools" ? (
         <ToolActivityGroup key={`tools-${index}`} activities={entry.activities} live={live} />
       ) : (
@@ -2135,7 +2089,7 @@ function ProcessTimeline({ message, live }: { message: ChatMessage; live: boolea
   );
 }
 
-/** 运行中的过程区：Plan 状态板 + ACP 有序过程流。 */
+/** 运行中的过程区：Plan 状态板 + ACP 有序过程流。运行期间回答正文也按到达顺序留在时间线。 */
 function LiveRunProcess({ message, isCancelling }: { message: ChatMessage; isCancelling: boolean }) {
   return (
     <div className={`liveProcess${isCancelling ? " cancelling" : ""}`} aria-label="执行过程">
@@ -2145,12 +2099,11 @@ function LiveRunProcess({ message, isCancelling }: { message: ChatMessage; isCan
   );
 }
 
-/** 最终正文开始输出或运行结算后的折叠过程区。 */
-function SettledRunProcess({ message, live = false }: { message: ChatMessage; live?: boolean }) {
+/** 运行结算后的折叠过程区；正文区只显示最终回复。 */
+function SettledRunProcess({ message }: { message: ChatMessage }) {
   const activity = message.activity ?? [];
   const plan = message.plan ?? undefined;
-  const liveResponse = live ? resolveLiveResponseText(activity) : undefined;
-  const timeline = buildProcessTimeline(activity, liveResponse?.answerGroup ?? null, message.processTimeline);
+  const timeline = buildProcessTimeline(activity, message.processTimeline);
   if (!plan && timeline.length === 0) {
     return null;
   }
@@ -2180,7 +2133,7 @@ function SettledRunProcess({ message, live = false }: { message: ChatMessage; li
       </summary>
       <div className="settledProcessBody">
         {plan ? <PlanBoard plan={plan} /> : null}
-        <ProcessTimeline message={message} live={live} />
+        <ProcessTimeline message={message} />
       </div>
     </details>
   );
@@ -2942,6 +2895,7 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
   if (event.type === "message.updated") {
     return upsertMessage(state, event.message, {
       settleTransientActivity: event.settleTransientActivity,
+      excludedAnswerGroup: event.excludedAnswerGroup,
     });
   }
 
@@ -3018,21 +2972,21 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
 export function upsertMessage(
   state: AppState,
   nextMessage: ChatMessage,
-  options?: { settleTransientActivity?: boolean },
+  options?: { settleTransientActivity?: boolean; excludedAnswerGroup?: string },
 ): AppState {
   const index = state.messages.findIndex((message) => message.id === nextMessage.id);
   if (index === -1) {
     return { ...state, messages: [...state.messages, nextMessage] };
   }
 
-  // 中间更新保留页面实时值；终态事件只剔除最终回答分片，保留当前页面的
-  // 过程文本和完整工具明细。刷新后因没有 activity，才会回退到持久化摘要。
+  // 中间更新保留页面实时值；终态事件按结算快照显式标记的分组剔除最终回答分片，
+  // 保留当前页面的过程文本和完整工具明细。刷新后因没有 activity，才会回退到持久化摘要。
   return {
     ...state,
     messages: state.messages.map((message) => {
       if (message.id !== nextMessage.id) return message;
       const settledActivity = options?.settleTransientActivity
-        ? removeSettledAnswerActivity(message.activity)
+        ? removeSettledAnswerActivity(message.activity, options?.excludedAnswerGroup)
         : message.activity;
       return {
         ...nextMessage,
@@ -3044,14 +2998,18 @@ export function upsertMessage(
   };
 }
 
-function removeSettledAnswerActivity(activity: AgentActivityEvent[] | undefined): AgentActivityEvent[] | undefined {
+/** 只剔除结算事件显式标记的最终回答分组；无标识时保留全部实时活动（不误删部分回答）。 */
+function removeSettledAnswerActivity(
+  activity: AgentActivityEvent[] | undefined,
+  excludedAnswerGroup?: string,
+): AgentActivityEvent[] | undefined {
   if (!activity?.length) return activity;
-  const response = resolveLiveResponseText(activity);
-  if (!response) return activity;
+  // 空字符串是有效分组（未分组回答），必须用 !== undefined 判断。
+  if (excludedAnswerGroup === undefined) return activity;
   return activity.filter((item) => !(
     item.type === "process.text"
     && item.stream === "answer"
-    && item.answerGroup === response.answerGroup
+    && item.answerGroup === excludedAnswerGroup
   ));
 }
 

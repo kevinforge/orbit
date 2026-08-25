@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyEvent, buildProcessTimeline, resolveLiveResponseText, upsertMessage } from "../src/ui/App.tsx";
+import { applyEvent, buildProcessTimeline, upsertMessage } from "../src/ui/App.tsx";
 import type { AgentActivityEvent, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
 
 const CONVERSATION = "conv1";
@@ -106,30 +106,32 @@ test("message.updated payloads from the store preserve live-only client fields",
     { type: "text" as const, text: "过程叙述" },
     { type: "tools" as const, count: 1, failedCount: 0 },
   ];
-  // 结算后的 message.updated 带轻量时间线与 Plan，正常覆盖。
+  // 结算后的 message.updated 带轻量时间线与 Plan，正常覆盖；终态事件按
+  // 结算快照显式标记的分组剔除最终回答分片。
   const settled = applyEvent(updated, {
     type: "message.updated",
     conversationId: CONVERSATION,
     message: agentMessage({ status: "done", runStatus: "completed", content: "最终回复", processTimeline: compactTimeline, plan: planB }),
     settleTransientActivity: true,
+    excludedAnswerGroup: "final-1",
   });
   assert.deepEqual(settled.messages[0]?.processTimeline, compactTimeline);
   assert.deepEqual(settled.messages[0]?.plan, planB);
-  // 即使客户端漏收剔除最终回答的结算快照，终态事件也会剔除最终回答分片，
+  // 即使客户端漏收剔除最终回答的结算快照，终态事件也会按显式分组剔除最终回答分片，
   // 但保留当前页面的过程文本和完整工具明细；刷新后才使用持久化摘要。
   assert.deepEqual(settled.messages[0]?.activity?.map((item) => item.type), ["process.text", "tool.started"]);
   assert.deepEqual(
-    buildProcessTimeline(settled.messages[0]?.activity, null, settled.messages[0]?.processTimeline),
+    buildProcessTimeline(settled.messages[0]?.activity, settled.messages[0]?.processTimeline),
     [
-      { kind: "text", text: "过程叙述", timestamp: "2026-01-01T00:00:02.000Z" },
+      { kind: "text", text: "过程叙述", timestamp: "2026-01-01T00:00:02.000Z", stream: "progress" },
       { kind: "tools", activities: [{ type: "tool.started", name: "Read", timestamp: "2026-01-01T00:00:03.000Z" }] },
     ],
   );
   const refreshed = { ...settled, messages: settled.messages.map((message) => ({ ...message, activity: undefined })) };
   assert.deepEqual(
-    buildProcessTimeline(refreshed.messages[0]?.activity, null, refreshed.messages[0]?.processTimeline),
+    buildProcessTimeline(refreshed.messages[0]?.activity, refreshed.messages[0]?.processTimeline),
     [
-      { kind: "text", text: "过程叙述", timestamp: "" },
+      { kind: "text", text: "过程叙述", timestamp: "", stream: "progress" },
       { kind: "tool-summary", count: 1, failedCount: 0 },
     ],
   );
@@ -141,10 +143,20 @@ test("message.updated payloads from the store preserve live-only client fields",
     conversationId: CONVERSATION,
     message: agentMessage({ status: "done", runStatus: "completed", content: "最终回复", processTimeline: null, plan: null }),
     settleTransientActivity: true,
+    excludedAnswerGroup: "final-1",
   });
   assert.equal(cleared.messages[0]?.processTimeline, null);
   assert.equal(cleared.messages[0]?.plan, null);
   assert.equal(cleared.messages[0]?.activity?.length, 2);
+
+  // 终态事件未携带分组标识（失败/中断/取消）时，不能剔除任何部分回答文本。
+  const keptPartial = applyEvent(updated, {
+    type: "message.updated",
+    conversationId: CONVERSATION,
+    message: agentMessage({ status: "error", runStatus: "failed", content: "运行失败", processTimeline: null, plan: null }),
+    settleTransientActivity: true,
+  });
+  assert.equal(keptPartial.messages[0]?.activity?.length, 3, "missing excludedAnswerGroup must keep partial answer activity");
 });
 
 test("process timeline interleaves narration and consecutive tool groups", () => {
@@ -177,35 +189,57 @@ test("process timeline interleaves narration and consecutive tool groups", () =>
   assert.equal(timeline.some((entry) => entry.kind === "text" && entry.text.includes("最终正文")), false);
 });
 
-test("latest answer group streams in the body until a later tool call demotes it to process", () => {
-  const firstAnswer: AgentActivityEvent[] = [
+test("answer text stays in the live process timeline across later tool calls", () => {
+  // Issue #139：运行期间回答正文不提升到正文区，也不因后续工具调用被隐藏或降级。
+  // 到达顺序 text → tools → text 始终保留在过程时间线。
+  const events: AgentActivityEvent[] = [
     { type: "process.text", text: "先给出判断", stream: "answer", answerGroup: "response-1", timestamp: "2026-01-01T00:00:01.000Z" },
-  ];
-  assert.deepEqual(resolveLiveResponseText(firstAnswer), { answerGroup: "response-1", text: "先给出判断" });
-  assert.deepEqual(buildProcessTimeline(firstAnswer, "response-1"), []);
-
-  const afterTool: AgentActivityEvent[] = [
-    ...firstAnswer,
     { type: "tool.started", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:02.000Z" },
     { type: "tool.completed", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:03.000Z" },
-  ];
-  assert.equal(resolveLiveResponseText(afterTool), undefined);
-  assert.deepEqual(buildProcessTimeline(afterTool).map((entry) => entry.kind), ["text", "tools"]);
-
-  const finalAnswer: AgentActivityEvent[] = [
-    ...afterTool,
     { type: "process.text", text: "最终", stream: "answer", answerGroup: "response-2", timestamp: "2026-01-01T00:00:04.000Z" },
     { type: "process.text", text: "正文", stream: "answer", answerGroup: "response-2", timestamp: "2026-01-01T00:00:05.000Z" },
   ];
-  assert.deepEqual(resolveLiveResponseText(finalAnswer), { answerGroup: "response-2", text: "最终正文" });
-  assert.deepEqual(
-    buildProcessTimeline(finalAnswer, "response-2").map((entry) => entry.kind),
-    ["text", "tools"],
+  const live = events.reduce(
+    (current, activity) => applyEvent(current, runActivity(activity)),
+    state([agentMessage()]),
   );
+
+  // 正文仍是占位符：run.activity 只增长 activity，不改写消息内容。
+  assert.equal(live.messages[0]?.content, "正在处理…");
+  const timeline = buildProcessTimeline(live.messages[0]?.activity);
+  assert.deepEqual(timeline.map((entry) => entry.kind), ["text", "tools", "text"]);
+  // 相邻同 stream 分片合并；后到的回答分组不被隐藏，也不与前一段回答合并。
+  assert.deepEqual(timeline[0], { kind: "text", text: "先给出判断", timestamp: "2026-01-01T00:00:01.000Z", stream: "answer" });
+  assert.deepEqual(timeline[2], { kind: "text", text: "最终正文", timestamp: "2026-01-01T00:00:04.000Z", stream: "answer" });
+
+  // 相邻不同 stream 的文本不合并：过程叙述与回答正文保持独立文本块。
+  const mixed: AgentActivityEvent[] = [
+    { type: "process.text", text: "检查中。", stream: "progress", answerGroup: "", timestamp: "2026-01-01T00:00:06.000Z" },
+    { type: "process.text", text: "回答开始", stream: "answer", answerGroup: "response-3", timestamp: "2026-01-01T00:00:07.000Z" },
+  ];
+  assert.deepEqual(
+    buildProcessTimeline(mixed).map((entry) => (entry.kind === "text" ? { text: entry.text, stream: entry.stream } : entry.kind)),
+    [
+      { text: "检查中。", stream: "progress" },
+      { text: "回答开始", stream: "answer" },
+    ],
+  );
+
+  // 结算事件按显式分组只剔除指定分组：response-2 移除，response-1 保留在过程区。
+  const settled = applyEvent(live, {
+    type: "message.updated",
+    conversationId: CONVERSATION,
+    message: agentMessage({ status: "done", runStatus: "completed", content: "最终正文", processTimeline: null, plan: null }),
+    settleTransientActivity: true,
+    excludedAnswerGroup: "response-2",
+  });
+  const settledTimeline = buildProcessTimeline(settled.messages[0]?.activity);
+  assert.deepEqual(settledTimeline.map((entry) => entry.kind), ["text", "tools"]);
+  assert.equal(settledTimeline[0]?.kind === "text" && settledTimeline[0].text, "先给出判断");
 });
 
 test("persisted process timeline restores narration and compact tool groups in order", () => {
-  const timeline = buildProcessTimeline(undefined, null, [
+  const timeline = buildProcessTimeline(undefined, [
     { type: "text", text: "先检查。" },
     { type: "tools", count: 5, failedCount: 1 },
     { type: "text", text: "继续验证。" },

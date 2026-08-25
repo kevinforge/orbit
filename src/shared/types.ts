@@ -339,7 +339,18 @@ export type MessagePage = MessageHistoryState & {
 
 export type RuntimeEvent =
   | { type: "message.created"; conversationId: string; message: ChatMessage }
-  | { type: "message.updated"; conversationId: string; message: ChatMessage; settleTransientActivity?: boolean }
+  | {
+      type: "message.updated";
+      conversationId: string;
+      message: ChatMessage;
+      settleTransientActivity?: boolean;
+      /**
+       * 结算快照标记的最终回答分组。终态事件携带它，客户端据此显式剔除实时
+       * 过程区中的最终回答分片；缺失时保留当前实时活动（不剔除部分回答）。
+       * 空字符串有效（未分组回答），判断必须用 `!== undefined`。
+       */
+      excludedAnswerGroup?: string;
+    }
   | { type: "agent.status"; conversationId: string; agentId: AgentId; status: AgentStatus }
   | { type: "runtime.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
   | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }

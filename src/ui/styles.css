@@ -1117,6 +1117,16 @@ button:active:not(:disabled) {
   word-break: break-word;
 }
 
+/* 运行中的回答正文分片：仍留在过程时间线，但用强调样式与过程叙述区分。 */
+.processNarrative.answer {
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+  font-weight: 600;
+}
+
 .processToolGroup {
   min-width: 0;
   max-width: 100%;

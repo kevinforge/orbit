@@ -206,6 +206,80 @@ test("uses Codex final-answer phase instead of commentary or thought chunks", as
   );
 });
 
+test("keeps commentary before tool calls in the process timeline and settles the final answer group", async () => {
+  // Issue #139 回归：commentary 文本 → 工具调用 → final_answer 文本 → 完成。
+  const activities: Array<{ type: string; text?: string; stream?: string; answerGroup?: string; snapshot?: boolean; excludedAnswerGroup?: string }> = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "commentary-1",
+          content: { type: "text", text: "正在检查项目。" },
+          _meta: { codex: { phase: "commentary" } },
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Run tests",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "npm test" },
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "completed",
+          rawOutput: "passed",
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "final-1",
+          content: { type: "text", text: "最终回复" },
+          _meta: { codex: { phase: "final_answer" } },
+        },
+      });
+    },
+  });
+  const runtime = createCodexAcpRuntime(fake.connector);
+  const result = await runtime.run(runOptions({
+    onActivity: (activity: { type: string; text?: string; stream?: string; answerGroup?: string; snapshot?: boolean; excludedAnswerGroup?: string }) => activities.push(activity),
+  })).result;
+
+  assert.equal(result, "最终回复");
+  assert.deepEqual(activities.map((activity) => activity.type), [
+    "process.text",
+    "tool.started",
+    "tool.completed",
+    "process.text",
+    "process.text",
+  ]);
+  // commentary 归入 progress 流；final_answer 分组成为最终回复。
+  assert.deepEqual(
+    activities
+      .filter((activity) => activity.type === "process.text" && !activity.snapshot)
+      .map((activity) => ({ text: activity.text, stream: activity.stream, answerGroup: activity.answerGroup })),
+    [
+      { text: "正在检查项目。", stream: "progress", answerGroup: "" },
+      { text: "最终回复", stream: "answer", answerGroup: "final-1" },
+    ],
+  );
+  const snapshot = activities.at(-1);
+  assert.equal(snapshot?.snapshot, true);
+  assert.equal(snapshot?.excludedAnswerGroup, "final-1");
+  assert.equal(snapshot?.text, "正在检查项目。");
+});
+
 test("creates a Codex ACP session and returns streamed text", async () => {
   const fake = fakeConnector({
     onPrompt(notify) {
