@@ -486,7 +486,7 @@ test("maps ACP tool lifecycle updates to Orbit activity events", async () => {
   );
   assert.ok(
     activities[3]?.type === "process.text" && activities[3].text === "" && activities[3].snapshot,
-    "the settlement snapshot clears the final answer from the process region",
+    "the settlement snapshot marks the final answer group for server-side terminal cleanup",
   );
 });
 

@@ -109,7 +109,7 @@ test("keeps Codex adapter warnings out of the final answer", async () => {
 
   assert.equal(await runtime.run(runOptions({ onActivity: (activity: unknown) => activities.push(activity) })).result, "clean answer");
   // 诊断告警保持为状态活动；正常答案只在流式期间出现在过程区，
-  // 结算时用空快照清除最终回复文本，避免完成态重复展示。
+  // 结算快照标记最终分组供 RunManager 在服务端内部消化，不转发前端。
   assert.deepEqual(activities, [
     {
       type: "status",

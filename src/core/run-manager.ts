@@ -16,7 +16,7 @@ import type { EventBus } from "./event-bus.ts";
 import type { MessageStore } from "./message-store.ts";
 import { parseJsonObjects } from "./json-stream-parser.ts";
 import { isAgentRunCancelledError } from "./agent-runtime.ts";
-import { appendTransientProcessActivity, buildPersistedProcessTimeline } from "../shared/process-activity.ts";
+import { appendTransientProcessActivity, buildPersistedProcessTimeline, withoutAnswerGroup } from "../shared/process-activity.ts";
 
 const TERMINAL_RUN_RETENTION_MS = 5 * 60 * 1000;
 const MAX_TERMINAL_RUN_INDEX_SIZE = 1024;
@@ -573,13 +573,16 @@ export class RunManager {
 
   private appendActivityEvent(run: ManagedRun, activity: AgentActivityEvent): void {
     const boundedActivity = truncateActivity(activity);
-    if (boundedActivity.type === "process.text") {
-      // 结算快照显式标记最终回答分组（含空字符串），终态事件原样带给客户端。
-      if (boundedActivity.snapshot && boundedActivity.excludedAnswerGroup !== undefined) {
+    if (boundedActivity.type === "process.text" && boundedActivity.snapshot) {
+      // 结算快照是服务端内部信号：只记录最终回答分组（含空字符串），不改写
+      // live activity、不发布 run.activity。终态 message.updated 一次完成正文
+      // 替换与过程清理，避免"过程区先清空、正文后出现"的二次渲染。
+      if (boundedActivity.excludedAnswerGroup !== undefined) {
         run.excludedAnswerGroup = boundedActivity.excludedAnswerGroup;
       }
-      run.activity = appendTransientProcessActivity(run.activity, boundedActivity);
-    } else if (boundedActivity.type === "plan.updated") {
+      return;
+    }
+    if (boundedActivity.type === "plan.updated") {
       run.plan = boundedActivity.plan;
     } else if (boundedActivity.type === "plan.removed") {
       if (run.plan?.id === undefined || run.plan.id === boundedActivity.planId) {
@@ -596,7 +599,12 @@ export class RunManager {
     processTimeline: PersistedProcessTimelineEntry[] | null;
     plan: AgentPlanSnapshot | null;
   } {
-    const processTimeline = buildPersistedProcessTimeline(run.activity, MAX_PROCESS_TEXT_CHARS);
+    // live activity 保留最终回答直到终态；持久化时间线基于副本剔除结算分组，
+    // 运行中的投影因此不会提前清空，刷新后过程区也不含最终正文。
+    const settledActivity = run.excludedAnswerGroup !== undefined
+      ? withoutAnswerGroup(run.activity, run.excludedAnswerGroup)
+      : run.activity;
+    const processTimeline = buildPersistedProcessTimeline(settledActivity, MAX_PROCESS_TEXT_CHARS);
     return {
       processTimeline: processTimeline.length > 0 ? processTimeline : null,
       plan: run.plan ?? null,

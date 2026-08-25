@@ -363,13 +363,22 @@ test("persists an ordered compact process timeline and plan while raw tool activ
   publish({ type: "process.text", text: "最终回复正文", stream: "answer", answerGroup: "response-final", timestamp: ts() });
   publish({ type: "process.text", text: "先检查相关文件。继续验证。", snapshot: true, excludedAnswerGroup: "response-final", timestamp: ts() });
 
-  // 运行中：实时流按序收到全部事件，持久化消息没有任何 activity。
-  assert.equal(activities.length, 12);
+  // 运行中：实时流按序收到全部 delta 与工具事件；结算快照是服务端内部
+  // 信号，不作为 run.activity 转发，避免前端先清空过程区再等正文。
+  assert.equal(activities.length, 11);
   assert.deepEqual(
     activities.map((item) => item.type),
-    ["process.text", "process.text", "tool.started", "tool.completed", "tool.started", "tool.failed", "process.text", "tool.started", "tool.completed", "plan.updated", "process.text", "process.text"],
+    ["process.text", "process.text", "tool.started", "tool.completed", "tool.started", "tool.failed", "process.text", "tool.started", "tool.completed", "plan.updated", "process.text"],
   );
+  assert.ok(activities.every((item) => !(item.type === "process.text" && item.snapshot)), "settlement snapshots must not stream to the client");
   assert.equal(messages.get(run.resultMessageId)?.activity, undefined);
+  // 快照之后、终态之前：运行中投影仍保留最终回答分片，不出现结算空档。
+  const projected = manager.projectLiveProcessState(messages.list());
+  const projectedMessage = projected.find((message) => message.id === run.resultMessageId);
+  assert.ok(
+    projectedMessage?.activity?.some((item) => item.type === "process.text" && item.text === "最终回复正文"),
+    "live projection must keep the final answer until the terminal event",
+  );
 
   pending.resolve({ content: "最终回复正文" });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -397,7 +406,7 @@ test("persists an ordered compact process timeline and plan while raw tool activ
     "response-final",
     "terminal message update must carry the settlement snapshot's excluded answer group",
   );
-  // 持久化时间线由剔除后的内存 activity 生成，不包含最终回复正文。
+  // 持久化时间线在结算时基于剔除分组后的副本生成，不包含最终回复正文。
   assert.ok(
     settled?.processTimeline?.every((entry) => entry.type !== "text" || !entry.text.includes("最终回复正文")),
     "persisted process timeline must exclude the final answer text",

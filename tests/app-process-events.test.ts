@@ -238,6 +238,54 @@ test("answer text stays in the live process timeline across later tool calls", (
   assert.equal(settledTimeline[0]?.kind === "text" && settledTimeline[0].text, "先给出判断");
 });
 
+test("terminal message update settles body, status, and process cleanup in one step", () => {
+  // 结算二次渲染修复：生产链路不再把结算快照推给前端，前端在收到终态
+  // message.updated 之前正文保持占位、最终回答留在过程 activity；终态事件
+  // 到达时一次完成正文替换、状态切换、分组剔除与持久化时间线覆盖。
+  const events: AgentActivityEvent[] = [
+    { type: "process.text", text: "先检查。", stream: "progress", answerGroup: "", timestamp: "2026-01-01T00:00:01.000Z" },
+    { type: "tool.started", toolCallId: "tool-1", name: "Read", input: "package.json", timestamp: "2026-01-01T00:00:02.000Z" },
+    { type: "tool.completed", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:03.000Z" },
+    { type: "process.text", text: "最终", stream: "answer", answerGroup: "response-9", timestamp: "2026-01-01T00:00:04.000Z" },
+    { type: "process.text", text: "回复", stream: "answer", answerGroup: "response-9", timestamp: "2026-01-01T00:00:05.000Z" },
+  ];
+  const live = events.reduce(
+    (current, activity) => applyEvent(current, runActivity(activity)),
+    state([agentMessage({ status: "running", runStatus: "running" })]),
+  );
+
+  // 只有普通 run.activity：正文仍是占位符，最终回答完整保留在过程区。
+  assert.equal(live.messages[0]?.content, "正在处理…");
+  assert.equal(live.messages[0]?.status, "running");
+  assert.equal(live.messages[0]?.activity?.length, 5);
+  assert.equal(
+    live.messages[0]?.activity?.filter((item) => item.type === "process.text").map((item) => item.type === "process.text" ? item.text : "").join(""),
+    "先检查。最终回复",
+  );
+
+  // 终态事件一次完成：正文替换 + 状态切换 + answer 分组剔除 + 时间线覆盖。
+  const compactTimeline = [
+    { type: "text" as const, text: "先检查。" },
+    { type: "tools" as const, count: 1, failedCount: 0 },
+  ];
+  const settled = applyEvent(live, {
+    type: "message.updated",
+    conversationId: CONVERSATION,
+    message: agentMessage({ status: "done", runStatus: "completed", content: "最终回复", processTimeline: compactTimeline }),
+    settleTransientActivity: true,
+    excludedAnswerGroup: "response-9",
+  });
+  assert.equal(settled.messages[0]?.content, "最终回复");
+  assert.equal(settled.messages[0]?.status, "done");
+  assert.deepEqual(settled.messages[0]?.processTimeline, compactTimeline);
+  // 最终回答分片被剔除，过程叙述与工具明细保留。
+  assert.deepEqual(settled.messages[0]?.activity?.map((item) => item.type), ["process.text", "tool.started", "tool.completed"]);
+  assert.deepEqual(
+    buildProcessTimeline(settled.messages[0]?.activity, settled.messages[0]?.processTimeline)[0],
+    { kind: "text", text: "先检查。", timestamp: "2026-01-01T00:00:01.000Z", stream: "progress" },
+  );
+});
+
 test("persisted process timeline restores narration and compact tool groups in order", () => {
   const timeline = buildProcessTimeline(undefined, [
     { type: "text", text: "先检查。" },

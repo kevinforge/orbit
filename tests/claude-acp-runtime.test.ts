@@ -119,7 +119,8 @@ test("creates a Claude ACP session and advertises elicitation", async () => {
 
 test("keeps mid-turn answer text in the process timeline and settles the final group after tool calls", async () => {
   // Issue #139 回归：文本 → 工具调用 → 新文本。运行期间两段文本都按到达
-  // 顺序进入过程时间线；结算快照显式标记最终分组，快照文本不含最终回复。
+  // 顺序进入过程时间线；结算快照显式标记最终分组（RunManager 内部消化，
+  // 不转发前端），快照文本不含最终回复。
   const activities: AgentActivityEvent[] = [];
   const fake = fakeConnector({
     onPrompt(notify) {
