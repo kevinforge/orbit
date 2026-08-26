@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Orbit — 一个碳基，可以拥有一支硅基团队</title>
+<meta name="description" content="Orbit 是本地优先的多 Agent 工作台。一个碳基，可以拥有一支硅基团队：把 Claude Code、Codex 与 CodeBuddy 汇聚到同一个工作区和会话中，协同完成每一个目标。" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%236ee7d3' stroke-width='3'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<!-- 0. 顶栏 -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#top" aria-label="Orbit 首页">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Orbit</span>
+    </a>
+    <nav class="topnav" aria-label="主导航">
+      <a href="https://github.com/kevinforge/orbit">GitHub</a>
+      <a href="https://github.com/kevinforge/orbit#readme">快速上手</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/docs/ARCHITECTURE.md">文档</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/docs/TERMINOLOGY_AND_ROUTING.md">术语与路由</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/CONTRIBUTING.md">参与贡献</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<span id="top"></span>
+
+<!-- 1. Hero -->
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="container hero-inner">
+    <p class="kicker">本地优先的多 Agent 工作台</p>
+    <h1 id="hero-title" class="display-title">一个<span class="tone-carbon">碳基</span>，可以拥有一支<span class="tone-silicon">硅基团队</span></h1>
+    <p class="lede">
+      把 Claude Code、Codex 与 CodeBuddy 汇聚到同一个工作区和会话中，协同完成每一个目标。
+      Orbit 负责路由、队列、审批与历史，由你决定谁来做、何时交接。
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/kevinforge/orbit">在 GitHub 上查看</a>
+      <a class="btn btn-ghost" href="#quickstart">快速开始</a>
+    </div>
+
+    <!-- 命令卡 -->
+    <div class="cmd-card" aria-label="安装命令">
+      <div class="cmd-tabs" role="tablist" aria-label="安装方式">
+        <button role="tab" id="tab-quick" class="cmd-tab is-active" aria-selected="true" aria-controls="panel-quick" tabindex="0">快速安装</button>
+        <button role="tab" id="tab-source" class="cmd-tab" aria-selected="false" aria-controls="panel-source" tabindex="-1">从源码运行</button>
+      </div>
+      <div role="tabpanel" id="panel-quick" class="cmd-panel" aria-labelledby="tab-quick">
+        <code class="cmd-line"><span class="prompt">$</span> npm install -g @kevinforge/orbit</code>
+        <button type="button" class="copy-btn" data-copy="npm install -g @kevinforge/orbit" aria-label="复制快速安装命令">
+          <span class="copy-label">复制</span>
+        </button>
+        <p class="cmd-note">不要安装公开 npm 上那个无关的 <code>orbit</code> 包。</p>
+      </div>
+      <div role="tabpanel" id="panel-source" class="cmd-panel is-hidden" aria-labelledby="tab-source" hidden>
+        <code class="cmd-block"><span class="prompt">$</span> git clone https://github.com/kevinforge/orbit.git
+<span class="prompt">$</span> cd orbit
+<span class="prompt">$</span> npm ci
+<span class="prompt">$</span> npm run build
+<span class="prompt">$</span> npm run dev</code>
+        <button type="button" class="copy-btn" data-copy="git clone https://github.com/kevinforge/orbit.git
+cd orbit
+npm ci
+npm run build
+npm run dev" aria-label="复制从源码运行命令">
+          <span class="copy-label">复制</span>
+        </button>
+        <p class="cmd-note">随后在浏览器打开 <code>http://localhost:4317</code>。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. 核心理念：公式 + 三卡 -->
+<section class="section concept" aria-labelledby="concept-title">
+  <div class="container">
+    <p class="kicker">核心理念</p>
+    <h2 id="concept-title" class="section-title">协作 = <span class="tone-carbon">碳基判断</span> × <span class="tone-silicon">硅基行动</span></h2>
+    <p class="section-lede">
+      Orbit 把一个本地项目目录变成会话式协作工作台。你负责判断与方向，数字员工负责并行执行、交叉核验与结果交付。
+    </p>
+
+    <ul class="card-grid card-grid-3" role="list">
+      <li class="card">
+        <p class="card-kicker">ONE CONVERSATION</p>
+        <h3 class="card-title">一个会话，多个专家</h3>
+        <p class="card-text">目标、过程与结果保留在同一条可见的工作流里，不用在多个窗口之间复制上下文。</p>
+      </li>
+      <li class="card">
+        <p class="card-kicker">HUMAN-DIRECTED ROUTING</p>
+        <h3 class="card-title">由人控制路由</h3>
+        <p class="card-text">用 <code>@显示名称:</code> 明确指派；或不写指派，把目标交给内部监工协调启用的团队。</p>
+      </li>
+      <li class="card">
+        <p class="card-kicker">LOCAL-FIRST &amp; RECOVERABLE</p>
+        <h3 class="card-title">本地优先，执行可恢复</h3>
+        <p class="card-text">工作区、消息、会话与附件保存在本机 <code>~/.orbit</code>；每个员工独立排队，支持审批、取消与失败恢复。</p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- 3. 设计思路：交互 tabs -->
+<section class="section design" aria-labelledby="design-title">
+  <div class="container">
+    <p class="kicker">设计思路</p>
+    <h2 id="design-title" class="section-title">把协作过程留在可见的工作流里</h2>
+
+    <div class="design-layout">
+      <div class="design-tabs" role="tablist" aria-label="设计思路" aria-orientation="vertical">
+        <button role="tab" id="dtab-modes" class="design-tab is-active" aria-selected="true" aria-controls="dpanel-modes" tabindex="0">
+          <span class="design-tab-kicker">COLLABORATION MODES</span>
+          <span class="design-tab-title">协作模式</span>
+        </button>
+        <button role="tab" id="dtab-trace" class="design-tab" aria-selected="false" aria-controls="dpanel-trace" tabindex="-1">
+          <span class="design-tab-kicker">TRACEABLE PROCESS</span>
+          <span class="design-tab-title">过程可回看</span>
+        </button>
+        <button role="tab" id="dtab-runtime" class="design-tab" aria-selected="false" aria-controls="dpanel-runtime" tabindex="-1">
+          <span class="design-tab-kicker">HYBRID RUNTIMES</span>
+          <span class="design-tab-title">混合运行时</span>
+        </button>
+      </div>
+
+      <div class="design-panels">
+        <!-- 协作模式 -->
+        <div role="tabpanel" id="dpanel-modes" class="design-panel" aria-labelledby="dtab-modes">
+          <div class="mock" aria-label="协作模式选择示意">
+            <div class="mock-chrome">
+              <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+              <span class="mock-title">Orbit · 复杂协作</span>
+            </div>
+            <div class="mock-body">
+              <ul class="mode-list" role="list">
+                <li class="mode-item"><span class="mode-name">普通对话</span><span class="mode-desc">与一位员工聚焦沟通</span></li>
+                <li class="mode-item"><span class="mode-name">简单协作</span><span class="mode-desc">明确组织多个员工交接</span></li>
+                <li class="mode-item mode-item-active"><span class="mode-name">复杂协作</span><span class="mode-desc">目标交给监工拆解与收敛</span></li>
+              </ul>
+              <div class="mock-thread">
+                <div class="mock-msg mock-msg-user">把登录流程的改进合并发布并回报结果。</div>
+                <div class="mock-msg mock-msg-supervisor">已拆解为：方案评估 → 并行实现 + 回归清单 → 核验 → 汇总。</div>
+                <div class="mock-msg mock-msg-emp">@蔡一平: 实现修复。@田小坑: 准备回归检查清单。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 过程可回看 -->
+        <div role="tabpanel" id="dpanel-trace" class="design-panel is-hidden" aria-labelledby="dtab-trace" hidden>
+          <div class="mock" aria-label="过程回看示意">
+            <div class="mock-chrome">
+              <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+              <span class="mock-title">Orbit · 协作洞察</span>
+            </div>
+            <div class="mock-body">
+              <ul class="trace-list" role="list">
+                <li class="trace-item"><span class="trace-status trace-status-done">已完成</span><span class="trace-who">范同经</span><span class="trace-text">澄清范围与验收标准</span></li>
+                <li class="trace-item"><span class="trace-status trace-status-done">已完成</span><span class="trace-who">甄架构</span><span class="trace-text">提出实现方案</span></li>
+                <li class="trace-item"><span class="trace-status trace-status-running">进行中</span><span class="trace-who">蔡一平</span><span class="trace-text">修改文件并运行检查</span></li>
+                <li class="trace-item"><span class="trace-status trace-status-queued">排队中</span><span class="trace-who">田小坑</span><span class="trace-text">验证行为并报告回归</span></li>
+              </ul>
+              <p class="mock-caption">消息历史、运行时会话与终端记录持久化在 <code>~/.orbit</code>。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 混合运行时 -->
+        <div role="tabpanel" id="dpanel-runtime" class="design-panel is-hidden" aria-labelledby="dtab-runtime" hidden>
+          <div class="mock" aria-label="混合运行时示意">
+            <div class="mock-chrome">
+              <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+              <span class="mock-title">Orbit · 统一 ACP 运行时层</span>
+            </div>
+            <div class="mock-body">
+              <div class="runtime-diagram">
+                <div class="runtime-row">
+                  <span class="rt-chip">Claude Code</span>
+                  <span class="rt-chip">Codex</span>
+                  <span class="rt-chip">CodeBuddy</span>
+                </div>
+                <span class="rt-arrow" aria-hidden="true">↕</span>
+                <span class="rt-core">统一 ACP 适配层</span>
+                <span class="rt-arrow" aria-hidden="true">↕</span>
+                <span class="rt-store">本地消息存储 · ~/.orbit</span>
+              </div>
+              <p class="mock-caption">三种运行时都走 ACP v1（换行分隔的 JSON-RPC），运行时差异留在各自适配器内。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. 演示区：大标题 + GIF -->
+<section class="section showcase" aria-labelledby="showcase-title">
+  <div class="container">
+    <h2 id="showcase-title" class="display-title showcase-title">自定义你的 Orbit 数字员工团队</h2>
+    <p class="section-lede">
+      下方演示来自一次真实的复杂协作运行：监工拆解目标，多名数字员工并行调研，核验员工复核，最后在同一会话中汇总。
+    </p>
+    <figure class="demo-media" id="demo-container">
+      <img id="demo-media-el"
+           src="assets/orbit-complex-collaboration-demo.gif"
+           alt="Orbit 复杂协作演示：监工拆解任务、并行执行、核验与汇总的完整会话过程。"
+           aria-describedby="demo-caption" />
+      <figcaption id="demo-caption" class="demo-caption">
+        演示使用 Claude Code、Codex 与 CodeBuddy 的数字员工，在「复杂协作」模式下完成。演示工程与 Orbit 源码隔离，画面中不包含个人工作区信息。
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 5. 安装双卡 -->
+<section class="section install" id="quickstart" aria-labelledby="install-title">
+  <div class="container">
+    <p class="kicker">开始使用</p>
+    <h2 id="install-title" class="section-title">三分钟跑起来</h2>
+    <p class="section-lede">需要 Node.js 22 或更高版本，以及至少一个已登录的运行时。</p>
+
+    <ul class="card-grid card-grid-2" role="list">
+      <li class="card install-card">
+        <p class="card-kicker">QUICK INSTALL</p>
+        <h3 class="card-title">快速安装</h3>
+        <p class="card-text">通过 npm 全局安装并启动。</p>
+        <code class="cmd-block"><span class="prompt">$</span> npm install -g @kevinforge/orbit
+<span class="prompt">$</span> orbit</code>
+        <button type="button" class="copy-btn" data-copy="npm install -g @kevinforge/orbit
+orbit" aria-label="复制快速安装命令"><span class="copy-label">复制</span></button>
+        <p class="card-link">随后打开 <a href="http://localhost:4317">http://localhost:4317</a>。</p>
+      </li>
+      <li class="card install-card">
+        <p class="card-kicker">FROM SOURCE</p>
+        <h3 class="card-title">从源码运行</h3>
+        <p class="card-text">克隆仓库后本地构建并启动开发服务。</p>
+        <code class="cmd-block"><span class="prompt">$</span> git clone https://github.com/kevinforge/orbit.git
+<span class="prompt">$</span> cd orbit
+<span class="prompt">$</span> npm ci
+<span class="prompt">$</span> npm run build
+<span class="prompt">$</span> npm run dev</code>
+        <button type="button" class="copy-btn" data-copy="git clone https://github.com/kevinforge/orbit.git
+cd orbit
+npm ci
+npm run build
+npm run dev" aria-label="复制从源码运行命令"><span class="copy-label">复制</span></button>
+        <p class="card-link">或从 <a href="https://github.com/kevinforge/orbit/releases">GitHub Releases</a> 下载平台安装包。</p>
+      </li>
+    </ul>
+    <p class="install-tip">也可阅读 <a href="https://github.com/kevinforge/orbit/blob/main/docs/QUICKSTART.zh-CN.md">中文快速上手</a> 了解首次使用流程。</p>
+  </div>
+</section>
+
+<!-- 6. 尾部 CTA -->
+<section class="section cta" aria-labelledby="cta-title">
+  <div class="container cta-inner">
+    <h2 id="cta-title" class="section-title">现在，召集你的<span class="tone-silicon">硅基团队</span></h2>
+    <p class="section-lede">
+      用一个本地工程目录，搭起一支由你调度、可恢复、可审计的数字员工团队。
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/kevinforge/orbit">查看源码</a>
+      <a class="btn btn-ghost" href="https://github.com/kevinforge/orbit/issues">提交反馈</a>
+      <a class="btn btn-ghost" href="https://github.com/kevinforge/orbit/blob/main/CONTRIBUTING.md">参与贡献</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- 7. 页脚 -->
+<footer class="footer">
+  <div class="container footer-inner">
+    <nav class="footer-nav" aria-label="文档索引">
+      <a href="https://github.com/kevinforge/orbit/blob/main/docs/QUICKSTART.zh-CN.md">快速上手</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/docs/ARCHITECTURE.md">架构</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/docs/DATA_DIRECTORY.md">数据目录</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/docs/TERMINOLOGY_AND_ROUTING.md">术语与路由</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/docs/standalone-build.md">独立构建</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/CONTRIBUTING.md">贡献指南</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/SUPPORT.md">支持</a>
+      <a href="https://github.com/kevinforge/orbit/blob/main/SECURITY.md">安全</a>
+    </nav>
+    <p class="footer-meta">开源 · MIT · © 2026 Orbit</p>
+  </div>
+</footer>
+
+<script src="script.js" defer></script>
+</body>
+</html>
