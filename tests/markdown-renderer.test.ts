@@ -85,4 +85,54 @@ describe("renderMarkdown", () => {
     assert.ok(result.includes('href="https://example.com/x"'), `expected clean href in: ${result}`);
     assert.ok(result.includes(">文本</a>，"), `expected link text and stripped comma in: ${result}`);
   });
+
+  it("renders local drive hrefs as path entries instead of navigable links", () => {
+    const result = renderMarkdown("[styles.css](D:/projects/orbit/src/ui/styles.css)");
+    assert.ok(result.includes('data-path="D:/projects/orbit/src/ui/styles.css"'), `expected data-path entry in: ${result}`);
+    assert.ok(result.includes('class="localPathLink"'), `expected entry class in: ${result}`);
+    assert.ok(!result.includes("href="), `expected no href attribute in: ${result}`);
+    assert.ok(result.includes(">styles.css</span>"), `expected link text kept in: ${result}`);
+  });
+
+  it("strips file:/// prefixes from local path entries", () => {
+    const result = renderMarkdown("[查看](file:///D:/projects/orbit/src/ui/styles.css)");
+    assert.ok(result.includes('data-path="D:/projects/orbit/src/ui/styles.css"'), `expected file:/// stripped in: ${result}`);
+    assert.ok(!result.includes("file:"), `expected no file: scheme left in: ${result}`);
+  });
+
+  it("renders home-relative hrefs as path entries", () => {
+    const result = renderMarkdown("[文档](~/notes/README.md)");
+    assert.ok(result.includes('data-path="~/notes/README.md"'), `expected home-relative entry in: ${result}`);
+  });
+
+  it("recognizes bare Windows paths without swallowing adjacent CJK text", () => {
+    const result = renderMarkdown("修改了 D:\\orbit\\src\\ui\\App.tsx。请复核");
+    assert.ok(result.includes('data-path="D:\\orbit\\src\\ui\\App.tsx"'), `expected bare path entry in: ${result}`);
+    assert.ok(result.includes("</span>。"), `expected the CJK period kept as body text in: ${result}`);
+    assert.ok(result.includes("请复核"), `expected body text preserved in: ${result}`);
+  });
+
+  it("recognizes bare POSIX paths only with at least two segments", () => {
+    const posix = renderMarkdown("位于 /usr/local/bin/node 目录");
+    assert.ok(posix.includes('data-path="/usr/local/bin/node"'), `expected POSIX entry in: ${posix}`);
+    const single = renderMarkdown("接口 /api 是单段");
+    assert.ok(!single.includes("localPathLink"), `expected single-segment path untouched in: ${single}`);
+  });
+
+  it("does not treat slash-separated words as paths", () => {
+    const result = renderMarkdown("tcp/ip 和 and/or 都是普通词");
+    assert.ok(!result.includes("localPathLink"), `expected no path entry in: ${result}`);
+  });
+
+  it("keeps paths inside code spans as code", () => {
+    const result = renderMarkdown("`D:/quoted/a.txt` 是代码");
+    assert.ok(!result.includes("localPathLink"), `expected code span untouched in: ${result}`);
+    assert.ok(result.includes("<code>D:/quoted/a.txt</code>"), `expected code span in: ${result}`);
+  });
+
+  it("escapes quotes in path entry attributes to prevent attribute injection", () => {
+    const result = renderMarkdown('[x](D:/a"onmouseover="alert(1))');
+    assert.ok(result.includes('data-path="D:/a&quot;onmouseover=&quot;alert(1)"'), `expected escaped data-path in: ${result}`);
+    assert.ok(!result.includes('onmouseover="alert'), `expected no unescaped handler in: ${result}`);
+  });
 });

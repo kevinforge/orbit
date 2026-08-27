@@ -1,5 +1,5 @@
-import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { renderMarkdown } from "./markdown-renderer.ts";
+import { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
@@ -134,6 +134,7 @@ export function App() {
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
+  const [pathToast, setPathToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
@@ -404,6 +405,40 @@ export function App() {
     isNearBottomRef.current = near;
     setIsNearBottom(near);
     if (near) setShowNewMessageHint(false);
+  }
+
+  function showPathToast(message: string) {
+    setPathToast(message);
+    window.setTimeout(() => setPathToast(null), 3000);
+  }
+
+  // 消息区事件委托：markdown 渲染出的本地路径入口（issue #143）点击后调用
+  // /api/local-path/reveal 在资源管理器中定位；失败或越界时提示原因，并把
+  // 路径复制到剪贴板兜底。
+  async function handleMessagesClick(event: MouseEvent<HTMLDivElement>) {
+    const entry = (event.target as HTMLElement).closest<HTMLElement>(`.${LOCAL_PATH_LINK_CLASS}`);
+    if (!entry) return;
+    const path = entry.dataset.path;
+    if (!path) return;
+    let reason = "";
+    try {
+      const response = await fetch("/api/local-path/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (response.ok && data.ok) return;
+      reason = data.message ?? "无法在资源管理器中定位该路径";
+    } catch {
+      reason = "无法在资源管理器中定位该路径";
+    }
+    try {
+      await navigator.clipboard.writeText(path);
+      showPathToast(`${reason}（路径已复制）`);
+    } catch {
+      showPathToast(reason);
+    }
   }
 
   useLayoutEffect(() => {
@@ -1209,7 +1244,7 @@ export function App() {
           </div>
         </header>
 
-        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="消息列表" onScroll={handleMessagesScroll}>
+        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="消息列表" onScroll={handleMessagesScroll} onClick={(event) => { void handleMessagesClick(event); }}>
           {state.messageHistory.hasOlderMessages ? (
             <button
               className="loadOlderMessagesBtn"
@@ -1284,6 +1319,7 @@ export function App() {
         ) : null}
         {interruptToast ? <div className="interruptToast">{interruptToast}</div> : null}
         {attachmentToast ? <div className="attachmentToast">{attachmentToast}</div> : null}
+        {pathToast ? <div className="attachmentToast pathToast">{pathToast}</div> : null}
         {state.pendingPermissions.length > 0 ? (
           <div className="permissionApprovalStack" aria-live="polite">
             {state.pendingPermissions.map((permission) => (

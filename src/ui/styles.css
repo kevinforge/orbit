@@ -1508,6 +1508,21 @@ button:active:not(:disabled) {
   border-bottom-color: currentColor;
 }
 
+/* 本地路径入口（issue #143）：虚线下划线区分于外部链接，点击由消息区
+   事件委托转发到 /api/local-path/reveal。 */
+.markdown .localPathLink {
+  color: var(--accent);
+  cursor: pointer;
+  border-bottom: 1px dashed currentColor;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown .localPathLink:hover,
+.markdown .localPathLink:focus-visible {
+  color: var(--accent-hover);
+}
+
 .markdown strong {
   color: var(--text-primary);
   font-weight: 700;

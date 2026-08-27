@@ -31,6 +31,7 @@ import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 import { buildWorkspaceWorkAnalysis } from "./workspace-work-analysis.ts";
+import { resolveRevealTarget, revealInFileManager } from "./local-path-reveal.ts";
 
 const DEFAULT_PORT = 4317;
 const requestedPort = Number(process.env.ORBIT_PORT ?? DEFAULT_PORT);
@@ -875,6 +876,29 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --- Workspace endpoints ---
+
+    // 消息里的本地路径入口点击后在此定位（issue #143）。仅允许已配置工作区
+    // 内的路径；resolve 逻辑在 local-path-reveal.ts 中独立可测。
+    if (req.method === "POST" && url.pathname === "/api/local-path/reveal") {
+      const input = (await readJson(req)) as { path?: unknown };
+      if (typeof input.path !== "string") {
+        sendJson(res, 400, { ok: false, message: "path is required." });
+        return;
+      }
+      const roots = workspaceStore.list().map((ws) => ws.path);
+      const resolution = await resolveRevealTarget(input.path, roots);
+      if (!resolution.ok) {
+        sendJson(res, resolution.status, { ok: false, message: resolution.message });
+        return;
+      }
+      try {
+        await revealInFileManager(resolution.target, resolution.isDirectory);
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        sendJson(res, 500, { ok: false, message: `无法打开资源管理器：${err instanceof Error ? err.message : String(err)}` });
+      }
+      return;
+    }
 
     if (req.method === "POST" && url.pathname === "/api/workspaces/pick-directory") {
       try {
