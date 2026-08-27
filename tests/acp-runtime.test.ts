@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { InitializeResponse, PromptResponse, SessionNotification } from "@agentclientprotocol/sdk";
+import type {
+  InitializeResponse,
+  PromptResponse,
+  SessionConfigOption,
+  SessionConfigSelectOptions,
+  SessionNotification,
+  SetSessionConfigOptionResponse,
+} from "@agentclientprotocol/sdk";
 
 import {
   CANCEL_GRACE_MS,
@@ -12,7 +19,7 @@ import {
   type AcpRuntimeDefinition,
 } from "../src/core/acp-runtime.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
-import type { AgentActivityEvent } from "../src/shared/types.ts";
+import type { AgentActivityEvent, AgentModelStateSnapshot } from "../src/shared/types.ts";
 
 // Issue #136：公共 ACP 取消生命周期。优雅取消走 session/cancel；runtime 无视
 // 取消且 prompt 永不结算时，宽限期后强制销毁连接并收口结果。超时用假定时器
@@ -32,6 +39,10 @@ type FakeConnectionControls = {
   resumeError?: Error;
   secondResumeError?: Error;
   answerText?: string;
+  // issue #142：会话建立响应携带的 config options 与 set_config_option 行为。
+  sessionConfigOptions?: Array<SessionConfigOption>;
+  setConfigOptionError?: Error;
+  setConfigOptionConfigOptions?: Array<SessionConfigOption>;
 };
 
 function fakeConnector(controls: FakeConnectionControls = {}) {
@@ -59,18 +70,29 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
       },
       async newSession() {
         calls.push(`session/new:${connectionSpawn}`);
-        return { sessionId: connectionSpawn === 1 ? "fake-session" : `fake-session-${connectionSpawn}` };
+        return {
+          sessionId: connectionSpawn === 1 ? "fake-session" : `fake-session-${connectionSpawn}`,
+          ...(controls.sessionConfigOptions ? { configOptions: controls.sessionConfigOptions } : {}),
+        };
       },
       async loadSession(request) {
         calls.push(`session/load:${request.sessionId}`);
+        return controls.sessionConfigOptions ? { configOptions: controls.sessionConfigOptions } : {};
       },
       async resumeSession(request) {
         calls.push(`session/resume:${connectionSpawn}:${request.sessionId}`);
         const error = connectionSpawn === 1 ? controls.resumeError : controls.secondResumeError;
         if (error) throw error;
+        return controls.sessionConfigOptions ? { configOptions: controls.sessionConfigOptions } : {};
       },
       hasSession(sessionId: string) {
         return sessionId === "resumed-session";
+      },
+      async setConfigOption(request) {
+        calls.push(`session/set_config_option:${request.sessionId}:${request.configId}:${request.value}`);
+        if (controls.setConfigOptionError) throw controls.setConfigOptionError;
+        const configOptions = controls.setConfigOptionConfigOptions ?? controls.sessionConfigOptions ?? [];
+        return { configOptions } satisfies SetSessionConfigOptionResponse;
       },
       prompt(request: { sessionId: string }) {
         calls.push(`session/prompt:${request.sessionId}`);
@@ -388,4 +410,217 @@ test("an unexpected process exit rejects pending requests with pid diagnostics",
   } finally {
     connection.destroy?.();
   }
+});
+
+// ---- issue #142：员工首选模型的惰性应用 ----
+
+function modelOption(overrides: {
+  currentValue?: string;
+  options?: SessionConfigSelectOptions;
+} = {}): SessionConfigOption {
+  return {
+    id: "model",
+    name: "Model",
+    type: "select",
+    category: "model",
+    currentValue: overrides.currentValue ?? "model-a",
+    options: overrides.options ?? [
+      { value: "model-a", name: "模型 A" },
+      { value: "model-b", name: "模型 B" },
+    ],
+  };
+}
+
+test("applies the preferred model after the session is established", async () => {
+  const fake = fakeConnector({
+    answerText: "hello",
+    sessionConfigOptions: [modelOption()],
+    setConfigOptionConfigOptions: [modelOption({ currentValue: "model-b" })],
+  });
+  const notices: string[] = [];
+  const snapshots: AgentModelStateSnapshot[] = [];
+  const handle = runAcp(
+    runOptions({
+      preferredModelId: "model-b",
+      onActivity: (activity: AgentActivityEvent) => { if (activity.type === "process.text") notices.push(activity.text); },
+      onSessionConfig: (snapshot: AgentModelStateSnapshot) => snapshots.push(snapshot),
+    }),
+    definition,
+    fake.connector,
+  );
+  await handle.result;
+
+  assert.ok(
+    fake.calls.includes("session/set_config_option:fake-session:model:model-b"),
+    `set_config_option must be issued before the prompt, got: ${fake.calls.join(", ")}`,
+  );
+  assert.ok(fake.calls.indexOf("session/set_config_option:fake-session:model:model-b") < fake.calls.indexOf("session/prompt:fake-session"));
+  assert.ok(notices.some((text) => text.includes("模型已切换为 模型 B")), "切换提示走过程叙述流对用户可见");
+  assert.equal(snapshots.length, 2, "建立时与切换后各回调一次快照");
+  assert.equal(snapshots[0]!.currentValue, "model-a");
+  assert.equal(snapshots[1]!.currentValue, "model-b");
+  assert.deepEqual(snapshots[0]!.choices, [
+    { value: "model-a", name: "模型 A" },
+    { value: "model-b", name: "模型 B" },
+  ]);
+});
+
+test("keeps the current model when the preferred value is unavailable", async () => {
+  const fake = fakeConnector({ answerText: "hello", sessionConfigOptions: [modelOption()] });
+  const notices: string[] = [];
+  const handle = runAcp(
+    runOptions({
+      preferredModelId: "missing-model",
+      onActivity: (activity: AgentActivityEvent) => { if (activity.type === "process.text") notices.push(activity.text); },
+    }),
+    definition,
+    fake.connector,
+  );
+  const answer = await handle.result;
+
+  assert.equal(answer, "hello");
+  assert.ok(!fake.calls.some((call) => call.startsWith("session/set_config_option:")));
+  assert.ok(notices.some((text) => text.includes("首选模型 missing-model 当前不可用")));
+  assert.ok(notices.some((text) => text.includes("继续使用 模型 A")));
+});
+
+test("a failed model switch only warns and never fails the run", async () => {
+  const fake = fakeConnector({
+    answerText: "hello",
+    sessionConfigOptions: [modelOption()],
+    setConfigOptionError: new Error("model backend offline"),
+  });
+  const notices: string[] = [];
+  const handle = runAcp(
+    runOptions({
+      preferredModelId: "model-b",
+      onActivity: (activity: AgentActivityEvent) => { if (activity.type === "process.text") notices.push(activity.text); },
+    }),
+    definition,
+    fake.connector,
+  );
+  const answer = await handle.result;
+
+  assert.equal(answer, "hello");
+  assert.ok(notices.some((text) => text.includes("模型切换失败") && text.includes("model backend offline")));
+});
+
+test("snapshots model choices without switching when no preference is set", async () => {
+  const fake = fakeConnector({ answerText: "hello", sessionConfigOptions: [modelOption()] });
+  const snapshots: AgentModelStateSnapshot[] = [];
+  const handle = runAcp(
+    runOptions({ onSessionConfig: (snapshot: AgentModelStateSnapshot) => snapshots.push(snapshot) }),
+    definition,
+    fake.connector,
+  );
+  await handle.result;
+
+  assert.ok(!fake.calls.some((call) => call.startsWith("session/set_config_option:")));
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]!.agentId, "developer");
+  assert.equal(snapshots[0]!.runtimeKind, "codebuddy");
+  assert.equal(snapshots[0]!.configId, "model");
+});
+
+test("re-applies the preference on pooled-connection reuse via the last snapshot", async () => {
+  // 池复用捷径：hasSession 命中时不发任何会话 RPC，也没有新快照；必须用
+  // 上一次运行的快照补发一次幂等 set_config_option。
+  const fake = fakeConnector({
+    answerText: "hello",
+    setConfigOptionConfigOptions: [modelOption({ currentValue: "model-b" })],
+  });
+  const last: AgentModelStateSnapshot = {
+    agentId: "developer",
+    runtimeKind: "codebuddy",
+    configId: "model",
+    choices: [
+      { value: "model-a", name: "模型 A" },
+      { value: "model-b", name: "模型 B" },
+    ],
+    currentValue: "model-a",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const snapshots: AgentModelStateSnapshot[] = [];
+  const handle = runAcp(
+    runOptions({
+      resumeSessionId: "resumed-session",
+      preferredModelId: "model-b",
+      lastSessionConfig: last,
+      onSessionConfig: (snapshot: AgentModelStateSnapshot) => snapshots.push(snapshot),
+    }),
+    definition,
+    fake.connector,
+  );
+  await handle.result;
+
+  assert.ok(
+    fake.calls.includes("session/set_config_option:resumed-session:model:model-b"),
+    `pooled reuse must still issue set_config_option, got: ${fake.calls.join(", ")}`,
+  );
+  assert.ok(!fake.calls.some((call) => call.startsWith("session/resume:")), "hasSession 命中时不得重发 resume");
+  assert.equal(snapshots.at(-1)?.currentValue, "model-b");
+});
+
+test("skips model handling entirely without config options or a usable snapshot", async () => {
+  const fake = fakeConnector({ answerText: "hello" });
+  const handle = runAcp(
+    runOptions({ resumeSessionId: "resumed-session", preferredModelId: "model-b" }),
+    definition,
+    fake.connector,
+  );
+  await handle.result;
+
+  assert.ok(!fake.calls.some((call) => call.startsWith("session/set_config_option:")));
+});
+
+test("flattens grouped select options into model choices", async () => {
+  const fake = fakeConnector({
+    answerText: "hello",
+    sessionConfigOptions: [
+      modelOption({
+        options: [
+          {
+            group: "premium",
+            name: "高级",
+            options: [{ value: "model-b", name: "模型 B" }],
+          },
+        ],
+      }),
+    ],
+  });
+  const snapshots: AgentModelStateSnapshot[] = [];
+  const handle = runAcp(
+    runOptions({ onSessionConfig: (snapshot: AgentModelStateSnapshot) => snapshots.push(snapshot) }),
+    definition,
+    fake.connector,
+  );
+  await handle.result;
+
+  assert.deepEqual(snapshots[0]!.choices, [{ value: "model-b", name: "模型 B" }]);
+});
+
+test("refreshes the snapshot on config_option_update notifications", async (t) => {
+  // CodeBuddy 会在运行中主动推送配置变化（Phase 0 实测），通知必须刷新快照。
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fake = fakeConnector({ hangPrompt: true });
+  const snapshots: AgentModelStateSnapshot[] = [];
+  const handle = runAcp(
+    runOptions({ onSessionConfig: (snapshot: AgentModelStateSnapshot) => snapshots.push(snapshot) }),
+    definition,
+    fake.connector,
+  );
+  await handle.sessionId;
+  // sessionId 落定时 turn 还在 applyPreferredModel 的 await 上，让出宏任务
+  // 确保 acceptingUpdates 已置位再发通知。
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  fake.emitSessionUpdate({
+    sessionUpdate: "config_option_update",
+    configOptions: [modelOption({ currentValue: "model-b" })],
+  });
+  assert.equal(snapshots.at(-1)?.currentValue, "model-b");
+
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+  await assert.rejects(handle.result, AgentRunCancelledError);
 });

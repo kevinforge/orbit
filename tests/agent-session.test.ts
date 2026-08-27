@@ -8,6 +8,7 @@ import { AgentSession } from "../src/core/agent-session.ts";
 import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
+import type { AgentModelStateSnapshot } from "../src/shared/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-agent-session-test-"));
@@ -901,4 +902,49 @@ test("expires pending elicitation requests and ignores late responses", async ()
 
   finishRun("clean final");
   await sendPromise;
+});
+
+// ---- issue #142：模型偏好与快照桥流转 ----
+
+test("model preference and snapshot bridge reach the runtime run options", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const controlled = controllableRuntime("ok", "sess-1");
+  const lastSnapshot: AgentModelStateSnapshot = {
+    agentId: "developer",
+    runtimeKind: "codebuddy",
+    configId: "model",
+    choices: [{ value: "model-a", name: "模型 A" }, { value: "model-b", name: "模型 B" }],
+    currentValue: "model-a",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const updates: AgentModelStateSnapshot[] = [];
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: controlled.runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "conv-model",
+    preferredModelId: "model-b",
+    modelState: {
+      load: (agentId) => (agentId === "developer" ? lastSnapshot : undefined),
+      update: (snapshot) => updates.push(snapshot),
+    },
+  });
+  session.start();
+
+  const result = await session.send("run-1", "hello");
+  assert.equal(result.content, "ok");
+  assert.equal(controlled.calls.length, 1);
+  assert.equal(controlled.calls[0]!.preferredModelId, "model-b");
+  assert.equal(controlled.calls[0]!.lastSessionConfig, lastSnapshot);
+  assert.equal(typeof controlled.calls[0]!.onSessionConfig, "function");
+
+  const next = { ...lastSnapshot, currentValue: "model-b" };
+  controlled.calls[0]!.onSessionConfig!(next);
+  assert.deepEqual(updates, [next]);
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });

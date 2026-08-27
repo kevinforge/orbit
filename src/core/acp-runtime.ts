@@ -17,6 +17,7 @@ import {
   type InitializeRequest,
   type InitializeResponse,
   type LoadSessionRequest,
+  type LoadSessionResponse,
   type NewSessionRequest,
   type NewSessionResponse,
   type PromptRequest,
@@ -24,7 +25,12 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type ResumeSessionRequest,
+  type ResumeSessionResponse,
+  type SessionConfigOption,
+  type SessionConfigSelectOptions,
   type SessionNotification,
+  type SetSessionConfigOptionRequest,
+  type SetSessionConfigOptionResponse,
   type ToolCallStatus,
   type ToolKind,
 } from "@agentclientprotocol/sdk";
@@ -33,6 +39,8 @@ import type {
   AgentActivityEvent,
   AgentElicitationRequest,
   AgentId,
+  AgentModelChoice,
+  AgentModelStateSnapshot,
   AgentRuntimeKind,
 } from "../shared/types.ts";
 import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunHandle, type AgentRuntimeRunOptions } from "./agent-runtime.ts";
@@ -56,8 +64,9 @@ export type AcpConnection = {
   readonly pid: number;
   initialize(request: InitializeRequest): Promise<InitializeResponse>;
   newSession(request: NewSessionRequest): Promise<NewSessionResponse>;
-  loadSession(request: LoadSessionRequest): Promise<void>;
-  resumeSession(request: ResumeSessionRequest): Promise<void>;
+  loadSession(request: LoadSessionRequest): Promise<LoadSessionResponse>;
+  resumeSession(request: ResumeSessionRequest): Promise<ResumeSessionResponse>;
+  setConfigOption(request: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse>;
   prompt(request: PromptRequest): Promise<PromptResponse>;
   cancel(sessionId: string): Promise<void>;
   hasSession?(sessionId: string): boolean;
@@ -270,6 +279,7 @@ export function runAcp(
           url: {},
         },
         plan: {},
+        session: { configOptions: {} },
       },
       clientInfo: { name: "Orbit", version: "1.0.0" },
     } satisfies InitializeRequest;
@@ -277,7 +287,7 @@ export function runAcp(
       const initialized = await connection.initialize(initializeRequest);
       validateInitializeResponse(initialized, definition.displayName);
 
-      activeSessionId = await restoreOrRecoverSession(
+      const session = await restoreOrRecoverSession(
         connection,
         options,
         definition,
@@ -289,7 +299,14 @@ export function runAcp(
           return connection;
         },
       );
+      activeSessionId = session.sessionId;
       resolveSessionId(activeSessionId);
+
+      // 会话建立后、prompt 前：先回调模型快照，再尽力应用员工首选模型
+      // （issue #142）。切换失败只输出过程提示，绝不让运行失败。
+      if (!cancelled && !forcedCancelled) {
+        await applyPreferredModel(connection, activeSessionId, options, definition, session.configOptions);
+      }
 
       acceptingUpdates = !forcedCancelled;
       const response = await connection.prompt({
@@ -357,21 +374,28 @@ export function runAcp(
   };
 }
 
+/** 会话建立结果：sessionId 加上本次建立路径拿到的 config options 快照。 */
+export type AcpSessionSetup = {
+  sessionId: string;
+  configOptions: Array<SessionConfigOption> | null | undefined;
+};
+
 async function prepareSession(
   connection: AcpConnection,
   capabilities: AgentCapabilities | undefined,
   cwd: string,
   existingSessionId?: string,
   displayName = "Agent",
-): Promise<string> {
+): Promise<AcpSessionSetup> {
   const absoluteCwd = path.resolve(cwd);
   if (!existingSessionId) {
     const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
-    return created.sessionId;
+    return { sessionId: created.sessionId, configOptions: created.configOptions };
   }
 
   if (connection.hasSession?.(existingSessionId)) {
-    return existingSessionId;
+    // 池复用捷径：不发任何 RPC，没有新快照；调用方用上一次快照补发模型偏好。
+    return { sessionId: existingSessionId, configOptions: undefined };
   }
 
   const request = {
@@ -380,12 +404,12 @@ async function prepareSession(
     mcpServers: [],
   };
   if (capabilities?.sessionCapabilities?.resume) {
-    await connection.resumeSession(request satisfies ResumeSessionRequest);
-    return existingSessionId;
+    const resumed = await connection.resumeSession(request satisfies ResumeSessionRequest);
+    return { sessionId: existingSessionId, configOptions: resumed.configOptions };
   }
   if (capabilities?.loadSession) {
-    await connection.loadSession(request);
-    return existingSessionId;
+    const loaded = await connection.loadSession(request);
+    return { sessionId: existingSessionId, configOptions: loaded.configOptions };
   }
 
   throw new Error(
@@ -433,11 +457,11 @@ async function restoreOrRecoverSession(
   capabilities: AgentCapabilities | undefined,
   initializeRequest: InitializeRequest,
   reconnect: () => AcpConnection,
-): Promise<string> {
+): Promise<AcpSessionSetup> {
   const absoluteCwd = path.resolve(options.cwd);
   if (!options.resumeSessionId) {
     const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
-    return created.sessionId;
+    return { sessionId: created.sessionId, configOptions: created.configOptions };
   }
   try {
     return await prepareSession(connection, capabilities, options.cwd, options.resumeSessionId, definition.displayName);
@@ -449,7 +473,7 @@ async function restoreOrRecoverSession(
       const replacement = reconnect();
       const reinitialized = await replacement.initialize(initializeRequest);
       validateInitializeResponse(reinitialized, definition.displayName);
-      const sessionId = await prepareSession(
+      const setup = await prepareSession(
         replacement,
         reinitialized.agentCapabilities,
         options.cwd,
@@ -457,15 +481,120 @@ async function restoreOrRecoverSession(
         definition.displayName,
       );
       options.onOutput?.(`${definition.displayName} 会话恢复时连接中断，已在新连接上恢复原会话。`);
-      return sessionId;
+      return setup;
     }
 
     const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
     options.onOutput?.(
       `原 ${definition.displayName} 会话无法恢复（${summarizeRestoreFailure(error)}），已使用新的会话继续。`,
     );
-    return created.sessionId;
+    return { sessionId: created.sessionId, configOptions: created.configOptions };
   }
+}
+
+/**
+ * 从 runtime 返回的 config options 中抽取模型选择快照（issue #142）。只认
+ * category 为 "model" 的 select 选项；configOptions 缺失（runtime 未返回配置）
+ * 时返回 null，不产生快照。runtime 返回了配置但没有模型选项时给出空列表，
+ * 调用方据此隐藏模型选择器。
+ */
+export function toModelSnapshot(
+  configOptions: Array<SessionConfigOption> | null | undefined,
+  options: AcpRunOptions,
+  definition: AcpRuntimeDefinition,
+): AgentModelStateSnapshot | null {
+  if (!configOptions) return null;
+  const modelOption = configOptions.find(
+    (option): option is Extract<SessionConfigOption, { type: "select" }> =>
+      option.type === "select" && option.category === "model",
+  );
+  return {
+    agentId: options.agentId,
+    runtimeKind: definition.kind,
+    configId: modelOption?.id ?? "",
+    choices: modelOption ? flattenModelChoices(modelOption.options) : [],
+    currentValue: modelOption?.currentValue,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function flattenModelChoices(values: SessionConfigSelectOptions): AgentModelChoice[] {
+  const choices: AgentModelChoice[] = [];
+  for (const value of values) {
+    if ("value" in value) {
+      choices.push({ value: value.value, name: value.name });
+      continue;
+    }
+    for (const inner of value.options) {
+      choices.push({ value: inner.value, name: inner.name });
+    }
+  }
+  return choices;
+}
+
+function modelLabel(snapshot: { choices: AgentModelChoice[] }, value: string): string {
+  return snapshot.choices.find((choice) => choice.value === value)?.name || value;
+}
+
+/**
+ * 会话建立后、prompt 前应用员工首选模型（issue #142）。模型切换是尽力而为的
+ * 过程提示：runtime 不提供模型选项、首选值不在列表或切换失败时都只提示并继续
+ * 用当前模型，绝不新建会话、绝不让运行失败。
+ *
+ * 池复用捷径（hasSession 命中，本次没有响应可读）没有新快照，改用上一次运行
+ * 的快照（lastSessionConfig）无条件幂等下发 set_config_option。
+ */
+async function applyPreferredModel(
+  connection: AcpConnection,
+  sessionId: string,
+  options: AcpRunOptions,
+  definition: AcpRuntimeDefinition,
+  configOptions: Array<SessionConfigOption> | null | undefined,
+): Promise<void> {
+  const snapshot = toModelSnapshot(configOptions, options, definition);
+  if (snapshot) options.onSessionConfig?.(snapshot);
+  const preferred = options.preferredModelId?.trim();
+  if (!preferred) return;
+
+  const last = options.lastSessionConfig;
+  const reference =
+    snapshot
+    ?? (last && last.runtimeKind === definition.kind && last.agentId === options.agentId ? last : null);
+  if (!reference || !reference.configId || reference.choices.length === 0) return;
+
+  if (reference.currentValue === preferred) return;
+  if (!reference.choices.some((choice) => choice.value === preferred)) {
+    const current = reference.currentValue ? modelLabel(reference, reference.currentValue) : "默认模型";
+    emitModelNotice(
+      options,
+      `${definition.displayName} 首选模型 ${modelLabel(reference, preferred)} 当前不可用，继续使用 ${current}。`,
+    );
+    return;
+  }
+
+  try {
+    const response = await connection.setConfigOption({
+      sessionId,
+      configId: reference.configId,
+      value: preferred,
+    });
+    const updated = toModelSnapshot(response.configOptions, options, definition);
+    if (updated) options.onSessionConfig?.(updated);
+    emitModelNotice(options, `${definition.displayName} 模型已切换为 ${modelLabel(updated ?? reference, preferred)}。`);
+  } catch (error) {
+    emitModelNotice(
+      options,
+      `${definition.displayName} 模型切换失败（${summarizeRestoreFailure(error)}），继续使用当前模型。`,
+    );
+  }
+}
+
+/**
+ * 模型切换提示走过程叙述流（process.text）：在回复卡片的过程区可见并随消息
+ * 持久化，不混入最终回复正文，也不会被 terminal 噪声分类降级成通用状态。
+ */
+function emitModelNotice(options: AcpRunOptions, text: string): void {
+  options.onActivity?.({ type: "process.text", text, timestamp: new Date().toISOString(), stream: "progress" });
 }
 
 function validateInitializeResponse(response: InitializeResponse, displayName: string): void {
@@ -530,6 +659,12 @@ function handleSessionUpdate(
 ): void {
   const update = notification.update;
   definition.observeSessionUpdate?.(update, turnState);
+  if (update.sessionUpdate === "config_option_update") {
+    // 部分运行时（如 CodeBuddy）会在运行中主动推送配置变化；刷新模型快照即可。
+    const snapshot = toModelSnapshot(update.configOptions, options, definition);
+    if (snapshot) options.onSessionConfig?.(snapshot);
+    return;
+  }
   if (update.sessionUpdate === "plan") {
     emitActivity(options, {
       type: "plan.updated",
@@ -1107,12 +1242,9 @@ function connectionFromProcess(
     pid,
     initialize: (params) => request(acp.agent.request(methods.agent.initialize, params)),
     newSession: (params) => request(acp.agent.request(methods.agent.session.new, params)),
-    loadSession: async (params) => {
-      await request(acp.agent.request(methods.agent.session.load, params));
-    },
-    resumeSession: async (params) => {
-      await request(acp.agent.request(methods.agent.session.resume, params));
-    },
+    loadSession: (params) => request(acp.agent.request(methods.agent.session.load, params)),
+    resumeSession: (params) => request(acp.agent.request(methods.agent.session.resume, params)),
+    setConfigOption: (params) => request(acp.agent.request(methods.agent.session.setConfigOption, params)),
     prompt: (params) => request(acp.agent.request(methods.agent.session.prompt, params)),
     cancel: (sessionId) => request(acp.agent.notify(methods.agent.session.cancel, { sessionId })),
     close,

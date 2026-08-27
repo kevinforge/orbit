@@ -131,13 +131,16 @@ export class AcpConnectionPool {
         return created;
       },
       loadSession: async (request) => {
-        await entry.connection.loadSession(request);
+        const loaded = await entry.connection.loadSession(request);
         entry.sessions.add(request.sessionId);
+        return loaded;
       },
       resumeSession: async (request) => {
-        await entry.connection.resumeSession(request);
+        const resumed = await entry.connection.resumeSession(request);
         entry.sessions.add(request.sessionId);
+        return resumed;
       },
+      setConfigOption: (request) => entry.connection.setConfigOption(request),
       prompt: (request) => entry.connection.prompt(request),
       cancel: (sessionId) => entry.connection.cancel(sessionId),
       hasSession: (sessionId) => entry.sessions.has(sessionId),

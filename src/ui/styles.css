@@ -4184,6 +4184,59 @@ button:active:not(:disabled) {
   color: var(--secondary);
 }
 
+/* 员工模型选择区（issue #142）：runtime 上报的模型单选列表 */
+.modelField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modelChoiceList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modelChoice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.modelChoice:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.modelChoiceActive {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+  font-weight: 600;
+}
+
+.modelChoice input[type="radio"] {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.modelHint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.modelHintWarn {
+  color: var(--secondary);
+}
+
 .runtimeRefreshBtn {
   display: inline-flex;
   align-items: center;

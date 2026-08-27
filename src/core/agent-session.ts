@@ -1,6 +1,7 @@
 import type {
   AgentElicitationRequest,
   AgentId,
+  AgentModelStateSnapshot,
   AgentPermissionRequest,
   AgentStatus,
   ApprovalMode,
@@ -16,6 +17,15 @@ import { isCleanFinalAnswer } from "./claude-output-detector.ts";
 import { EventBus } from "./event-bus.ts";
 import type { SessionRecord, SessionStore } from "./session-store.ts";
 
+/**
+ * 模型快照桥（issue #142）：运行开始前读最近快照（池复用捷径补发偏好用），
+ * runtime 返回或切换模型后回写。由服务层提供，写穿到 workspace 级存储。
+ */
+export type AgentModelStateBridge = {
+  load(agentId: AgentId): AgentModelStateSnapshot | undefined;
+  update(snapshot: AgentModelStateSnapshot): void;
+};
+
 export type AgentSessionOptions = {
   id: AgentId;
   label: string;
@@ -26,6 +36,8 @@ export type AgentSessionOptions = {
   sessionStore: SessionStore;
   conversationId: string;
   interactionTimeoutMs?: number;
+  preferredModelId?: string;
+  modelState?: AgentModelStateBridge;
 };
 
 type ActiveRun = {
@@ -204,6 +216,12 @@ export class AgentSession {
       approvalMode,
       resumeSessionId,
       imagePaths,
+      // 模型偏好（issue #142）：每次运行开始时读最近快照并惰性应用。
+      preferredModelId: this.options.preferredModelId,
+      lastSessionConfig: this.options.modelState?.load(this.id),
+      onSessionConfig: this.options.modelState
+        ? (snapshot) => this.options.modelState!.update(snapshot)
+        : undefined,
       requestPermission: (request) => this.requestPermission(runId, request),
       requestElicitation: (request) => this.requestElicitation(runId, request),
       onOutput: (text) => {

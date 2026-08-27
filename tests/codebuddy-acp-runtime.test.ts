@@ -43,14 +43,20 @@ function fakeConnector(options: FakeOptions = {}) {
     async loadSession(request) {
       calls.push({ method: "session/load", value: request });
       options.onLoad?.(notify);
+      return {};
     },
     async resumeSession(request) {
       calls.push({ method: "session/resume", value: request });
+      return {};
     },
     async prompt(request) {
       calls.push({ method: "session/prompt", value: request });
       options.onPrompt?.(notify);
       return options.promptResponse ?? { stopReason: cancelled ? "cancelled" : "end_turn" };
+    },
+    async setConfigOption(request) {
+      calls.push({ method: "session/set_config_option", value: request });
+      return { configOptions: [] };
     },
     async cancel(sessionId) {
       cancelled = true;
@@ -419,8 +425,9 @@ test("rejects incompatible ACP protocol versions", async () => {
     pid: 12345,
     async initialize() { return { protocolVersion: 2 }; },
     async newSession() { return { sessionId: "unused" }; },
-    async loadSession() {},
-    async resumeSession() {},
+    async loadSession() { return {}; },
+    async resumeSession() { return {}; },
+    async setConfigOption() { return { configOptions: [] }; },
     async prompt() { return { stopReason: "end_turn" }; },
     async cancel() {},
     close() {},

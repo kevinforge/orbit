@@ -39,14 +39,20 @@ function fakeConnector(options: FakeOptions = {}) {
     async loadSession(request) {
       calls.push({ method: "session/load", value: request });
       options.onLoad?.(notify);
+      return {};
     },
     async resumeSession(request) {
       calls.push({ method: "session/resume", value: request });
+      return {};
     },
     async prompt(request) {
       calls.push({ method: "session/prompt", value: request });
       options.onPrompt?.(notify);
       return options.promptResponse ?? { stopReason: "end_turn" };
+    },
+    async setConfigOption(request) {
+      calls.push({ method: "session/set_config_option", value: request });
+      return { configOptions: [] };
     },
     async cancel(sessionId) {
       calls.push({ method: "session/cancel", value: sessionId });

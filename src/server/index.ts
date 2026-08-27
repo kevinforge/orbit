@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { configsToProfiles } from "../core/agent-profiles.ts";
 import { disposeAcpConnectionPool } from "../core/acp-runtime.ts";
 import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
+import { AgentModelStateStore } from "../core/agent-model-state-store.ts";
 import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { WorkspaceConfigStore } from "../core/workspace-config-store.ts";
@@ -22,7 +23,7 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import type { AgentConfigWithModelState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
 import { isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
@@ -62,6 +63,7 @@ const eventBus = new EventBus();
 const sseHub = new SseHub();
 const workspaceStore = new WorkspaceStore();
 const configStore = new AgentConfigStore();
+const agentModelStateStore = new AgentModelStateStore();
 const workspaceConfigStore = new WorkspaceConfigStore();
 const globalConfigStore = new GlobalConfigStore();
 const attachmentStore = new AttachmentStore(path.join(os.homedir(), ".orbit"));
@@ -279,6 +281,15 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
     interactionMode: conversation?.interactionMode,
     supervisionRuntime: conversation?.supervisionRuntime,
     lastDirectAgentId: conversation?.lastDirectAgentId,
+    // 模型快照桥（issue #142）：runtime 返回的模型列表/当前值写穿到 workspace
+    // 级存储，同时广播给 UI；读取供池复用捷径补发偏好。
+    modelState: {
+      load: (agentId) => agentModelStateStore.get(workspaceId, agentId),
+      update: (snapshot) => {
+        agentModelStateStore.update(workspaceId, snapshot);
+        sseHub.publish({ type: "agent.model_state", workspaceId, agentId: snapshot.agentId, modelState: snapshot });
+      },
+    },
     onConversationPatch: (patch) => {
       try {
         const store = workspaceId === activeWorkspaceId ? conversationStore : new ConversationStore();
@@ -740,7 +751,13 @@ const server = http.createServer(async (req, res) => {
 
     // Agents
     if (req.method === "GET" && url.pathname === "/api/agents") {
-      sendJson(res, 200, allConfigs);
+      // 合并 workspace 级模型快照（issue #142）：模型列表/当前值由 runtime 在
+      // 运行时写入独立存储，agents.json 只保存用户偏好。
+      const modelStates = activeWorkspaceId ? agentModelStateStore.load(activeWorkspaceId) : {};
+      sendJson(res, 200, allConfigs.map((config) => ({
+        ...config,
+        modelState: modelStates[config.id],
+      })));
       return;
     }
 
@@ -1561,7 +1578,7 @@ async function handlePutAgents(req: http.IncomingMessage, res: http.ServerRespon
     return;
   }
 
-  const input = (await readJson(req)) as AgentConfig[];
+  const input = (await readJson(req)) as AgentConfigWithModelState[];
   if (!Array.isArray(input)) {
     sendJson(res, 400, { ok: false, message: "Request body must be an array of agent configs." });
     return;
@@ -1573,10 +1590,15 @@ async function handlePutAgents(req: http.IncomingMessage, res: http.ServerRespon
     return;
   }
 
-  allConfigs = input;
+  // modelState 是 GET 响应合并的运行时快照，保存前剥离，避免污染 agents.json。
+  allConfigs = input.map(({ modelState: _modelState, ...config }) => config);
   configStore.save(activeWorkspaceId, allConfigs);
   refreshEnabledAgents();
-  sendJson(res, 200, allConfigs);
+  const modelStates = agentModelStateStore.load(activeWorkspaceId);
+  sendJson(res, 200, allConfigs.map((config) => ({
+    ...config,
+    modelState: modelStates[config.id],
+  })));
 }
 
 function shutdown(): void {

@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type {
   AgentActivityEvent,
   AgentId,
+  AgentModelStateSnapshot,
   AgentPermissionRequest,
   AgentRuntimeKind,
   AgentElicitationRequest,
@@ -39,6 +40,12 @@ export type AgentRuntimeRunOptions = {
   imagePaths?: string[];
   /** Stable owner key used to prevent ACP process reuse across conversations. */
   poolKey?: string;
+  /** 员工首选模型 ID（issue #142）：会话建立后、prompt 前尽力应用，失败只提示。 */
+  preferredModelId?: string;
+  /** 该员工最近一次的模型快照；池复用连接没有响应可读时用它补发偏好。 */
+  lastSessionConfig?: AgentModelStateSnapshot;
+  /** 模型快照回调：runtime 返回或切换后携带最新模型列表与当前值。 */
+  onSessionConfig?: (snapshot: AgentModelStateSnapshot) => void;
 };
 
 export type AgentRuntimeRunHandle = {

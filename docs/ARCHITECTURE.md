@@ -97,6 +97,36 @@ When config is saved or reset, the server calls `refreshEnabledAgents()` which:
 
 This ensures routing and run dispatch use the current agent configuration. A 409 response is returned if any agent is currently running.
 
+### Model Selection
+
+Each digital employee can pin a preferred model when its runtime advertises
+model selection through ACP session config options. The flow is:
+
+1. On connection initialization Orbit declares the `session.configOptions`
+   client capability. New, resumed, and restored sessions return the runtime's
+   `configOptions`, from which Orbit extracts the `category: "model"` select
+   option into an `AgentModelStateSnapshot` (available choices plus the
+   current value).
+2. Snapshots are persisted per workspace in
+   `~/.orbit/workspaces/<workspace-id>/agent-model-state.json` — deliberately
+   outside `agents.json`, so saving team configs never overwrites them — and
+   published on the SSE stream as `agent.model_state` events for the settings
+   UI.
+3. User preferences live in `agents.json` under `model.preferredModelId` and
+   are gated by `runtimeKind`: switching an employee's runtime never applies a
+   preference recorded for a different runtime.
+4. `runAcp()` applies the preference after the session is established and
+   before the prompt is sent. If the preferred model is missing from the
+   runtime's list, or the `session/set_config_option` call fails, Orbit posts
+   a notice in the conversation and keeps running with the current model; the
+   session is never discarded and the run never fails because of it. Pooled
+   connections that are reused without an RPC response fall back to the last
+   known snapshot for the same decision.
+
+All three runtimes (claude-code, codex, codebuddy) expose a `model` select
+option today; when a runtime does not, the settings UI hides the model
+section for that employee instead of showing an empty list.
+
 ## Routing Rules
 
 - Only `@display-name:` with a colon assigns work. The display name is configurable; the internal id is never used in public markers.

@@ -29,8 +29,9 @@ function fakeFactory() {
         return { protocolVersion: 1, agentCapabilities: { loadSession: true } };
       },
       async newSession() { return { sessionId: "session-1" }; },
-      async loadSession() {},
-      async resumeSession() {},
+      async loadSession() { return {}; },
+      async resumeSession() { return {}; },
+      async setConfigOption() { return { configOptions: [] }; },
       async prompt() { return { stopReason: "end_turn" }; },
       async cancel() {},
       close() { alive = false; closeCount += 1; },

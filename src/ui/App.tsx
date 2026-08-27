@@ -3,7 +3,7 @@ import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
@@ -55,6 +55,7 @@ const initialState: AppState = {
   runtimeAvailability: [],
   pendingPermissions: [],
   pendingElicitations: [],
+  agentModelStates: {},
 };
 
 type ActiveView = "conversation" | "analysis";
@@ -1576,6 +1577,7 @@ export function App() {
           runtimeAvailability={state.runtimeAvailability}
           isRefreshingRuntimes={isRefreshingRuntimes}
           onRefreshRuntimes={refreshRuntimeAvailability}
+          modelStates={state.agentModelStates}
         />
       ) : null}
       {previewAttachment ? (
@@ -2598,6 +2600,7 @@ function AgentManagerPanel({
   focusedAgentId,
   isRefreshingRuntimes,
   onRefreshRuntimes,
+  modelStates,
 }: {
   onClose: () => void;
   onSaved: () => void;
@@ -2605,8 +2608,9 @@ function AgentManagerPanel({
   focusedAgentId?: string | null;
   isRefreshingRuntimes: boolean;
   onRefreshRuntimes: () => void;
+  modelStates: AppState["agentModelStates"];
 }) {
-  const [configs, setConfigs] = useState<AgentConfig[]>([]);
+  const [configs, setConfigs] = useState<AgentConfigWithModelState[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -2638,13 +2642,21 @@ function AgentManagerPanel({
   useEffect(() => {
     fetch("/api/agents")
       .then((r) => r.json())
-      .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
+      .then((data) => { setConfigs(data as AgentConfigWithModelState[]); setLoading(false); })
       .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
     fetch("/api/agent-teams")
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => setTeamTemplates(Array.isArray(data) ? data as AgentTeamTemplate[] : []))
       .catch(() => setTeamTemplates([]));
   }, []);
+
+  // 面板打开期间员工运行产生的模型快照（SSE agent.model_state）实时合并进列表，
+  // 保证"当前模型"与可选列表反映 runtime 的最新状态。
+  useEffect(() => {
+    setConfigs((prev) => prev.map((config) => (
+      modelStates[config.id] ? { ...config, modelState: modelStates[config.id] } : config
+    )));
+  }, [modelStates]);
 
   // Auto-expand the focused agent once configs are loaded
   useEffect(() => {
@@ -2694,8 +2706,10 @@ function AgentManagerPanel({
   function copyConfig(index: number) {
     const source = configs[index];
     const newId = generateUniqueId(source.id, configs);
-    const copy: AgentConfig = {
-      ...structuredClone(source),
+    // modelState 是源员工 id 的运行时快照，新副本尚未运行，不随复制带走。
+    const { modelState: _sourceModelState, ...sourceConfig } = structuredClone(source);
+    const copy: AgentConfigWithModelState = {
+      ...sourceConfig,
       id: newId,
       name: `${source.name} (副本)`,
       enabled: false,
@@ -2807,6 +2821,12 @@ function AgentManagerPanel({
             <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义数字员工</button>
             {configs.map((config, i) => {
               const isExpanded = expandedIndex === i;
+              // 模型区只在该员工当前运行时上报过可选模型时出现（issue #142）。
+              const modelSnapshot = config.modelState
+                && config.modelState.runtimeKind === config.runtime
+                && config.modelState.choices.length > 0
+                ? config.modelState
+                : undefined;
               return (
                 <div key={`config-${i}`} className={`configCard ${isExpanded ? "configCardExpanded" : ""} ${!config.enabled ? "configCardDisabled" : ""}`}>
                   <div className="configCardHeader" onClick={() => setExpandedIndex(isExpanded ? null : i)}>
@@ -2881,6 +2901,9 @@ function AgentManagerPanel({
                             );
                           })()}
                         </div>
+                        {modelSnapshot ? (
+                          <AgentModelField config={config} snapshot={modelSnapshot} onChange={(patch) => updateConfig(i, patch)} />
+                        ) : null}
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -2899,6 +2922,58 @@ function AgentManagerPanel({
           <button type="button" onClick={save} disabled={saving}>{saving ? "保存中..." : "保存"}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 员工模型选择区（issue #142）：列出 runtime 上报的模型单选列表，保存为员工
+ * 偏好。偏好只在该员工下次运行开始时应用；runtime 不支持模型选择时不渲染。
+ */
+function AgentModelField({ config, snapshot, onChange }: {
+  config: AgentConfigWithModelState;
+  snapshot: AgentModelStateSnapshot;
+  onChange: (patch: Partial<AgentConfig>) => void;
+}) {
+  // 偏好按 runtime 归属过滤：切换运行时后旧偏好不生效也不显示。
+  const preferred = config.model?.runtimeKind === config.runtime
+    ? config.model?.preferredModelId?.trim() || undefined
+    : undefined;
+  const choices = snapshot.choices;
+  const nameOf = (value: string) => choices.find((choice) => choice.value === value)?.name ?? value;
+  const preferredMissing = preferred !== undefined && !choices.some((choice) => choice.value === preferred);
+  return (
+    <div className="modelField fieldFullWidth">
+      <span className="pillLabel">模型 <span className="fieldHint" title="该数字员工使用的模型。可选列表由所在运行时提供，每次运行开始时应用。">?</span></span>
+      <div className="modelChoiceList">
+        <label className={`modelChoice ${preferred === undefined ? "modelChoiceActive" : ""}`}>
+          <input
+            type="radio"
+            name={`model-${config.id}`}
+            checked={preferred === undefined}
+            onChange={() => onChange({ model: undefined })}
+          />
+          <span>跟随运行时默认{snapshot.currentValue ? `（当前：${nameOf(snapshot.currentValue)}）` : ""}</span>
+        </label>
+        {choices.map((choice) => (
+          <label key={choice.value} className={`modelChoice ${preferred === choice.value ? "modelChoiceActive" : ""}`}>
+            <input
+              type="radio"
+              name={`model-${config.id}`}
+              checked={preferred === choice.value}
+              onChange={() => onChange({ model: { preferredModelId: choice.value, runtimeKind: config.runtime } })}
+            />
+            <span>
+              {choice.name}
+              {snapshot.currentValue === choice.value && preferred !== choice.value ? "（当前）" : ""}
+            </span>
+          </label>
+        ))}
+      </div>
+      {preferredMissing ? (
+        <div className="modelHint modelHintWarn">首选模型 {nameOf(preferred)} 当前不可用，下次运行将继续使用当前模型并在对话中提示。</div>
+      ) : null}
+      <div className="modelHint">模型选择在该数字员工下次运行时生效。</div>
     </div>
   );
 }
@@ -2935,6 +3010,14 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
         const available = availMap.get(cliKey);
         return { ...agent, runtimeAvailable: available };
       }),
+    };
+  }
+
+  // agent.model_state 是 workspace 级事件（无 conversationId），在会话过滤前处理。
+  if (event.type === "agent.model_state") {
+    return {
+      ...state,
+      agentModelStates: { ...state.agentModelStates, [event.agentId]: event.modelState },
     };
   }
 
@@ -3084,6 +3167,7 @@ function normalizeState(nextState: AppState): AppState {
     runtimeAvailability: nextState.runtimeAvailability ?? [],
     pendingPermissions: nextState.pendingPermissions ?? [],
     pendingElicitations: nextState.pendingElicitations ?? [],
+    agentModelStates: nextState.agentModelStates ?? {},
   };
 }
 

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { applyEvent, buildProcessTimeline, upsertMessage } from "../src/ui/App.tsx";
-import type { AgentActivityEvent, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
+import type { AgentActivityEvent, AgentModelStateSnapshot, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
 
 const CONVERSATION = "conv1";
 
@@ -25,6 +25,7 @@ function state(messages: ChatMessage[]): AppState {
     messages,
     messageHistory: { hasOlderMessages: false, olderCursor: null },
     agents: [], terminal: {}, runningSummaries: [], runtimeAvailability: [], pendingPermissions: [], pendingElicitations: [],
+    agentModelStates: {},
   };
 }
 
@@ -308,4 +309,39 @@ test("run.activity events from other conversations are ignored", () => {
     activity: { type: "process.text", text: "其他会话", timestamp: "2026-01-01T00:00:02.000Z" },
   });
   assert.equal(result.messages[0]?.activity, undefined);
+});
+
+// ---- issue #142：模型快照事件进入 UI 状态 ----
+
+test("agent.model_state snapshots are stored per agent without conversation gating", () => {
+  const initial = state([agentMessage()]);
+  const snapshot: AgentModelStateSnapshot = {
+    agentId: "implementation",
+    runtimeKind: "claude-code",
+    configId: "model",
+    choices: [
+      { value: "sonnet", name: "Sonnet" },
+      { value: "opus", name: "Opus" },
+    ],
+    currentValue: "sonnet",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  // agent.model_state 无 conversationId：即使当前会话不是产生快照的会话也要更新。
+  const updated = applyEvent({ ...initial, conversation: { id: "other", name: "other" } }, {
+    type: "agent.model_state",
+    workspaceId: "ws1",
+    agentId: "implementation",
+    modelState: snapshot,
+  });
+  assert.deepEqual(updated.agentModelStates.implementation, snapshot);
+
+  const newer = { ...snapshot, currentValue: "opus", updatedAt: "2026-01-01T00:00:05.000Z" };
+  const replaced = applyEvent(updated, {
+    type: "agent.model_state",
+    workspaceId: "ws1",
+    agentId: "reviewer",
+    modelState: newer,
+  });
+  assert.equal(replaced.agentModelStates.implementation, snapshot, "其他员工的快照不受影响");
+  assert.equal(replaced.agentModelStates.reviewer.currentValue, "opus");
 });

@@ -101,6 +101,16 @@ export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): 
   );
 }
 
+/**
+ * 员工的模型偏好（issue #142）：preferredModelId 是 runtime config options 里
+ * model 选项的 value ID；runtimeKind 记录选择偏好时所处的 runtime，员工切换
+ * runtime 后偏好不再生效（value ID 不通用）。每次运行开始时惰性应用。
+ */
+export type AgentModelPreference = {
+  preferredModelId?: string;
+  runtimeKind: AgentRuntimeKind;
+};
+
 export type AgentConfig = {
   id: AgentId;
   name: string;
@@ -109,6 +119,7 @@ export type AgentConfig = {
   systemPrompt: string;
   enabled: boolean;
   triggers?: ChannelWatchTriggers;
+  model?: AgentModelPreference;
 };
 
 export type AgentTemplate = Omit<AgentConfig, "enabled" | "triggers">;
@@ -128,7 +139,38 @@ export type AgentProfile = {
   cwd: string;
   systemPrompt: string;
   triggers?: ChannelWatchTriggers;
+  /** 已按 runtime 匹配门控的首选模型 ID（issue #142）；运行开始时惰性应用。 */
+  preferredModelId?: string;
   internal?: boolean;
+};
+
+/** 模型选项的一个可选值（来自 runtime 的 session config options，issue #142）。 */
+export type AgentModelChoice = {
+  value: string;
+  name: string;
+};
+
+/**
+ * 员工 runtime 会话的模型配置快照（issue #142）。runtime 每次新建或恢复会话
+ * 都会返回 config options；Orbit 抽取其中 category 为 "model" 的 select 选项
+ * 生成本快照。choices 为空表示该 runtime 不提供模型选择。
+ */
+export type AgentModelStateSnapshot = {
+  agentId: AgentId;
+  runtimeKind: AgentRuntimeKind;
+  /** 模型选项在 ACP config options 里的 configId（三 runtime 实测均为 "model"）。 */
+  configId: string;
+  choices: AgentModelChoice[];
+  currentValue: string | undefined;
+  updatedAt: string;
+};
+
+/**
+ * /api/agents 响应条目（issue #142）：数字员工配置合并该员工当前的模型快照。
+ * 快照由 runtime 写入独立存储，只随响应展示，不属于 agents.json 的用户配置。
+ */
+export type AgentConfigWithModelState = AgentConfig & {
+  modelState?: AgentModelStateSnapshot;
 };
 
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
@@ -366,6 +408,7 @@ export type RuntimeEvent =
   | { type: "elicitation.resolved"; conversationId: string; requestId: string }
   | { type: "running.updated"; summaries: RunningSummary[] }
   | { type: "runtime.availability.updated"; availability: RuntimeAvailability[] }
+  | { type: "agent.model_state"; workspaceId: string; agentId: AgentId; modelState: AgentModelStateSnapshot }
   | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
 
 export type TerminalState = Record<string, string>;
@@ -456,4 +499,6 @@ export type AppState = {
   runtimeAvailability: RuntimeAvailability[];
   pendingPermissions: PendingPermission[];
   pendingElicitations: PendingElicitation[];
+  /** 各数字员工最新的模型快照（issue #142），供设置面板展示当前模型与可用列表。 */
+  agentModelStates: Record<AgentId, AgentModelStateSnapshot>;
 };

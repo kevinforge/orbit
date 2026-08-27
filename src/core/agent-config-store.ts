@@ -86,6 +86,24 @@ export function validateAgentConfigs(configs: AgentConfig[]): string[] {
     if (!VALID_RUNTIMES.has(config.runtime)) errors.push(`Agent "${configId}" has invalid runtime "${config.runtime}".`);
     if (typeof config.systemPrompt !== "string" || !config.systemPrompt.trim()) errors.push(`Agent "${configId}" systemPrompt is required.`);
 
+    if (config.model !== undefined) {
+      if (typeof config.model !== "object" || config.model === null || Array.isArray(config.model)) {
+        errors.push(`Agent "${configId}" model must be an object.`);
+      } else {
+        const model = config.model;
+        if (!VALID_RUNTIMES.has(model.runtimeKind)) {
+          errors.push(`Agent "${configId}" model.runtimeKind has invalid runtime "${String(model.runtimeKind)}".`);
+        }
+        if (model.preferredModelId !== undefined) {
+          if (typeof model.preferredModelId !== "string" || !model.preferredModelId.trim()) {
+            errors.push(`Agent "${configId}" model.preferredModelId must be a non-empty string.`);
+          } else if (model.preferredModelId.length > 128) {
+            errors.push(`Agent "${configId}" model.preferredModelId must be at most 128 characters.`);
+          }
+        }
+      }
+    }
+
     if (config.triggers !== undefined) {
       if (typeof config.triggers !== "object" || Array.isArray(config.triggers)) errors.push(`Agent "${configId}" triggers must be an object.`);
       else {
