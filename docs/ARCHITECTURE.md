@@ -135,6 +135,7 @@ The final agent prompt is assembled in this order:
 5. **Employee instruction** (`AgentConfig.systemPrompt`)
 6. **Channel history** (scoped messages since agent's last completed run)
 7. **Current task** (the routed message content)
+8. **Current attachments** (typed list of the source message's image/file attachments, if any)
 
 Workspace prompts inject optional shared user context across all employees, while each employee retains its own task-specific instruction. They do not define or replace Orbit's three interaction modes. Complex collaboration uses a separate internal supervisor profile, and its persisted runtime session is retained when the conversation switches to another mode.
 
@@ -155,6 +156,28 @@ Each agent run receives a scoped history of channel messages since that agent's 
 - Returns entries in chronological order
 
 The history is injected between `[Orbit Context]` and `[Full channel message]` in the prompt built by `agent-context-builder.ts`.
+
+## Attachments
+
+Messages can carry attachments (images plus PDF/text/code files) managed by
+`src/core/attachment-store.ts` under `~/.orbit`. Uploads are validated against
+the shared extension registry (`src/shared/attachment-registry.ts`): images
+are verified by magic numbers, PDF must start with `%PDF-`, and text/code
+types rely on the extension whitelist plus size limits. Composer uploads are
+drafts under `tmp/attachments`; sending a message commits drafts into
+`conversations/<ws>/<conv>/attachments`, re-validating the stored bytes and
+failing the whole message (with drafts preserved and partial copies rolled
+back) when one is missing or a copy fails.
+
+Delivery to runtimes is split by kind in `run-manager.ts`: only images are
+passed to the ACP runtime, which sends them as native `image` content blocks
+when the runtime advertises `promptCapabilities.image` and otherwise falls
+back to a text path list. Files never enter image blocks; all attachments are
+listed with kind, name, and absolute path in the `<current-attachments>`
+section of the agent prompt, marked as untrusted user data that must not be
+executed. The HTTP layer serves images inline and every other kind as a
+generic `application/octet-stream` download with `nosniff` (see
+`src/server/attachment-response.ts`).
 
 ## Session Persistence
 

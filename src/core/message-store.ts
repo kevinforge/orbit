@@ -142,6 +142,21 @@ export class MessageStore {
     return null;
   }
 
+  /**
+   * Find the user-facing filename recorded for an attachment id in any shard.
+   * Used to name downloads: stored files are named `<id>.<ext>`, so the
+   * original filename only exists in the channel history metadata. Scans all
+   * shards (not just the preloaded recent window) so older messages resolve.
+   */
+  attachmentFilename(attachmentId: string): string | null {
+    for (const message of this.historySince(0)) {
+      for (const attachment of message.attachments ?? []) {
+        if (attachment.id === attachmentId) return attachment.filename;
+      }
+    }
+    return null;
+  }
+
   markAbandonedActiveRuns(): ChatMessage[] {
     const completedAt = this.now().toISOString();
     const allMessages = this.readAllMessages();

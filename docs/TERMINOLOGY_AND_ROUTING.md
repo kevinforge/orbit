@@ -31,6 +31,13 @@ Use these terms in docs, issues, PRs, screenshots, and user-facing copy.
   another digital employee. Handoffs only start work in 简单协作 and 复杂协作.
 - **Run queue**: each digital employee processes one run at a time; additional
   assigned work waits in that employee's queue.
+- **Attachment / 附件**: a file added to a message from the composer. Images
+  (`png`/`jpg`/`webp`) show as thumbnails and are sent to the runtime as native
+  image content; files (`pdf`, `txt`, `md`, and common code/config source
+  files) show as chips and are passed to digital employees as local file paths
+  the employee reads with its own tools. User-visible copy says 附件
+  (Simplified Chinese) and "attachment" (English); avoid internal storage terms
+  such as `draft` or `commit` in the UI.
 
 Prefer **digital employee** in public docs and UI copy. Use **agent** only when
 referring to code-level types, file names, or compatibility with existing source

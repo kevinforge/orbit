@@ -53,7 +53,7 @@ export type ManagedRun = {
   origin?: RunOrigin;
   /** 模式快照：继承自源消息，决定提示词规则与完成后的路由/监工行为，不受执行中切换全局模式影响。 */
   interactionMode?: InteractionMode;
-  /** Image attachments from the source message, passed to the runtime. */
+  /** Attachments from the source message: images go to the runtime, files go into the prompt. */
   sourceAttachments?: MessageAttachment[];
 };
 
@@ -62,7 +62,7 @@ export type RunManagerOptions = {
   agents: AgentRunner;
   messages: MessageStore;
   eventBus: EventBus;
-  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[], interactionMode?: InteractionMode) => string;
+  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, sourceAttachments?: MessageAttachment[], interactionMode?: InteractionMode) => string;
   onRunCompleted: (message: ChatMessage) => void;
   /** Resolves a user-facing display name for an agent id (defaults to the raw id). */
   getAgentLabel?: (agentId: AgentId) => string;
@@ -420,12 +420,16 @@ export class RunManager {
 
     this.appendActivity(run, "运行已开始。");
 
-    const imagePaths = run.sourceAttachments?.map((a) => a.path);
+    // Only images go to the runtime as native ACP image blocks; file
+    // attachments (PDF/text/code) travel inside the prompt as local paths.
+    const imagePaths = run.sourceAttachments
+      ?.filter((attachment) => attachment.kind === "image")
+      .map((attachment) => attachment.path);
     // Supervisor prompts describe coordination intent, not the triggering message itself.
     // Keep that source message in conversation history so the supervisor can see the
     // employee result or user request it is expected to coordinate.
     const excludedSourceMessageId = run.origin === "supervisor" ? undefined : run.sourceMessage.id;
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths, run.interactionMode);
+    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, run.sourceAttachments, run.interactionMode);
     let result: Promise<RunResult>;
     try {
       result = this.options.agents.get(run.agentId).send(

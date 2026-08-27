@@ -4,18 +4,34 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { ATTACHMENT_LIMITS, type MessageAttachment } from "../shared/types.ts";
+import {
+  attachmentExtensionSpec,
+  knownAttachmentExtension,
+} from "../shared/attachment-registry.ts";
 
-const ALLOWED_MIME_TYPES: ReadonlySet<string> = new Set<string>(ATTACHMENT_LIMITS.ALLOWED_MIME_TYPES);
+const ALLOWED_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set<string>(ATTACHMENT_LIMITS.ALLOWED_IMAGE_MIME_TYPES);
 
-// MIME_TO_EXT must include all types from ATTACHMENT_LIMITS.ALLOWED_MIME_TYPES in types.ts
-// If adding a new MIME type, update both this map and ALLOWED_MIME_TYPES
-const MIME_TO_EXT: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
+const MAX_DISPLAY_FILENAME_LENGTH = 120;
+
+export type ValidatedUpload = {
+  kind: "image" | "file";
+  /** Server-validated extension (from the whitelist) used for the stored file. */
+  ext: string;
+  /** Canonical MIME derived from the extension, not the client claim. */
+  mimeType: string;
+  /** Sanitized display filename with the validated extension. */
+  filename: string;
 };
 
-const KNOWN_EXTENSIONS = ["png", "jpg", "webp"];
+export type StoredAttachment = {
+  data: Buffer;
+  ext: string;
+  kind: "image" | "file";
+  /** Canonical MIME for the stored extension. */
+  mimeType: string;
+  /** Stored file name (`<id>.<ext>`), always ASCII-safe. */
+  filename: string;
+};
 
 export class AttachmentStore {
   constructor(private readonly baseDir: string) {}
@@ -61,11 +77,17 @@ export class AttachmentStore {
     workspaceId: string;
     conversationId: string;
     data: Buffer;
-    mimeType: string;
+    /** Server-validated extension from the whitelist — never a client MIME. */
+    ext: string;
+    /** Sanitized display filename. */
     filename: string;
   }): Promise<{ id: string; path: string; size: number }> {
+    const spec = attachmentExtensionSpec(params.ext);
+    if (!spec) {
+      throw new Error(`Unsupported attachment extension: ${params.ext}`);
+    }
     const id = randomUUID();
-    const ext = MIME_TO_EXT[params.mimeType] ?? (path.extname(params.filename).slice(1) || "bin");
+    const ext = params.ext.toLowerCase();
     const draftDir = this.safePath(
       "tmp", "attachments",
       params.workspaceId, params.conversationId, id,
@@ -92,32 +114,10 @@ export class AttachmentStore {
     workspaceId: string,
     conversationId: string,
     draftId: string,
-  ): Promise<{ data: Buffer; mimeType: string; filename: string } | null> {
+  ): Promise<StoredAttachment | null> {
     AttachmentStore.validateId(draftId);
     const draftBase = this.safePath("tmp", "attachments", workspaceId, conversationId, draftId);
-    try {
-      await fsPromises.access(draftBase);
-    } catch {
-      return null;
-    }
-
-    // Find the file with matching id in the draft directory
-    for (const ext of KNOWN_EXTENSIONS) {
-      const candidate = path.join(draftBase, `${draftId}.${ext}`);
-      try {
-        await fsPromises.access(candidate);
-        const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-        return {
-          data: await fsPromises.readFile(candidate),
-          mimeType,
-          filename: `${draftId}.${ext}`,
-        };
-      } catch {
-        // File doesn't exist, try next extension
-      }
-    }
-
-    return null;
+    return AttachmentStore.findStoredFile(draftBase, draftId);
   }
 
   // --- Permanent attachment operations ---
@@ -125,12 +125,37 @@ export class AttachmentStore {
   async commitDrafts(params: {
     workspaceId: string;
     conversationId: string;
-    draftAttachments: Array<{ id: string; mimeType: string; filename: string; size: number }>;
+    draftAttachments: Array<{ id: string; mimeType?: string; filename: string; size?: number }>;
   }): Promise<MessageAttachment[]> {
     if (params.draftAttachments.length === 0) return [];
 
     for (const draft of params.draftAttachments) {
       AttachmentStore.validateId(draft.id);
+    }
+
+    // Phase 1: locate and re-validate every draft without mutating anything.
+    // A missing/expired/tampered draft fails the whole message so attachments
+    // are never silently dropped; drafts stay in place for a retry.
+    const located: Array<{
+      draft: { id: string; filename: string };
+      draftDir: string;
+      stored: StoredAttachment;
+    }> = [];
+    for (const draft of params.draftAttachments) {
+      const draftDir = this.safePath(
+        "tmp", "attachments",
+        params.workspaceId, params.conversationId, draft.id,
+      );
+      const stored = await AttachmentStore.findStoredFile(draftDir, draft.id);
+      if (!stored) {
+        const displayExt = knownAttachmentExtension(draft.filename) ?? "file";
+        throw new Error(`附件草稿已缺失或过期：${AttachmentStore.sanitizeFilename(draft.filename, displayExt)}，请重新上传后再发送。`);
+      }
+      const recheck = AttachmentStore.validateStoredContent(stored.data, stored.ext);
+      if (!recheck.valid) {
+        throw new Error(`附件内容校验失败：${recheck.error}`);
+      }
+      located.push({ draft, draftDir, stored });
     }
 
     const permDir = this.safePath(
@@ -139,57 +164,45 @@ export class AttachmentStore {
     );
     await fsPromises.mkdir(permDir, { recursive: true });
 
+    // Phase 2: copy EVERY draft to its permanent path before deleting anything.
+    // A mid-batch failure rolls the partial copies back and keeps all drafts so
+    // the same message can be retried; no orphan permanent files are left behind.
+    const staged = located.map((entry) => ({
+      ...entry,
+      sourcePath: path.join(entry.draftDir, entry.stored.filename),
+      permPath: path.join(permDir, entry.stored.filename),
+    }));
+    const copied: string[] = [];
+    try {
+      for (const item of staged) {
+        // Copy + delete (instead of rename) for cross-device safety.
+        await fsPromises.copyFile(item.sourcePath, item.permPath);
+        copied.push(item.permPath);
+      }
+    } catch (error) {
+      for (const permPath of copied) {
+        try { await fsPromises.rm(permPath, { force: true }); } catch { /* best effort */ }
+      }
+      throw error;
+    }
+
+    // Phase 3: everything is in place — remove the draft directories and report.
     const results: MessageAttachment[] = [];
-
-    for (const draft of params.draftAttachments) {
-      // Rebuild draft directory from workspaceId + conversationId + id (not client path)
-      const draftDir = this.safePath(
-        "tmp", "attachments",
-        params.workspaceId, params.conversationId, draft.id,
-      );
-
-      // Find the actual file in draft directory by scanning known extensions
-      // (don't trust client-provided mimeType — it may differ from the saved file)
-      let draftFile: string | null = null;
-      let actualExt: string | null = null;
-      for (const ext of KNOWN_EXTENSIONS) {
-        const candidate = path.join(draftDir, `${draft.id}.${ext}`);
-        try {
-          await fsPromises.access(candidate);
-          draftFile = candidate;
-          actualExt = ext;
-          break;
-        } catch {
-          // File doesn't exist, try next extension
-        }
-      }
-
-      if (!draftFile || !actualExt) {
-        // Draft file was cleaned up or never existed — skip with warning
-        console.warn(`[orbit] draft file not found for attachment ${draft.id}, skipping`);
-        try { await fsPromises.rm(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
-        continue;
-      }
-
-      const mimeType = actualExt === "jpg" ? "image/jpeg" : `image/${actualExt}` as MessageAttachment["mimeType"];
-      const permPath = path.join(permDir, `${draft.id}.${actualExt}`);
-
-      // Move the file (copy + delete for cross-device safety)
-      await fsPromises.copyFile(draftFile, permPath);
-      await fsPromises.rm(draftFile, { force: true });
-      // Clean up draft directory
+    for (const { draft, draftDir, stored, permPath } of staged) {
       try { await fsPromises.rm(draftDir, { recursive: true, force: true }); } catch { /* already gone */ }
 
-      results.push({
+      const base = {
         id: draft.id,
-        kind: "image",
-        mimeType,
-        filename: draft.filename,
+        // Actual size comes from the file system, not the commit request.
+        filename: AttachmentStore.sanitizeFilename(draft.filename, stored.ext),
         path: permPath,
         url: `/api/attachments/${params.workspaceId}/${params.conversationId}/${draft.id}`,
-        size: draft.size,
+        size: stored.data.length,
         createdAt: new Date().toISOString(),
-      });
+      };
+      results.push(stored.kind === "image"
+        ? { ...base, kind: "image", mimeType: stored.mimeType } as MessageAttachment
+        : { ...base, kind: "file", mimeType: stored.mimeType });
     }
 
     return results;
@@ -199,28 +212,10 @@ export class AttachmentStore {
     workspaceId: string,
     conversationId: string,
     attachmentId: string,
-  ): Promise<{ data: Buffer; mimeType: string } | null> {
+  ): Promise<StoredAttachment | null> {
     AttachmentStore.validateId(attachmentId);
     const permDir = this.safePath("conversations", workspaceId, conversationId, "attachments");
-    try {
-      await fsPromises.access(permDir);
-    } catch {
-      return null;
-    }
-
-    // Exact extension match — iterate known extensions instead of prefix matching
-    for (const ext of KNOWN_EXTENSIONS) {
-      const candidate = path.join(permDir, `${attachmentId}.${ext}`);
-      try {
-        await fsPromises.access(candidate);
-        const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-        return { data: await fsPromises.readFile(candidate), mimeType };
-      } catch {
-        // File doesn't exist, try next extension
-      }
-    }
-
-    return null;
+    return AttachmentStore.findStoredFile(permDir, attachmentId);
   }
 
   async deleteConversationAttachments(workspaceId: string, conversationId: string): Promise<void> {
@@ -312,8 +307,8 @@ export class AttachmentStore {
     mimeType: string,
     filename: string,
   ): { valid: boolean; error?: string } {
-    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
-      return { valid: false, error: `Unsupported image type: ${mimeType}. Allowed: ${ATTACHMENT_LIMITS.ALLOWED_MIME_TYPES.join(", ")}` };
+    if (!ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
+      return { valid: false, error: `Unsupported image type: ${mimeType}. Allowed: ${ATTACHMENT_LIMITS.ALLOWED_IMAGE_MIME_TYPES.join(", ")}` };
     }
     if (data.length === 0) {
       return { valid: false, error: "File is empty." };
@@ -328,5 +323,113 @@ export class AttachmentStore {
     }
 
     return { valid: true };
+  }
+
+  /**
+   * 通用上传校验：以文件名扩展名白名单为准（客户端 MIME 仅作参考），
+   * 图片校验魔数，PDF 要求 `%PDF-` 头部，纯文本/代码无稳定魔数故只校验
+   * 扩展名与大小。返回规范化后的附件元数据供落盘使用。
+   */
+  static validateUpload(
+    data: Buffer,
+    _declaredMimeType: string,
+    rawFilename: string,
+  ): { valid: true; attachment: ValidatedUpload } | { valid: false; error: string } {
+    if (data.length === 0) {
+      return { valid: false, error: "文件为空。" };
+    }
+    if (data.length > ATTACHMENT_LIMITS.MAX_FILE_SIZE) {
+      return { valid: false, error: `文件大小 (${(data.length / 1024 / 1024).toFixed(1)}MB) 超过限制 (${ATTACHMENT_LIMITS.MAX_FILE_SIZE / 1024 / 1024}MB)。` };
+    }
+
+    const ext = knownAttachmentExtension(rawFilename);
+    const spec = ext ? attachmentExtensionSpec(ext) : undefined;
+    if (!ext || !spec) {
+      return { valid: false, error: `不支持的附件类型：${rawFilename || "未命名文件"}。允许图片（png/jpg/webp）、文档（pdf/txt/md）与常见代码/配置文件。` };
+    }
+
+    if (spec.kind === "image" && !this.validateMagicNumber(data, spec.mimeType)) {
+      return { valid: false, error: `文件内容与类型不符（${spec.mimeType}）。` };
+    }
+    if (ext === "pdf") {
+      const PDF_MAGIC = Buffer.from("%PDF-");
+      if (data.length < 5 || !data.slice(0, 5).equals(PDF_MAGIC)) {
+        return { valid: false, error: "文件内容与类型不符（application/pdf）。" };
+      }
+    }
+
+    return {
+      valid: true,
+      attachment: {
+        kind: spec.kind,
+        ext,
+        mimeType: spec.mimeType,
+        filename: AttachmentStore.sanitizeFilename(rawFilename, ext),
+      },
+    };
+  }
+
+  /** commit 前对已落盘草稿的字节做复验（大小 + 魔数）。 */
+  private static validateStoredContent(data: Buffer, ext: string): { valid: boolean; error?: string } {
+    const spec = attachmentExtensionSpec(ext);
+    if (!spec) {
+      return { valid: false, error: `未知扩展名 ${ext}` };
+    }
+    if (data.length === 0 || data.length > ATTACHMENT_LIMITS.MAX_FILE_SIZE) {
+      return { valid: false, error: "文件大小超出限制" };
+    }
+    if (spec.kind === "image" && !AttachmentStore.validateMagicNumber(data, spec.mimeType)) {
+      return { valid: false, error: `文件内容与类型不符（${spec.mimeType}）` };
+    }
+    const PDF_MAGIC = Buffer.from("%PDF-");
+    if (ext === "pdf" && (data.length < 5 || !data.slice(0, 5).equals(PDF_MAGIC))) {
+      return { valid: false, error: "文件内容与类型不符（application/pdf）" };
+    }
+    return { valid: true };
+  }
+
+  /**
+   * 规范化展示文件名：去除路径与控制字符、限制长度，并强制使用服务端
+   * 验证过的扩展名；无法得出有效主干时回退为 `attachment.<ext>`。
+   */
+  static sanitizeFilename(name: string, ext: string): string {
+    const base = path.basename(String(name ?? "").replace(/\\/g, "/"))
+      .replace(/[\x00-\x1f\x7f]/g, "")
+      .trim()
+      .slice(0, MAX_DISPLAY_FILENAME_LENGTH);
+    const dot = base.lastIndexOf(".");
+    // No dot: the whole base is the stem; a leading dot (".hidden") leaves no stem.
+    const stem = dot > 0 ? base.slice(0, dot) : (dot === -1 ? base : "");
+    if (!stem || stem === "." || stem === "..") {
+      return `attachment.${ext}`;
+    }
+    return `${stem}.${ext}`;
+  }
+
+  /**
+   * Locate the stored file for an id: the whole stem must equal the id (no
+   * prefix matches) and the extension must be whitelisted.
+   */
+  private static findStoredFile(dir: string, id: string): Promise<StoredAttachment | null> {
+    return fsPromises.readdir(dir).then(
+      (names) => {
+        for (const name of names) {
+          const dot = name.lastIndexOf(".");
+          if (dot <= 0 || name.slice(0, dot) !== id) continue;
+          const ext = name.slice(dot + 1).toLowerCase();
+          const spec = attachmentExtensionSpec(ext);
+          if (!spec) continue;
+          return fsPromises.readFile(path.join(dir, name)).then((data): StoredAttachment => ({
+            data,
+            ext,
+            kind: spec.kind,
+            mimeType: spec.mimeType,
+            filename: name,
+          }));
+        }
+        return null;
+      },
+      () => null,
+    );
   }
 }

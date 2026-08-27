@@ -17,6 +17,7 @@ import {
   type AgentProfile,
   type GlobalRuntimeConfig,
   type InteractionMode,
+  type MessageAttachment,
   type PendingElicitation,
   type PendingPermission,
   type PermissionDecision,
@@ -119,8 +120,8 @@ export class ConversationContext {
       agents: this.agents,
       messages: this.messages,
       eventBus,
-      buildPrompt: (agentId, prompt, sourceMessageId, imagePaths, interactionMode) =>
-        self.buildRuntimePrompt(agentId, prompt, sourceMessageId, imagePaths, interactionMode),
+      buildPrompt: (agentId, prompt, sourceMessageId, sourceAttachments, interactionMode) =>
+        self.buildRuntimePrompt(agentId, prompt, sourceMessageId, sourceAttachments, interactionMode),
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
       },
@@ -188,8 +189,8 @@ export class ConversationContext {
       agents: newAgents,
       messages: this.messages,
       eventBus,
-      buildPrompt: (agentId, prompt, sourceMessageId, imagePaths, interactionMode) =>
-        self.buildRuntimePrompt(agentId, prompt, sourceMessageId, imagePaths, interactionMode),
+      buildPrompt: (agentId, prompt, sourceMessageId, sourceAttachments, interactionMode) =>
+        self.buildRuntimePrompt(agentId, prompt, sourceMessageId, sourceAttachments, interactionMode),
       onRunCompleted: (message) => {
         self.messageRouter.process(message);
       },
@@ -263,7 +264,7 @@ export class ConversationContext {
     agentId: AgentId,
     prompt: string,
     sourceMessageId?: string,
-    imagePaths?: string[],
+    sourceAttachments?: MessageAttachment[],
     interactionMode?: InteractionMode,
   ): string {
     const history = buildHistoryForAgent(agentId, this.messages.list(), {
@@ -278,6 +279,7 @@ export class ConversationContext {
       interactionMode: interactionMode ?? this._interactionMode,
       history,
       workspaceConfig: this._workspaceConfig,
+      attachments: sourceAttachments,
     });
   }
 

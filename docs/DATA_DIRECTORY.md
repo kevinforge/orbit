@@ -35,16 +35,23 @@ The data directory is organized by data type and workspace id:
   conversations/<workspace-id>/<conversation-id>/attachments/<attachment-id>.<ext>
   sessions/<workspace-id>/<runtime>/<conversation-id>/<agent-id>.json
   transcripts/<workspace-id>/<conversation-id>/<agent-id>/<YYYY-MM-DD>-<sequence>.log
-  tmp/attachments/<workspace-id>/<conversation-id>/<draft-id>.<ext>
+  tmp/attachments/<workspace-id>/<conversation-id>/<draft-id>/<draft-id>.<ext>
   last-active.json
 ```
 
 `<runtime>` is one of `claude-code`, `codex`, or `codebuddy`. Session files
 record the ACP session id and transport metadata used to resume that
-employee's backend session. Image attachments live under
+employee's backend session. Attachments live under
 `conversations/.../attachments` once a message is sent; uploads waiting in
-the composer are drafts under `tmp/attachments` and are removed when they are
-sent or deleted.
+the composer are drafts under `tmp/attachments` (one directory per draft) and
+are removed when they are sent or deleted.
+
+Attachments support images (`png`/`jpg`/`webp`) and files (`pdf`, `txt`,
+`md`, and common code/config source files). Each file is limited to 5 MB with
+at most 5 attachments per message. Executables, shell scripts, and archives
+(`exe`, `sh`, `bat`, `zip`, …) are rejected at upload. Drafts that are neither
+sent nor deleted expire after one hour, and each conversation keeps at most 20
+pending drafts.
 
 These files can contain project paths, conversation content, uploaded
 attachments, digital employee configuration, ACP session records, runtime

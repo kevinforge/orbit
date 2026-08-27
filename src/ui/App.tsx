@@ -4,11 +4,13 @@ import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
 import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
 import {
   AddIcon,
+  AttachIcon,
   ChartIcon,
   CheckIcon,
   ChatBubbleHistoryIcon,
@@ -135,6 +137,9 @@ export function App() {
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  /** 已占用附件槽位（含上传中）。同步计数：并发批次不会各自读到过期数量。 */
+  const attachmentSlotCountRef = useRef(0);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
   const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
@@ -273,6 +278,7 @@ export function App() {
   // to avoid preview URL pointing to wrong workspace/conversation path
   useEffect(() => {
     setPendingAttachments([]);
+    attachmentSlotCountRef.current = 0;
   }, [state.workspace.id, state.conversation.id]);
 
   // Auto-expand the active workspace on initial load
@@ -456,19 +462,25 @@ export function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`Message request failed: ${response.status}`);
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as { message?: string }).message ?? `Message request failed: ${response.status}`);
       }
 
       setContent("");
       setPendingAttachments([]);
+      attachmentSlotCountRef.current = 0;
       isNearBottomRef.current = true;
       setIsNearBottom(true);
       setShowNewMessageHint(false);
       window.setTimeout(() => inputRef.current?.focus(), 0);
-    } catch {
+    } catch (error) {
+      // 附件草稿保留在输入区，修正后可直接重发。
+      const detail = error instanceof Error && error.message && !error.message.startsWith("Message request failed")
+        ? error.message
+        : null;
       setState((current) => ({
         ...current,
-        messages: [...current.messages, createLocalSystemMessage("发送失败，请检查本地服务是否正在运行。")],
+        messages: [...current.messages, createLocalSystemMessage(detail ? `发送失败：${detail}` : "发送失败，请检查本地服务是否正在运行。")],
       }));
     } finally {
       setIsSending(false);
@@ -572,62 +584,94 @@ export function App() {
     }
   }
 
-  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const items = event.clipboardData?.items;
-    if (!items) return;
-
-    const imageFiles: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item?.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) imageFiles.push(file);
-      }
-    }
-    if (imageFiles.length === 0) return;
-
-    // Prevent default to avoid the image being pasted as text; images are handled separately
-    event.preventDefault();
+  /** 统一附件上传入口：文件选择、文件粘贴、图片粘贴与文本转附件都走这里。 */
+  async function uploadAttachmentFiles(files: File[]) {
+    if (files.length === 0) return;
 
     const maxFiles = ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE;
-    if (pendingAttachments.length + imageFiles.length > maxFiles) {
-      setAttachmentToast(`最多只能添加 ${maxFiles} 张图片`);
+    // 以同步计数的“已占用槽位（含上传中）”判断上限：并发批次合计不会超过 5 个。
+    if (attachmentSlotCountRef.current + files.length > maxFiles) {
+      setAttachmentToast(`最多只能添加 ${maxFiles} 个附件`);
       window.setTimeout(() => setAttachmentToast(null), 3000);
       return;
     }
+    attachmentSlotCountRef.current += files.length;
+    const releaseSlot = () => {
+      attachmentSlotCountRef.current = Math.max(0, attachmentSlotCountRef.current - 1);
+    };
 
-    for (const file of imageFiles.slice(0, maxFiles - pendingAttachments.length)) {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = (reader.result as string).split(",")[1];
-        if (!base64) return;
-
-        try {
-          const response = await fetch("/api/attachments/drafts", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              data: base64,
-              mimeType: file.type,
-              filename: file.name || "pasted-image.png",
-            }),
-          });
-          if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            setAttachmentToast((err as { message?: string }).message ?? "图片上传失败");
-            window.setTimeout(() => setAttachmentToast(null), 3000);
-            return;
-          }
-          const result = await response.json();
-          if (result.ok && result.attachment) {
-            setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
-          }
-        } catch {
-          setAttachmentToast("图片上传失败");
+    for (const file of files) {
+      const base64 = await readFileAsBase64(file);
+      if (!base64) {
+        releaseSlot();
+        continue;
+      }
+      try {
+        const response = await fetch("/api/attachments/drafts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            data: base64,
+            mimeType: file.type,
+            // 剪贴板图片可能没有文件名：回退到固定名，保证服务端可校验扩展名。
+            filename: file.name || (file.type.startsWith("image/") ? "pasted-image.png" : ""),
+          }),
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          setAttachmentToast((err as { message?: string }).message ?? "附件上传失败");
           window.setTimeout(() => setAttachmentToast(null), 3000);
+          releaseSlot();
+          continue;
         }
-      };
-      reader.readAsDataURL(file);
+        const result = await response.json();
+        if (result.ok && result.attachment) {
+          setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
+        } else {
+          releaseSlot();
+        }
+      } catch {
+        setAttachmentToast("附件上传失败");
+        window.setTimeout(() => setAttachmentToast(null), 3000);
+        releaseSlot();
+      }
+    }
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+
+    // 文件（含图片）：优先 files，其次 items 中的 file 条目。
+    const pastedFiles: File[] = [];
+    if (clipboard.files?.length) {
+      for (const file of Array.from(clipboard.files)) pastedFiles.push(file);
+    } else {
+      const items = clipboard.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item?.kind === "file") {
+            const file = item.getAsFile();
+            if (file) pastedFiles.push(file);
+          }
+        }
+      }
+    }
+
+    if (pastedFiles.length > 0) {
+      // 浏览器能否暴露 Finder/Explorer 复制的文件取决于平台；拿不到时用户仍可用“添加附件”。
+      event.preventDefault();
+      void uploadAttachmentFiles(pastedFiles);
+      return;
+    }
+
+    // 部分浏览器把复制的文件仅暴露为 file:// 文本：无法读取内容，引导改用文件选择。
+    if (looksLikeFileUrlPaste(clipboard.getData("text/plain"))) {
+      event.preventDefault();
+      setAttachmentToast("当前浏览器无法读取复制文件的内容，请使用“添加附件”按钮选择文件。");
+      window.setTimeout(() => setAttachmentToast(null), 3000);
+      return;
     }
   }
 
@@ -637,6 +681,9 @@ export function App() {
         method: "DELETE",
       });
     } catch { /* best effort */ }
+    if (pendingAttachments.some((a) => a.id === id)) {
+      attachmentSlotCountRef.current = Math.max(0, attachmentSlotCountRef.current - 1);
+    }
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   }
 
@@ -1316,23 +1363,53 @@ export function App() {
               <div className="attachmentPreviewBar">
                 {pendingAttachments.map((att) => (
                   <div key={att.id} className="attachmentPreviewItem">
-                    <img
-                      src={att.previewUrl}
-                      alt={att.filename}
-                      className="attachmentPreviewThumb"
-                      onClick={() => setPreviewAttachment(att)}
-                      title="点击预览"
-                    />
-                    <button
-                      type="button"
-                      className="attachmentPreviewRemove"
-                      onClick={() => removePendingAttachment(att.id)}
-                      title="移除图片"
-                    >&times;</button>
+                    {att.kind === "image" && att.previewUrl ? (
+                      <>
+                        <img
+                          src={att.previewUrl}
+                          alt={att.filename}
+                          className="attachmentPreviewThumb"
+                          onClick={() => setPreviewAttachment(att)}
+                          title="点击预览"
+                        />
+                        <button
+                          type="button"
+                          className="attachmentPreviewRemove"
+                          onClick={() => removePendingAttachment(att.id)}
+                          title="移除图片"
+                        >&times;</button>
+                      </>
+                    ) : (
+                      <div className="attachmentFileChip" title={att.filename}>
+                        <span className="attachmentFileChipName">{att.filename}</span>
+                        <span className="attachmentFileChipMeta">{formatFileSize(att.size)}</span>
+                        <button
+                          type="button"
+                          className="attachmentPreviewRemove"
+                          onClick={() => removePendingAttachment(att.id)}
+                          title="移除附件"
+                          aria-label={`移除附件 ${att.filename}`}
+                        >&times;</button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              multiple
+              accept={attachmentAcceptAttribute()}
+              className="attachmentFileInput"
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                event.target.value = "";
+                void uploadAttachmentFiles(files);
+              }}
+            />
             <textarea
               ref={inputRef}
               value={content}
@@ -1385,6 +1462,18 @@ export function App() {
               />
             ) : null}
             <div className="composerModeRow">
+              <div className="attachmentControl">
+                <button
+                  type="button"
+                  className="attachmentControlTrigger"
+                  onClick={() => attachmentInputRef.current?.click()}
+                  disabled={!hasWorkspace || !hasEnabledAgent}
+                  title="添加附件（图片、PDF、文本或代码文件）"
+                  aria-label="添加附件"
+                >
+                  <AttachIcon className="attachmentControlIcon" />
+                </button>
+              </div>
               <div className="interactionModeControl">
                 <button
                   type="button"
@@ -1961,20 +2050,34 @@ function MessageRow({
         {message.attachments?.length ? (
           <div className="messageAttachments">
             {message.attachments.map((att) => (
-              <a
-                key={att.id}
-                href={att.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="messageAttachmentLink"
-              >
-                <img
-                  src={att.url}
-                  alt={att.filename}
-                  className="messageAttachmentThumb"
-                  loading="lazy"
-                />
-              </a>
+              att.kind === "image" ? (
+                <a
+                  key={att.id}
+                  href={att.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="messageAttachmentLink"
+                >
+                  <img
+                    src={att.url}
+                    alt={att.filename}
+                    className="messageAttachmentThumb"
+                    loading="lazy"
+                  />
+                </a>
+              ) : (
+                <a
+                  key={att.id}
+                  href={att.url}
+                  download={att.filename}
+                  className="messageAttachmentFile"
+                  title={`下载 ${att.filename}`}
+                >
+                  <AttachIcon className="messageAttachmentFileIcon" />
+                  <span className="messageAttachmentFileName">{att.filename}</span>
+                  <span className="messageAttachmentFileSize">{formatFileSize(att.size)}</span>
+                </a>
+              )
             ))}
           </div>
         ) : null}
@@ -3274,6 +3377,31 @@ function scrollMessagesToBottom(element: HTMLDivElement | null): void {
   }
 
   element.scrollTop = element.scrollHeight;
+}
+
+function readFileAsBase64(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      resolve(base64 || null);
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
+/** 附件 chip 使用的友好大小（B/KB/MB）。 */
+function formatFileSize(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+/** 剪贴板文本整体是 file:// URI（单行或多行）时视为“复制的文件”，无法作为文本粘贴。 */
+function looksLikeFileUrlPaste(text: string): boolean {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  return lines.length > 0 && lines.every((line) => line.startsWith("file://"));
 }
 
 function createLocalSystemMessage(content: string): ChatMessage {

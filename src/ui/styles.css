@@ -5047,6 +5047,120 @@ button:active:not(:disabled) {
   background: var(--bg-base);
 }
 
+.messageAttachmentFile {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 280px;
+  padding: 7px 11px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-decoration: none;
+  transition: all var(--transition-fast);
+}
+
+.messageAttachmentFile:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.messageAttachmentFileIcon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.messageAttachmentFileName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.messageAttachmentFileSize {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
+/* --- Composer attachment controls --- */
+
+.attachmentFileInput {
+  display: none;
+}
+
+.attachmentControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.attachmentControlTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  min-width: 30px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.attachmentControlTrigger:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--accent);
+}
+
+.attachmentControlTrigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.attachmentControlTrigger:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 1px;
+}
+
+.attachmentControlIcon {
+  font-size: 17px;
+}
+
+/* --- Draft file chips (composer preview bar) --- */
+
+.attachmentFileChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  min-height: 34px;
+  padding: 4px 20px 4px 10px;
+  position: relative;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.attachmentFileChipName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.attachmentFileChipMeta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
 /* ===== Workspace Preset Styles ===== */
 
 .presetSelector {
