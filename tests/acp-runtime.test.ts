@@ -6,6 +6,7 @@ import type { InitializeResponse, PromptResponse, SessionNotification } from "@a
 import {
   CANCEL_GRACE_MS,
   runAcp,
+  spawnAcpConnection,
   type AcpConnection,
   type AcpConnector,
   type AcpRuntimeDefinition,
@@ -207,4 +208,56 @@ test("repeated interrupt requests stay idempotent", async (t) => {
   await assert.rejects(handle.result, AgentRunCancelledError);
   assert.equal(fake.calls.filter((call) => call === "session/cancel:fake-session").length, 1);
   assert.equal(fake.calls.filter((call) => call === "destroy").length, 1);
+});
+
+test("stdout EOF rejects pending ACP requests and marks the connection dead", { timeout: 20_000, skip: process.platform === "win32" }, async () => {
+  // Issue #141：runtime 进程活着但提前关闭 stdout 时，pending 请求原先会
+  // 永久挂起；现在 transport closed 必须显式拒绝，且连接不可再复用。
+  // Windows 上 Node 的同步 stdout 无法从进程内真正关闭管道（end()、
+  // destroy()、closeSync(1) 实测都不触发父进程 EOF），本用例只在 POSIX
+  // 运行；CI（ubuntu）负责覆盖，Windows 由下一个 exit 用例验证诊断格式。
+  const script = "require('node:fs').closeSync(1); setInterval(() => {}, 1000);";
+  const probeDefinition: AcpRuntimeDefinition = {
+    kind: "codebuddy",
+    displayName: "Transport Probe",
+    buildCommand: () => ({ file: process.execPath, args: ["-e", script] }),
+  };
+  const connection = spawnAcpConnection(probeDefinition, runOptions({ cwd: process.cwd() }), () => {});
+  try {
+    // SDK 在流关闭时可能抢先以裸 "ACP connection closed" 拒绝 pending 请求，
+    // 与本模块的 transport-closed 兜底存在赛跑；这里断言稳定不变量：请求
+    // 必须被拒绝（不再挂死），且连接随后不可复用。
+    await assert.rejects(
+      connection.initialize({ protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "Orbit", version: "test" } }),
+    );
+    assert.equal(connection.isAlive(), false, "stdout EOF 后连接必须视为不可复用");
+  } finally {
+    connection.destroy?.();
+  }
+});
+
+test("an unexpected process exit rejects pending requests with pid diagnostics", { timeout: 20_000 }, async () => {
+  // Issue #141：失败诊断必须带 runtime displayName、pid 与退出码，便于区分
+  // transport 断开与进程崩溃。
+  const script = "process.exit(7);";
+  const probeDefinition: AcpRuntimeDefinition = {
+    kind: "codebuddy",
+    displayName: "Exit Probe",
+    buildCommand: () => ({ file: process.execPath, args: ["-e", script] }),
+  };
+  const connection = spawnAcpConnection(probeDefinition, runOptions({ cwd: process.cwd() }), () => {});
+  try {
+    await assert.rejects(
+      connection.initialize({ protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "Orbit", version: "test" } }),
+      (error: unknown) => {
+        // exit 监听与 SDK 的裸拒绝赛跑，但连接已死时 request 会统一补上
+        // runtime 前缀与 pid，两种消息都必须可定位到具体进程。
+        assert.match((error as Error).message, /Exit Probe ACP .+pid \d+/, `unexpected message: ${(error as Error).message}`);
+        return true;
+      },
+    );
+    assert.equal(connection.isAlive(), false);
+  } finally {
+    connection.destroy?.();
+  }
 });

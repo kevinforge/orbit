@@ -175,6 +175,21 @@ export class AcpConnectionPool {
   }
 }
 
+// 代理环境变量参与连接键（issue #141）：切换系统代理后，池中旧连接仍走旧
+// 出口，必须视为不可复用；代理值变化会产生不同的键，从而另起新进程。
+const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"] as const;
+
+function proxyEnvKey(baseEnv: NodeJS.ProcessEnv, runEnv: NodeJS.ProcessEnv): Record<string, string> {
+  const snapshot: Record<string, string> = {};
+  for (const key of PROXY_ENV_KEYS) {
+    // runEnv 覆盖 baseEnv（与 spawn 时的展开顺序一致）；大小写变体取先定义者，
+    // 统一以大写键写入快照，避免仅大小写不同的环境相互复用连接。
+    const value = runEnv[key] ?? runEnv[key.toLowerCase()] ?? baseEnv[key] ?? baseEnv[key.toLowerCase()];
+    if (value !== undefined) snapshot[key] = value;
+  }
+  return snapshot;
+}
+
 function connectionKey(definition: AcpRuntimeDefinition, options: AcpRunOptions): string {
   const baseEnv = options.env ?? process.env;
   const command = definition.buildCommand(baseEnv);
@@ -186,5 +201,6 @@ function connectionKey(definition: AcpRuntimeDefinition, options: AcpRunOptions)
     approvalMode: options.approvalMode ?? "ask",
     command: [command.file, ...command.args],
     runEnv: Object.entries(runEnv).sort(([left], [right]) => left.localeCompare(right)),
+    proxyEnv: proxyEnvKey(baseEnv, runEnv),
   });
 }

@@ -900,6 +900,12 @@ export function spawnAcpConnection(
   );
   const acp = app.connect(stream);
 
+  // stdout EOF（传输断开）的连接即使进程还活着也不可复用（issue #141）。
+  let stdoutEnded = false;
+  guardedStdout.once("end", () => {
+    stdoutEnded = true;
+  });
+
   const connection = connectionFromProcess(child, acp, definition.displayName, guardedStdout, () => stderrForwarder.tailText());
   return {
     ...connection,
@@ -911,7 +917,7 @@ export function spawnAcpConnection(
       context = null;
     },
     isAlive() {
-      return child.exitCode === null && child.signalCode === null;
+      return child.exitCode === null && child.signalCode === null && !stdoutEnded;
     },
   };
 }
@@ -925,23 +931,58 @@ function connectionFromProcess(
 ): AcpConnection {
   const pid = child.pid ?? 0;
   let closed = false;
+  let transportEnded = false;
   let rejectProcessFailure!: (error: Error) => void;
   const processFailure = new Promise<never>((_resolve, reject) => {
     rejectProcessFailure = reject;
   });
   void processFailure.catch(() => undefined);
-  child.once("error", (error) => rejectProcessFailure(error));
-  guardedStdout?.once("error", (error) => rejectProcessFailure(error));
+  guardedStdout?.once("end", () => {
+    transportEnded = true;
+  });
+  child.once("error", (error) => rejectProcessFailure(new Error(
+    `${displayName} ACP process failed (pid ${pid}): ${error.message}`,
+  )));
+  guardedStdout?.once("error", (error) => rejectProcessFailure(new Error(
+    `${displayName} ACP transport failed (pid ${pid}): ${error.message}`,
+  )));
+  // 进程活着但 stdout 提前 EOF（runtime 崩溃或只关闭了输出流）时，pending
+  // 请求会永久挂在 Promise.race 上；把传输结束也视为进程失败（issue #141）。
+  // Windows 上崩溃进程的 stdout EOF 会先于 exit 事件到达，这里延迟一拍落定，
+  // 让进程退出场景由 exit 监听给出带退出码的诊断；只有进程确实仍在运行才
+  // 报 transport closed。
+  guardedStdout?.once("end", () => {
+    if (closed) return;
+    const transportClosedTimer = setTimeout(() => {
+      if (closed) return;
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const stderr = stderrText?.().trim();
+      rejectProcessFailure(new Error(
+        `${displayName} ACP transport closed (stdout ended while pid ${pid} was still running).` +
+        (stderr ? `\n${stderr}` : ""),
+      ));
+    }, 50);
+    transportClosedTimer.unref?.();
+  });
   child.once("exit", (code, signal) => {
     if (!closed) {
       const stderr = stderrText?.().trim();
       rejectProcessFailure(new Error(
-        `${displayName} ACP process exited unexpectedly (${code === null ? signal : `code ${code}`}).` +
+        `${displayName} ACP process exited unexpectedly (pid ${pid}, ${code === null ? `signal ${signal}` : `code ${code}`}).` +
         (stderr ? `\n${stderr}` : ""),
       ));
     }
   });
-  const request = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, processFailure]);
+  // 失败诊断统一带 runtime displayName 与 pid（issue #141）：进程退出或连接
+  // 被关闭时，ACP SDK 可能抢先以裸 "ACP connection closed" 拒绝 pending 请求，
+  // 这里补上进程上下文；连接健康时的业务错误与本模块已带前缀的诊断保持原样。
+  const request = <T>(operation: Promise<T>): Promise<T> =>
+    Promise.race([operation, processFailure]).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const connectionDead = closed || transportEnded || child.exitCode !== null || child.signalCode !== null;
+      if (!connectionDead || message.startsWith(`${displayName} ACP `)) throw error;
+      throw new Error(`${displayName} ACP request failed (pid ${pid}): ${message}`);
+    });
 
   const terminate = () => {
     if (closed) return;
