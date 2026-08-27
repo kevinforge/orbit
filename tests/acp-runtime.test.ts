@@ -12,6 +12,7 @@ import type {
 
 import {
   CANCEL_GRACE_MS,
+  probeAcpModelState,
   runAcp,
   spawnAcpConnection,
   type AcpConnection,
@@ -455,6 +456,24 @@ function modelOption(overrides: {
     ],
   };
 }
+
+test("probes model options without prompting and destroys the temporary connection", async () => {
+  const fake = fakeConnector({
+    sessionConfigOptions: [modelOption({ currentValue: "model-a" })],
+  });
+  const snapshot = await probeAcpModelState(
+    definition,
+    { agentId: "developer", cwd: "D:/workspace" },
+    fake.connector,
+  );
+
+  assert.deepEqual(snapshot?.choices, [
+    { value: "model-a", name: "模型 A" },
+    { value: "model-b", name: "模型 B" },
+  ]);
+  assert.equal(fake.calls.some((call) => call.startsWith("session/prompt:")), false);
+  assert.ok(fake.calls.some((call) => call.startsWith("destroy:")));
+});
 
 test("applies the preferred model after the session is established", async () => {
   const fake = fakeConnector({

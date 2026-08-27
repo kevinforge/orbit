@@ -51,7 +51,8 @@ sent or deleted.
 current value reported by that employee's runtime through ACP session config
 options. It is runtime-derived state, not user configuration: model
 preferences chosen in the settings UI are stored in `agents.json`, and this
-cache is rewritten by Orbit whenever a run reports a fresh snapshot.
+cache is rewritten by Orbit whenever a model discovery probe or run reports a
+fresh snapshot.
 
 These files can contain project paths, conversation content, uploaded
 attachments, digital employee configuration, ACP session records, runtime

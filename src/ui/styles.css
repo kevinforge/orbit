@@ -2837,6 +2837,16 @@ button:active:not(:disabled) {
   font-size: 13px;
 }
 
+.modelProbeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 /* --- Workspace Config Panel --- */
 
 .workspaceConfigPanel {
@@ -4192,15 +4202,19 @@ button:active:not(:disabled) {
 }
 
 .modelChoiceList {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 4px;
+  max-height: 236px;
+  overflow-y: auto;
+  padding: 2px 4px 2px 0;
 }
 
 .modelChoice {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
+  min-width: 0;
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -4226,6 +4240,14 @@ button:active:not(:disabled) {
 .modelChoice input[type="radio"] {
   accent-color: var(--accent);
   margin: 0;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.modelChoice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .modelHint {

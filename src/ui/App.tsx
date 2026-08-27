@@ -2616,6 +2616,7 @@ function AgentManagerPanel({
   const [error, setError] = useState("");
   const [teamTemplates, setTeamTemplates] = useState<AgentTeamTemplate[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [isProbingModels, setIsProbingModels] = useState(false);
   const focusedAgentApplied = useRef(false);
 
   const availByRuntime = useMemo(() => {
@@ -2649,6 +2650,27 @@ function AgentManagerPanel({
       .then((data) => setTeamTemplates(Array.isArray(data) ? data as AgentTeamTemplate[] : []))
       .catch(() => setTeamTemplates([]));
   }, []);
+
+  async function probeModels(force = false) {
+    if (isProbingModels) return;
+    setIsProbingModels(true);
+    try {
+      const response = await fetch(`/api/agents/probe-models${force ? "?force=1" : ""}`, { method: "POST" });
+      if (!response.ok) {
+        setError("获取模型列表失败，请稍后重试。");
+        return;
+      }
+      setConfigs(await response.json() as AgentConfigWithModelState[]);
+    } catch {
+      setError("获取模型列表失败，请检查本地运行时是否可用。");
+    } finally {
+      setIsProbingModels(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!loading) void probeModels();
+  }, [loading]);
 
   // 面板打开期间员工运行产生的模型快照（SSE agent.model_state）实时合并进列表，
   // 保证"当前模型"与可选列表反映 runtime 的最新状态。
@@ -2816,6 +2838,12 @@ function AgentManagerPanel({
               <span>安装或更新命令行工具后，可以重新检测运行环境。</span>
               <button type="button" className="runtimeRefreshBtn" onClick={onRefreshRuntimes} disabled={isRefreshingRuntimes}>
                 {isRefreshingRuntimes ? "检测中..." : "重新检测运行环境"}
+              </button>
+            </div>
+            <div className="modelProbeRow">
+              <span>{isProbingModels ? "正在获取各运行时的模型列表..." : "模型列表来自本地运行时，可在员工配置中选择。"}</span>
+              <button type="button" className="runtimeRefreshBtn" onClick={() => void probeModels(true)} disabled={isProbingModels}>
+                {isProbingModels ? "获取中..." : "刷新模型列表"}
               </button>
             </div>
             <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义数字员工</button>

@@ -271,18 +271,7 @@ export function runAcp(
 
   const turn = (async () => {
     let succeeded = false;
-    const initializeRequest = {
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        elicitation: {
-          form: {},
-          url: {},
-        },
-        plan: {},
-        session: { configOptions: {} },
-      },
-      clientInfo: { name: "Orbit", version: "1.0.0" },
-    } satisfies InitializeRequest;
+    const initializeRequest = createAcpInitializeRequest();
     try {
       const initialized = await connection.initialize(initializeRequest);
       validateInitializeResponse(initialized, definition.displayName);
@@ -377,6 +366,50 @@ export function runAcp(
     result,
     sessionId,
   };
+}
+
+const MODEL_PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * 在不发送 prompt 的前提下读取 runtime 的模型配置。设置面板首次打开时使用，
+ * 连接和临时 session 都会在读取完成后销毁，不会写入员工的会话记录。
+ */
+export async function probeAcpModelState(
+  definition: AcpRuntimeDefinition,
+  options: Pick<AcpRunOptions, "agentId" | "cwd" | "env">,
+  connector: AcpConnector = (runOptions, onSessionUpdate) =>
+    spawnAcpConnection(definition, runOptions, onSessionUpdate),
+): Promise<AgentModelStateSnapshot | null> {
+  const probeOptions: AcpRunOptions = {
+    ...options,
+    prompt: "",
+    approvalMode: "full-access",
+  };
+  let connection: AcpConnection | undefined;
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    const probe = (async () => {
+      connection = connector(probeOptions, () => {});
+      const initialized = await connection.initialize(createAcpInitializeRequest());
+      validateInitializeResponse(initialized, definition.displayName);
+      const created = await connection.newSession({
+        cwd: path.resolve(probeOptions.cwd),
+        mcpServers: [],
+      });
+      return toModelSnapshot(created.configOptions, probeOptions, definition);
+    })();
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error(`${definition.displayName} model discovery timed out.`)),
+        MODEL_PROBE_TIMEOUT_MS,
+      );
+      timeout.unref?.();
+    });
+    return await Promise.race([probe, deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    connection?.destroy?.();
+  }
 }
 
 /** 会话建立结果：sessionId 加上本次建立路径拿到的 config options 快照。 */
@@ -608,6 +641,21 @@ function validateInitializeResponse(response: InitializeResponse, displayName: s
       `Unsupported ${displayName} ACP protocol version ${response.protocolVersion}; Orbit requires ${PROTOCOL_VERSION}.`,
     );
   }
+}
+
+function createAcpInitializeRequest(): InitializeRequest {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: {
+      elicitation: {
+        form: {},
+        url: {},
+      },
+      plan: {},
+      session: { configOptions: {} },
+    },
+    clientInfo: { name: "Orbit", version: "1.0.0" },
+  } satisfies InitializeRequest;
 }
 
 function buildPromptContent(

@@ -102,6 +102,12 @@ This ensures routing and run dispatch use the current agent configuration. A 409
 Each digital employee can pin a preferred model when its runtime advertises
 model selection through ACP session config options. The flow is:
 
+- When the digital employee settings panel opens, or when the user manually
+   refreshes the list, Orbit creates a temporary ACP connection for each
+   distinct runtime and reads `session/new` config options without sending a
+   prompt. The temporary connection is destroyed after discovery and does not
+   create an Orbit employee session or conversation record.
+
 1. On connection initialization Orbit declares the `session.configOptions`
    client capability. New, resumed, and restored sessions return the runtime's
    `configOptions`, from which Orbit extracts the `category: "model"` select

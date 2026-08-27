@@ -6,7 +6,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { configsToProfiles } from "../core/agent-profiles.ts";
-import { disposeAcpConnectionPool } from "../core/acp-runtime.ts";
+import { disposeAcpConnectionPool, probeAcpModelState } from "../core/acp-runtime.ts";
+import { defaultAcpRunnerRegistry } from "../core/acp-runner-registry.ts";
 import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
 import { AgentModelStateStore } from "../core/agent-model-state-store.ts";
 import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
@@ -94,6 +95,51 @@ async function probeRuntimes(): Promise<void> {
   if (changed) {
     sseHub.publish({ type: "runtime.availability.updated", availability: getRuntimeAvailabilityArray() });
   }
+}
+
+async function probeConfiguredAgentModels(force = false): Promise<void> {
+  if (!activeWorkspaceId) return;
+  const workspaceId = activeWorkspaceId;
+  const workspace = workspaceStore.get(workspaceId);
+  if (!workspace) return;
+
+  const existing = agentModelStateStore.load(workspaceId);
+  const targetsByRuntime = new Map<AgentConfig["runtime"], AgentConfig[]>();
+  for (const config of allConfigs) {
+    const snapshot = existing[config.id];
+    if (!force && snapshot?.runtimeKind === config.runtime) continue;
+    const targets = targetsByRuntime.get(config.runtime) ?? [];
+    targets.push(config);
+    targetsByRuntime.set(config.runtime, targets);
+  }
+
+  await Promise.all([...targetsByRuntime.entries()].map(async ([runtimeKind, targets]) => {
+    const registration = defaultAcpRunnerRegistry.get(runtimeKind);
+    if (!registration) return;
+    try {
+      const first = targets[0]!;
+      const snapshot = await probeAcpModelState(registration.definition, {
+        agentId: first.id,
+        cwd: workspace.path,
+      });
+      if (!snapshot) return;
+      for (const target of targets) {
+        const targetSnapshot = { ...snapshot, agentId: target.id };
+        agentModelStateStore.update(workspaceId, targetSnapshot);
+        sseHub.publish({
+          type: "agent.model_state",
+          workspaceId,
+          agentId: target.id,
+          modelState: targetSnapshot,
+        });
+      }
+    } catch (error) {
+      console.warn(
+        `[orbit] model discovery failed for ${registration.definition.displayName}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }));
 }
 
 function startPeriodicProbe(): void {
@@ -753,6 +799,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/agents") {
       // 合并 workspace 级模型快照（issue #142）：模型列表/当前值由 runtime 在
       // 运行时写入独立存储，agents.json 只保存用户偏好。
+      const modelStates = activeWorkspaceId ? agentModelStateStore.load(activeWorkspaceId) : {};
+      sendJson(res, 200, allConfigs.map((config) => ({
+        ...config,
+        modelState: modelStates[config.id],
+      })));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/agents/probe-models") {
+      await probeConfiguredAgentModels(url.searchParams.get("force") === "1");
       const modelStates = activeWorkspaceId ? agentModelStateStore.load(activeWorkspaceId) : {};
       sendJson(res, 200, allConfigs.map((config) => ({
         ...config,
