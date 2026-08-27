@@ -5,14 +5,26 @@ import path from "node:path";
 import test from "node:test";
 import { isInsideWorkspaces, resolveRevealTarget } from "../src/server/local-path-reveal.ts";
 
-test("isInsideWorkspaces accepts exact roots and nested paths with case and separator tolerance", () => {
+test("isInsideWorkspaces accepts exact roots and nested paths with separator tolerance", () => {
   const roots = ["D:\\Projects\\Orbit"];
+  assert.equal(isInsideWorkspaces("D:/Projects/Orbit", roots), true);
+  assert.equal(isInsideWorkspaces("D:\\Projects\\Orbit\\src\\ui", roots), true);
+  assert.equal(isInsideWorkspaces("D:/Projects/Orbit/", roots), true);
+  assert.equal(isInsideWorkspaces("D:/Projects/Orbit-other", roots), false, "prefix without separator must not match");
+  assert.equal(isInsideWorkspaces("E:/elsewhere", roots), false);
+  assert.equal(isInsideWorkspaces("D:/Projects/Orbit", []), false, "no configured roots means nothing is allowed");
+});
+
+// Windows 与 macOS 文件系统不区分大小写，比较时折叠大小写；Linux 精确
+// 比较，异大小写路径不会在工作区内被假放行。
+test("isInsideWorkspaces folds case only on case-insensitive platforms", () => {
+  const roots = ["D:\\Projects\\Orbit"];
+  if (process.platform === "linux") {
+    assert.equal(isInsideWorkspaces("D:/projects/orbit", roots), false, "linux must compare case-sensitively");
+    return;
+  }
   assert.equal(isInsideWorkspaces("D:/projects/orbit", roots), true);
   assert.equal(isInsideWorkspaces("d:\\projects\\orbit\\src\\ui", roots), true);
-  assert.equal(isInsideWorkspaces("D:/projects/orbit/", roots), true);
-  assert.equal(isInsideWorkspaces("D:/projects/orbit-other", roots), false, "prefix without separator must not match");
-  assert.equal(isInsideWorkspaces("E:/elsewhere", roots), false);
-  assert.equal(isInsideWorkspaces("D:/projects/orbit", []), false, "no configured roots means nothing is allowed");
 });
 
 test("resolveRevealTarget resolves files inside a configured workspace", async () => {

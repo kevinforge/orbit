@@ -412,14 +412,15 @@ export function App() {
     window.setTimeout(() => setPathToast(null), 3000);
   }
 
-  // 消息区事件委托：markdown 渲染出的本地路径入口（issue #143）点击后调用
-  // /api/local-path/reveal 在资源管理器中定位；失败或越界时提示原因，并把
-  // 路径复制到剪贴板兜底。
-  async function handleMessagesClick(event: MouseEvent<HTMLDivElement>) {
-    const entry = (event.target as HTMLElement).closest<HTMLElement>(`.${LOCAL_PATH_LINK_CLASS}`);
-    if (!entry) return;
-    const path = entry.dataset.path;
-    if (!path) return;
+  // 消息区事件委托：markdown 渲染出的本地路径入口（issue #143）点击或
+  // Enter/Space 激活后调用 /api/local-path/reveal 在资源管理器中定位；
+  // 失败或越界时提示原因，并把路径复制到剪贴板兜底。
+  function localPathEntryFromEventTarget(target: EventTarget | null): HTMLElement | null {
+    if (!(target instanceof HTMLElement)) return null;
+    return target.closest<HTMLElement>(`.${LOCAL_PATH_LINK_CLASS}`);
+  }
+
+  async function revealLocalPath(path: string) {
     let reason = "";
     try {
       const response = await fetch("/api/local-path/reveal", {
@@ -439,6 +440,24 @@ export function App() {
     } catch {
       showPathToast(reason);
     }
+  }
+
+  async function handleMessagesClick(event: MouseEvent<HTMLDivElement>) {
+    const entry = localPathEntryFromEventTarget(event.target);
+    const path = entry?.dataset.path;
+    if (!path) return;
+    await revealLocalPath(path);
+  }
+
+  // 入口带 role="button" tabindex="0"，键盘激活必须与点击等价；Space 需
+  // preventDefault 避免滚动消息区。
+  function handleMessagesKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const entry = localPathEntryFromEventTarget(event.target);
+    const path = entry?.dataset.path;
+    if (!path) return;
+    event.preventDefault();
+    void revealLocalPath(path);
   }
 
   useLayoutEffect(() => {
@@ -1244,7 +1263,7 @@ export function App() {
           </div>
         </header>
 
-        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="消息列表" onScroll={handleMessagesScroll} onClick={(event) => { void handleMessagesClick(event); }}>
+        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="消息列表" onScroll={handleMessagesScroll} onClick={(event) => { void handleMessagesClick(event); }} onKeyDown={handleMessagesKeyDown}>
           {state.messageHistory.hasOlderMessages ? (
             <button
               className="loadOlderMessagesBtn"

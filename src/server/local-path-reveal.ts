@@ -10,11 +10,15 @@ export type RevealResolution =
   | { ok: true; target: string; isDirectory: boolean }
   | { ok: false; status: 400 | 403 | 404; message: string };
 
-// 比较前归一化：统一分隔符、去掉尾部斜杠、转小写（Windows 路径不区分
-// 大小写；POSIX 侧小写化只会让比较略偏保守，不会放开边界）。返回给 UI 的
-// target 始终保留 fs.realpath 的真实大小写。
+// 比较前归一化：统一分隔符、去掉尾部斜杠。Windows 与 macOS 的默认文件
+// 系统不区分大小写，转小写比较；Linux 区分大小写，保留原样精确比较——
+// 小写化会让 /SRV/app 在工作区 /srv/app 下被误判为界内（假放行）。返回
+// 给 UI 的 target 始终保留 fs.realpath 的真实大小写。
+const caseInsensitiveFs = process.platform === "win32" || process.platform === "darwin";
+
 function normalizeForCompare(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const unified = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  return caseInsensitiveFs ? unified.toLowerCase() : unified;
 }
 
 export function isInsideWorkspaces(candidate: string, roots: string[]): boolean {
