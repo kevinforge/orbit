@@ -86,6 +86,25 @@ describe("renderMarkdown", () => {
     assert.ok(result.includes(">文本</a>，"), `expected link text and stripped comma in: ${result}`);
   });
 
+  it("keeps explicit CJK-ending hrefs intact so Chinese URLs stay navigable", () => {
+    const result = renderMarkdown("[中文维基](https://zh.wikipedia.org/wiki/数学)");
+    assert.ok(
+      result.includes('href="https://zh.wikipedia.org/wiki/数学"'),
+      `expected the full Chinese URL preserved in: ${result}`,
+    );
+    assert.ok(result.includes(">中文维基</a>"), `expected link text in: ${result}`);
+    assert.ok(!result.includes("</a>数学"), `expected no stripped characters leaked as body text in: ${result}`);
+  });
+
+  it("strips only the trailing punctuation from explicit Chinese URLs", () => {
+    const result = renderMarkdown("[中文维基](https://zh.wikipedia.org/wiki/数学。)");
+    assert.ok(
+      result.includes('href="https://zh.wikipedia.org/wiki/数学"'),
+      `expected the trailing CJK period stripped but the URL segment kept in: ${result}`,
+    );
+    assert.ok(result.includes("</a>。"), `expected the stripped period kept as body text in: ${result}`);
+  });
+
   it("renders local drive hrefs as path entries instead of navigable links", () => {
     const result = renderMarkdown("[styles.css](D:/projects/orbit/src/ui/styles.css)");
     assert.ok(result.includes('data-path="D:/projects/orbit/src/ui/styles.css"'), `expected data-path entry in: ${result}`);
@@ -98,6 +117,13 @@ describe("renderMarkdown", () => {
     const result = renderMarkdown("[查看](file:///D:/projects/orbit/src/ui/styles.css)");
     assert.ok(result.includes('data-path="D:/projects/orbit/src/ui/styles.css"'), `expected file:/// stripped in: ${result}`);
     assert.ok(!result.includes("file:"), `expected no file: scheme left in: ${result}`);
+  });
+
+  it("strips trailing punctuation from local path entry hrefs", () => {
+    const windows = renderMarkdown("[配置](D:/proj/settings.json。)");
+    assert.ok(windows.includes('data-path="D:/proj/settings.json"'), `expected CJK period stripped in: ${windows}`);
+    const posix = renderMarkdown("[日志](/var/log/app.log，)");
+    assert.ok(posix.includes('data-path="/var/log/app.log"'), `expected fullwidth comma stripped in: ${posix}`);
   });
 
   it("renders home-relative hrefs as path entries", () => {
@@ -132,7 +158,8 @@ describe("renderMarkdown", () => {
 
   it("escapes quotes in path entry attributes to prevent attribute injection", () => {
     const result = renderMarkdown('[x](D:/a"onmouseover="alert(1))');
-    assert.ok(result.includes('data-path="D:/a&quot;onmouseover=&quot;alert(1)"'), `expected escaped data-path in: ${result}`);
+    // 尾部 ")" 按正文标点剥离，引号全部转义，data-path 无法逃出属性。
+    assert.ok(result.includes('data-path="D:/a&quot;onmouseover=&quot;alert(1"'), `expected escaped data-path in: ${result}`);
     assert.ok(!result.includes('onmouseover="alert'), `expected no unescaped handler in: ${result}`);
   });
 });
