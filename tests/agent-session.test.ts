@@ -425,6 +425,69 @@ test("interrupt does NOT clear session — preserves conversation context", asyn
   assert.equal(sessionAfterInterrupt?.sessionId, "session-before-interrupt", "session should survive interrupt");
 });
 
+test("session downgrade inside the runtime persists the replacement sessionId", async () => {
+  // #141 后半：runtime 在 resume 失败且不可恢复时内部降级到新 runtime 会话。
+  // AgentSession 必须持久化降级后的新 sessionId（而非旧的 resume 值），且
+  // 不把它当作 resume 失败做二次重试。
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  store.save("codebuddy", "default", "developer", {
+    agentId: "developer",
+    runtime: "codebuddy",
+    sessionId: "stale-session",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+
+  const eventBus = new EventBus();
+  const events: Array<{ type: string; text?: string }> = [];
+  eventBus.subscribe((event) => events.push(event));
+
+  const calls: AgentRuntimeRunOptions[] = [];
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      calls.push(options);
+      // 模拟 acp-runtime 的不可恢复降级：resume 报 thread-store conflict，
+      // runtime 内部改走 session/new 拿到新 id，并发出过程提示。
+      options.onOutput?.("原 CodeBuddy 会话无法恢复（thread-store conflict），已使用新的会话继续。");
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: Promise.resolve("clean final"),
+        sessionId: Promise.resolve("fresh-session"),
+      };
+    },
+  };
+
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  session.start();
+  const result = await session.send("run-1", "hello");
+
+  assert.equal(result.content, "clean final");
+  assert.equal(result.sessionId, "fresh-session");
+  // 降级发生在 runtime 内部：AgentSession 只发起一次 run，不做二次重试。
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.resumeSessionId, "stale-session");
+  // 持久化的是降级后的新 sessionId。
+  const persisted = store.load("codebuddy", "default", "developer");
+  assert.equal(persisted!.sessionId, "fresh-session", "降级后的新 sessionId 必须被持久化");
+  assert.equal(persisted!.runCount, 2);
+  // 降级提示作为过程输出进入事件流，不改写正文。
+  const downgradeNotice = events.find(
+    (event) => event.type === "terminal.chunk" && event.text?.includes("已使用新的会话继续"),
+  );
+  assert.ok(downgradeNotice, "降级提示必须进入 runtime 输出事件流");
+});
+
 test("error case (rate limit) still persists sessionId if one was generated", async () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);

@@ -196,12 +196,15 @@ export function runAcp(
       }
       : undefined,
   };
-  const connection = connector(connectorOptions, (notification) => {
+  const handleSessionUpdateNotification = (notification: SessionNotification) => {
     if (!acceptingUpdates || notification.sessionId !== activeSessionId) {
       return;
     }
     handleSessionUpdate(notification, answerState, turnState, toolStates, options, definition);
-  });
+  };
+  // 重试恢复（issue #141）会销毁坏连接并重新 acquire，connection 必须可替换；
+  // close/interrupt 等闭包读取该变量，始终作用于当前连接。
+  let connection = connector(connectorOptions, handleSessionUpdateNotification);
 
   let resolveSessionId!: (sessionId: string | null) => void;
   let sessionIdSettled = false;
@@ -259,26 +262,32 @@ export function runAcp(
 
   const turn = (async () => {
     let succeeded = false;
-    try {
-      const initialized = await connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          elicitation: {
-            form: {},
-            url: {},
-          },
-          plan: {},
+    const initializeRequest = {
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {
+        elicitation: {
+          form: {},
+          url: {},
         },
-        clientInfo: { name: "Orbit", version: "1.0.0" },
-      });
+        plan: {},
+      },
+      clientInfo: { name: "Orbit", version: "1.0.0" },
+    } satisfies InitializeRequest;
+    try {
+      const initialized = await connection.initialize(initializeRequest);
       validateInitializeResponse(initialized, definition.displayName);
 
-      activeSessionId = await prepareSession(
+      activeSessionId = await restoreOrRecoverSession(
         connection,
+        options,
+        definition,
         initialized.agentCapabilities,
-        options.cwd,
-        options.resumeSessionId,
-        definition.displayName,
+        initializeRequest,
+        () => {
+          connection.destroy?.();
+          connection = connector(connectorOptions, handleSessionUpdateNotification);
+          return connection;
+        },
       );
       resolveSessionId(activeSessionId);
 
@@ -382,6 +391,81 @@ async function prepareSession(
   throw new Error(
     `${displayName} ACP could not resume the session because the agent does not advertise session/load or session/resume.`,
   );
+}
+
+export type AcpSessionRestoreClassification = "recoverable" | "unrecoverable";
+
+/**
+ * 会话恢复失败的保守分类（issue #141）。只把 runtime 明确报告的会话状态
+ * 冲突或损坏归为不可恢复；传输断开、网络超时、进程退出归为可恢复（会话
+ * 本身仍有效，换一条连接即可）。识别不了的一律返回 null，按普通错误落定，
+ * 不自动降级。
+ */
+export function classifySessionRestoreError(error: unknown): AcpSessionRestoreClassification | null {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (/thread-store conflict|active writer|session (not found|corrupt|damaged|expired)|invalid session/.test(message)) {
+    return "unrecoverable";
+  }
+  if (/transport|connection closed|timeout|timed out|process exited|process failed|econnreset|econnrefused|epipe|socket hang up|aborted/.test(message)) {
+    return "recoverable";
+  }
+  return null;
+}
+
+function summarizeRestoreFailure(error: unknown): string {
+  const firstLine = (error instanceof Error ? error.message : String(error)).split("\n")[0]!.trim();
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine;
+}
+
+/**
+ * 恢复既有会话，失败时按分类降级（issue #141）：
+ * - 可恢复（传输断开/超时/进程退出）：销毁当前 lease，用新连接和同一个
+ *   sessionId 重试一次，再失败按普通错误落定；
+ * - 不可恢复（会话状态冲突或损坏）：直接 newSession，让调用方的 sessionId
+ *   落定新值（AgentSession 随后持久化新绑定；Orbit 侧会话、消息历史与员工
+ *   配置一律不变）。
+ * 两种路径都通过 onOutput 输出过程提示，不改写正文。
+ */
+async function restoreOrRecoverSession(
+  connection: AcpConnection,
+  options: AcpRunOptions,
+  definition: AcpRuntimeDefinition,
+  capabilities: AgentCapabilities | undefined,
+  initializeRequest: InitializeRequest,
+  reconnect: () => AcpConnection,
+): Promise<string> {
+  const absoluteCwd = path.resolve(options.cwd);
+  if (!options.resumeSessionId) {
+    const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
+    return created.sessionId;
+  }
+  try {
+    return await prepareSession(connection, capabilities, options.cwd, options.resumeSessionId, definition.displayName);
+  } catch (error) {
+    const classification = classifySessionRestoreError(error);
+    if (!classification) throw error;
+
+    if (classification === "recoverable") {
+      const replacement = reconnect();
+      const reinitialized = await replacement.initialize(initializeRequest);
+      validateInitializeResponse(reinitialized, definition.displayName);
+      const sessionId = await prepareSession(
+        replacement,
+        reinitialized.agentCapabilities,
+        options.cwd,
+        options.resumeSessionId,
+        definition.displayName,
+      );
+      options.onOutput?.(`${definition.displayName} 会话恢复时连接中断，已在新连接上恢复原会话。`);
+      return sessionId;
+    }
+
+    const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
+    options.onOutput?.(
+      `原 ${definition.displayName} 会话无法恢复（${summarizeRestoreFailure(error)}），已使用新的会话继续。`,
+    );
+    return created.sessionId;
+  }
 }
 
 function validateInitializeResponse(response: InitializeResponse, displayName: string): void {

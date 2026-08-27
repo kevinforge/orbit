@@ -28,12 +28,20 @@ type FakeConnectionControls = {
   hangPrompt?: boolean;
   promptResponse?: PromptResponse;
   cancelError?: Error;
+  resumeCapability?: boolean;
+  resumeError?: Error;
+  secondResumeError?: Error;
+  answerText?: string;
 };
 
 function fakeConnector(controls: FakeConnectionControls = {}) {
   const calls: string[] = [];
+  let spawnCount = 0;
   let notifySessionUpdate: ((notification: SessionNotification) => void) | null = null;
   const connector: AcpConnector = (_options, notify) => {
+    spawnCount += 1;
+    calls.push(`spawn:${spawnCount}`);
+    const connectionSpawn = spawnCount;
     notifySessionUpdate = notify;
     const connection: AcpConnection = {
       pid: 4242,
@@ -41,16 +49,40 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
         calls.push("initialize");
         return controls.hangInitialize
           ? new Promise<InitializeResponse>(() => {})
-          : Promise.resolve({ protocolVersion: 1, agentCapabilities: { loadSession: true } });
+          : Promise.resolve({
+              protocolVersion: 1,
+              agentCapabilities: {
+                loadSession: true,
+                ...(controls.resumeCapability ? { sessionCapabilities: { resume: {} } } : {}),
+              },
+            });
       },
       async newSession() {
-        calls.push("session/new");
-        return { sessionId: "fake-session" };
+        calls.push(`session/new:${connectionSpawn}`);
+        return { sessionId: connectionSpawn === 1 ? "fake-session" : `fake-session-${connectionSpawn}` };
       },
-      async loadSession() {},
-      async resumeSession() {},
-      prompt() {
-        calls.push("session/prompt");
+      async loadSession(request) {
+        calls.push(`session/load:${request.sessionId}`);
+      },
+      async resumeSession(request) {
+        calls.push(`session/resume:${connectionSpawn}:${request.sessionId}`);
+        const error = connectionSpawn === 1 ? controls.resumeError : controls.secondResumeError;
+        if (error) throw error;
+      },
+      hasSession(sessionId: string) {
+        return sessionId === "resumed-session";
+      },
+      prompt(request: { sessionId: string }) {
+        calls.push(`session/prompt:${request.sessionId}`);
+        if (controls.answerText !== undefined) {
+          notifySessionUpdate?.({
+            sessionId: request.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: controls.answerText },
+            },
+          });
+        }
         return controls.hangPrompt
           ? new Promise<PromptResponse>(() => {})
           : Promise.resolve(controls.promptResponse ?? { stopReason: "end_turn" });
@@ -60,10 +92,10 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
         return controls.cancelError ? Promise.reject(controls.cancelError) : Promise.resolve();
       },
       close() {
-        calls.push("close");
+        calls.push(`close:${connectionSpawn}`);
       },
       destroy() {
-        calls.push("destroy");
+        calls.push(`destroy:${connectionSpawn}`);
       },
     };
     return connection;
@@ -71,6 +103,9 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
   return {
     connector,
     calls,
+    get spawnCount() {
+      return spawnCount;
+    },
     emitSessionUpdate(update: SessionNotification["update"]) {
       notifySessionUpdate?.({ sessionId: "fake-session", update });
     },
@@ -115,7 +150,7 @@ test("force-cancels an unresponsive prompt after the cancel grace period", async
 
   handle.process.interrupt();
   assert.ok(fake.calls.includes("session/cancel:fake-session"));
-  assert.ok(!fake.calls.includes("destroy"), "宽限期内不得强制销毁连接");
+  assert.ok(!fake.calls.some((call) => call.startsWith("destroy:")), "宽限期内不得强制销毁连接");
 
   t.mock.timers.tick(CANCEL_GRACE_MS);
 
@@ -125,7 +160,7 @@ test("force-cancels an unresponsive prompt after the cancel grace period", async
     assert.equal(error.userMessage, "运行已取消。");
     return true;
   });
-  assert.ok(fake.calls.includes("destroy"), "宽限期超时后必须强制销毁连接");
+  assert.ok(fake.calls.some((call) => call.startsWith("destroy:")), "宽限期超时后必须强制销毁连接");
   assert.equal(output.length, 1, "强制收口只输出一次诊断");
   assert.match(output[0]!, /已强制终止进程/);
 });
@@ -177,7 +212,7 @@ test("a failing session/cancel request force-cancels immediately", async () => {
     assert.match(error.message, /force-cancelled/);
     return true;
   });
-  assert.ok(fake.calls.includes("destroy"), "取消请求失败必须立即强制销毁连接");
+  assert.ok(fake.calls.some((call) => call.startsWith("destroy:")), "取消请求失败必须立即强制销毁连接");
 });
 
 test("interrupt before the session is established force-cancels the turn", async () => {
@@ -190,7 +225,7 @@ test("interrupt before the session is established force-cancels the turn", async
     assert.ok(error instanceof AgentRunCancelledError);
     return true;
   });
-  assert.ok(fake.calls.includes("destroy"));
+  assert.ok(fake.calls.some((call) => call.startsWith("destroy:")));
   assert.equal(await handle.sessionId, null, "未建立会话时 sessionId 以 null 落定");
 });
 
@@ -207,7 +242,7 @@ test("repeated interrupt requests stay idempotent", async (t) => {
 
   await assert.rejects(handle.result, AgentRunCancelledError);
   assert.equal(fake.calls.filter((call) => call === "session/cancel:fake-session").length, 1);
-  assert.equal(fake.calls.filter((call) => call === "destroy").length, 1);
+  assert.equal(fake.calls.filter((call) => call.startsWith("destroy:")).length, 1);
 });
 
 test("stdout EOF rejects pending ACP requests and marks the connection dead", { timeout: 20_000, skip: process.platform === "win32" }, async () => {
@@ -234,6 +269,99 @@ test("stdout EOF rejects pending ACP requests and marks the connection dead", { 
   } finally {
     connection.destroy?.();
   }
+});
+
+test("an unrecoverable resume failure falls back to a fresh session", async () => {
+  // Issue #141：thread-store conflict / active writer 表明原会话状态已不可
+  // 用，必须在同一条连接上直接新建会话，sessionId 落定新值并输出过程提示。
+  const output: string[] = [];
+  const fake = fakeConnector({
+    resumeCapability: true,
+    answerText: "答复文本",
+    resumeError: new Error("Fake Agent ACP request failed (pid 1): thread-store conflict: thread already has an active writer"),
+  });
+  const handle = runAcp(
+    runOptions({
+      resumeSessionId: "old-session",
+      onOutput: (text: string) => output.push(text),
+    }),
+    definition,
+    fake.connector,
+  );
+
+  const answer = await handle.result;
+  assert.equal(answer, "答复文本");
+  assert.equal(await handle.sessionId, "fake-session", "降级后 sessionId 必须落定新会话的 id");
+  assert.ok(fake.calls.includes("session/resume:1:old-session"), "恢复失败前必须先尝试 resume");
+  assert.ok(fake.calls.includes("session/new:1"), "不可恢复失败必须新建会话");
+  assert.ok(fake.calls.includes("session/prompt:fake-session"), "新建会话后 prompt 必须使用新 id");
+  assert.equal(fake.spawnCount, 1, "不可恢复降级不换连接");
+  assert.ok(output.some((text) => text.includes("已使用新的会话继续")), `expected downgrade notice in: ${output.join(" | ")}`);
+  assert.ok(output.some((text) => text.includes("thread-store conflict")), `expected failure summary in: ${output.join(" | ")}`);
+});
+
+test("a recoverable resume failure retries the same session id on a fresh connection", async () => {
+  // Issue #141：传输断开/超时/进程退出只会让连接失效，会话本身仍有效——
+  // 销毁当前 lease，用新连接和同一个 sessionId 重试一次。
+  const output: string[] = [];
+  const fake = fakeConnector({
+    resumeCapability: true,
+    answerText: "答复文本",
+    resumeError: new Error("Fake Agent ACP transport closed (stdout ended while pid 1 was still running)."),
+  });
+  const handle = runAcp(
+    runOptions({
+      resumeSessionId: "old-session",
+      onOutput: (text: string) => output.push(text),
+    }),
+    definition,
+    fake.connector,
+  );
+
+  const answer = await handle.result;
+  assert.equal(answer, "答复文本");
+  assert.equal(await handle.sessionId, "old-session", "可恢复重试必须保留原 sessionId");
+  assert.equal(fake.spawnCount, 2, "重试必须销毁旧连接并另起新连接");
+  assert.ok(fake.calls.includes("destroy:1"), "旧 lease 必须先销毁");
+  assert.ok(fake.calls.includes("session/resume:2:old-session"), "重试必须在新连接上用同一个 sessionId resume");
+  assert.ok(fake.calls.includes("session/prompt:old-session"));
+  assert.ok(output.some((text) => text.includes("已在新连接上恢复原会话")), `expected retry notice in: ${output.join(" | ")}`);
+});
+
+test("a retry that fails again settles as a normal error", async () => {
+  const fake = fakeConnector({
+    resumeCapability: true,
+    resumeError: new Error("Fake Agent ACP transport closed (stdout ended while pid 1 was still running)."),
+    secondResumeError: new Error("Fake Agent ACP transport closed (stdout ended while pid 2 was still running)."),
+  });
+  const handle = runAcp(
+    runOptions({ resumeSessionId: "old-session" }),
+    definition,
+    fake.connector,
+  );
+
+  await assert.rejects(handle.result, (error: unknown) => {
+    assert.match((error as Error).message, /transport closed/);
+    return true;
+  });
+  assert.equal(fake.spawnCount, 2, "只允许重试一次");
+  assert.ok(!fake.calls.some((call) => call.startsWith("session/new:")), "重试失败不得静默降级新建");
+});
+
+test("an unclassified resume failure settles as a normal error without fallback", async () => {
+  const fake = fakeConnector({
+    resumeCapability: true,
+    resumeError: new Error("mystery failure"),
+  });
+  const handle = runAcp(
+    runOptions({ resumeSessionId: "old-session" }),
+    definition,
+    fake.connector,
+  );
+
+  await assert.rejects(handle.result, /mystery failure/);
+  assert.equal(fake.spawnCount, 1, "识别不了的错误不得换连接或降级");
+  assert.ok(!fake.calls.some((call) => call.startsWith("session/new:")));
 });
 
 test("an unexpected process exit rejects pending requests with pid diagnostics", { timeout: 20_000 }, async () => {
