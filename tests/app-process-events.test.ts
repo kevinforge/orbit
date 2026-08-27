@@ -344,4 +344,12 @@ test("agent.model_state snapshots are stored per agent without conversation gati
   });
   assert.equal(replaced.agentModelStates.implementation, snapshot, "其他员工的快照不受影响");
   assert.equal(replaced.agentModelStates.reviewer.currentValue, "opus");
+
+  const otherWorkspace = applyEvent(replaced, {
+    type: "agent.model_state",
+    workspaceId: "ws2",
+    agentId: "implementation",
+    modelState: { ...snapshot, currentValue: "opus" },
+  });
+  assert.equal(otherWorkspace.agentModelStates.implementation, snapshot, "其他工作区的快照不得覆盖当前状态");
 });

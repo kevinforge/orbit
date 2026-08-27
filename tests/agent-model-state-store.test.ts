@@ -71,6 +71,16 @@ test("missing or malformed files degrade to an empty state", () => {
 
     fs.writeFileSync(filePath, JSON.stringify({ states: { developer: "corrupt" } }));
     assert.equal(store.get("ws1", "developer"), undefined, "非对象条目被剔除");
+
+    fs.writeFileSync(filePath, JSON.stringify({ states: { developer: {} } }));
+    assert.equal(store.get("ws1", "developer"), undefined, "缺字段对象被剔除");
+
+    fs.writeFileSync(filePath, JSON.stringify({
+      states: {
+        developer: { ...snapshot(), agentId: "other-agent" },
+      },
+    }));
+    assert.equal(store.get("ws1", "developer"), undefined, "键和值中的员工 ID 不一致时被剔除");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

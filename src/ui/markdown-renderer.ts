@@ -65,7 +65,7 @@ function localPathFromHref(href: string): string | null {
   }
   // 显式链接 href 里紧邻路径的半角/全角标点属于正文（"[配置](D:/a.json。)"），
   // 与裸路径 tokenizer 同样剥离，剥完重新校验形态避免残段生成坏入口。
-  candidate = candidate.replace(trailingPunctuation, "").replace(trailingCjk, "");
+  candidate = candidate.replace(trailingPunctuation, "").replace(trailingCjkPunctuation, "");
   if (/^[A-Za-z]:[\\/]/.test(candidate)) return candidate;
   if (/^~[\\/]/.test(candidate)) return candidate;
   // POSIX 绝对路径：显式写出的链接意图明确，单段（/tmp）也接受。
@@ -74,15 +74,14 @@ function localPathFromHref(href: string): string | null {
 }
 
 // 裸路径（无 markdown 链接语法包裹）用 inline tokenizer 扩展识别。字符集
-// 限定可见 ASCII 且排除反引号，避免吞掉 CJK 正文（路径与中文正文之间通常
-// 无空格）和 code span；"/" 开头额外要求至少两段，避免把正文里的 and/or、
-// 单段 URL 路径切成入口。
-const pathChars = "[^\\s`\\u0080-\\uffff]";
+// 支持 Unicode 路径名，同时排除会改变 Markdown/HTML 结构的字符。路径与相邻
+// 中文正文之间没有分隔符时无法可靠判断边界，因此优先依赖空白或标点结束路径。
+const pathChars = "[^\\s`<>|。，、！？；：（）［］｛｝《》「」『』【】…]";
 const bareLocalPath = new RegExp(
   `^(?:[A-Za-z]:[\\\\/]${pathChars}+|~[\\\\/]${pathChars}+|/${pathChars}+(/${pathChars}+)+)`,
 );
 // 路径末尾紧邻的半角标点属于正文而非路径（"…/App.tsx."、"…/a.txt),"）。
-const trailingPunctuation = /[.,;:!?)>'"]+$/;
+const trailingPunctuation = /[.,;:!?)>'"。，、！？；：（）［］｛｝《》「」『』【】…]+$/u;
 
 const localPathLinkExtension = {
   name: "localPathLink",

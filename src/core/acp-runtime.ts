@@ -307,6 +307,11 @@ export function runAcp(
       if (!cancelled && !forcedCancelled) {
         await applyPreferredModel(connection, activeSessionId, options, definition, session.configOptions);
       }
+      // Cancellation may arrive while applying the preferred model. Do not
+      // start a prompt after the turn has already entered cancellation.
+      if (cancelled || forcedCancelled) {
+        throw cancellationError();
+      }
 
       acceptingUpdates = !forcedCancelled;
       const response = await connection.prompt({

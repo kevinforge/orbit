@@ -126,6 +126,11 @@ describe("renderMarkdown", () => {
     assert.ok(posix.includes('data-path="/var/log/app.log"'), `expected fullwidth comma stripped in: ${posix}`);
   });
 
+  it("preserves Chinese characters in explicit local path hrefs", () => {
+    const result = renderMarkdown("[资料](D:/项目/资料)");
+    assert.ok(result.includes('data-path="D:/项目/资料"'), `expected Chinese path preserved in: ${result}`);
+  });
+
   it("renders home-relative hrefs as path entries", () => {
     const result = renderMarkdown("[文档](~/notes/README.md)");
     assert.ok(result.includes('data-path="~/notes/README.md"'), `expected home-relative entry in: ${result}`);
@@ -136,6 +141,12 @@ describe("renderMarkdown", () => {
     assert.ok(result.includes('data-path="D:\\orbit\\src\\ui\\App.tsx"'), `expected bare path entry in: ${result}`);
     assert.ok(result.includes("</span>。"), `expected the CJK period kept as body text in: ${result}`);
     assert.ok(result.includes("请复核"), `expected body text preserved in: ${result}`);
+  });
+
+  it("recognizes Chinese characters in bare Windows paths", () => {
+    const result = renderMarkdown("打开 D:\\项目\\资料\\说明.txt。请复核");
+    assert.ok(result.includes('data-path="D:\\项目\\资料\\说明.txt"'), `expected Chinese path entry in: ${result}`);
+    assert.ok(result.includes("</span>。请复核"), `expected adjacent body text preserved in: ${result}`);
   });
 
   it("recognizes bare POSIX paths only with at least two segments", () => {

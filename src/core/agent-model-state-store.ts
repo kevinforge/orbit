@@ -21,14 +21,14 @@ export class AgentModelStateStore {
   load(workspaceId: string): Record<AgentId, AgentModelStateSnapshot> {
     try {
       const parsed = JSON.parse(fs.readFileSync(this.statePath(workspaceId), "utf8")) as {
-        states?: Record<string, AgentModelStateSnapshot>;
+        states?: Record<string, unknown>;
       };
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
       const states = parsed.states;
       if (!states || typeof states !== "object" || Array.isArray(states)) return {};
       const result: Record<AgentId, AgentModelStateSnapshot> = {};
       for (const [agentId, snapshot] of Object.entries(states)) {
-        if (snapshot && typeof snapshot === "object" && typeof agentId === "string") {
+        if (isAgentModelStateSnapshot(agentId, snapshot)) {
           result[agentId] = snapshot;
         }
       }
@@ -56,4 +56,25 @@ export class AgentModelStateStore {
   private statePath(workspaceId: string): string {
     return path.join(this.baseDir, "workspaces", workspaceId, "agent-model-state.json");
   }
+}
+
+function isAgentModelStateSnapshot(agentId: string, value: unknown): value is AgentModelStateSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const snapshot = value as Record<string, unknown>;
+  if (snapshot.agentId !== agentId) return false;
+  if (!isAgentRuntimeKind(snapshot.runtimeKind)) return false;
+  if (typeof snapshot.configId !== "string" || typeof snapshot.updatedAt !== "string") return false;
+  if (!Array.isArray(snapshot.choices)) return false;
+  if (!snapshot.choices.every((choice) => (
+    choice
+    && typeof choice === "object"
+    && !Array.isArray(choice)
+    && typeof (choice as Record<string, unknown>).value === "string"
+    && typeof (choice as Record<string, unknown>).name === "string"
+  ))) return false;
+  return snapshot.currentValue === undefined || typeof snapshot.currentValue === "string";
+}
+
+function isAgentRuntimeKind(value: unknown): value is AgentModelStateSnapshot["runtimeKind"] {
+  return value === "claude-code" || value === "codex" || value === "codebuddy";
 }

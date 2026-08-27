@@ -42,6 +42,7 @@ type FakeConnectionControls = {
   // issue #142：会话建立响应携带的 config options 与 set_config_option 行为。
   sessionConfigOptions?: Array<SessionConfigOption>;
   setConfigOptionError?: Error;
+  setConfigOptionPending?: boolean;
   setConfigOptionConfigOptions?: Array<SessionConfigOption>;
 };
 
@@ -91,6 +92,7 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
       async setConfigOption(request) {
         calls.push(`session/set_config_option:${request.sessionId}:${request.configId}:${request.value}`);
         if (controls.setConfigOptionError) throw controls.setConfigOptionError;
+        if (controls.setConfigOptionPending) return new Promise<SetSessionConfigOptionResponse>(() => {});
         const configOptions = controls.setConfigOptionConfigOptions ?? controls.sessionConfigOptions ?? [];
         return { configOptions } satisfies SetSessionConfigOptionResponse;
       },
@@ -157,6 +159,26 @@ test("graceful cancel settles the turn through session/cancel", async () => {
   });
   assert.ok(fake.calls.includes("session/cancel:fake-session"), "interrupt 必须先发 session/cancel");
   assert.equal(await handle.sessionId, "fake-session");
+});
+
+test("does not prompt when cancellation arrives while applying the preferred model", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fake = fakeConnector({
+    setConfigOptionPending: true,
+    sessionConfigOptions: [modelOption({ currentValue: "model-a" })],
+  });
+  const handle = runAcp(
+    runOptions({ preferredModelId: "model-b" }),
+    definition,
+    fake.connector,
+  );
+  await handle.sessionId;
+
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+  await assert.rejects(handle.result, AgentRunCancelledError);
+  assert.ok(fake.calls.some((call) => call.startsWith("session/set_config_option:")));
+  assert.equal(fake.calls.some((call) => call.startsWith("session/prompt:")), false);
 });
 
 test("force-cancels an unresponsive prompt after the cancel grace period", async (t) => {
@@ -226,6 +248,9 @@ test("a failing session/cancel request force-cancels immediately", async () => {
   const fake = fakeConnector({ hangPrompt: true, cancelError: new Error("cancel not supported") });
   const handle = runAcp(runOptions(), definition, fake.connector);
   await handle.sessionId;
+  // 确保取消发生在 prompt 已经挂起之后，避免把“尚未开始 prompt 的取消”
+  // 与“取消请求失败后的强制收口”混在同一个断言里。
+  await new Promise<void>((resolve) => setImmediate(resolve));
 
   handle.process.interrupt();
 

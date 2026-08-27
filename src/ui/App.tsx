@@ -3013,8 +3013,10 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
-  // agent.model_state 是 workspace 级事件（无 conversationId），在会话过滤前处理。
+  // agent.model_state 是 workspace 级事件（无 conversationId），在会话过滤前处理，
+  // 但不能让后台工作区的同名员工覆盖当前工作区的模型状态。
   if (event.type === "agent.model_state") {
+    if (event.workspaceId !== state.workspace.id) return state;
     return {
       ...state,
       agentModelStates: { ...state.agentModelStates, [event.agentId]: event.modelState },
