@@ -24,7 +24,7 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { AgentConfigWithModelState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
+import type { AgentConfigWithModelState, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
 import { isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
@@ -77,6 +77,7 @@ const SHUTDOWN_FORCE_EXIT_MS = 2000;
 let runtimeAvailability: Map<string, RuntimeProbeResult> = new Map();
 let probeTimer: ReturnType<typeof setInterval> | null = null;
 let shuttingDown = false;
+const modelProbeStates = new Map<string, Map<AgentConfig["runtime"], AgentModelProbeState>>();
 
 async function probeRuntimes(): Promise<void> {
   const results = await probeAllRuntimes();
@@ -97,7 +98,7 @@ async function probeRuntimes(): Promise<void> {
   }
 }
 
-async function probeConfiguredAgentModels(force = false): Promise<void> {
+async function probeConfiguredAgentModels(force = false, runtimeFilter?: AgentConfig["runtime"]): Promise<void> {
   if (!activeWorkspaceId) return;
   const workspaceId = activeWorkspaceId;
   const workspace = workspaceStore.get(workspaceId);
@@ -106,8 +107,10 @@ async function probeConfiguredAgentModels(force = false): Promise<void> {
   const existing = agentModelStateStore.load(workspaceId);
   const targetsByRuntime = new Map<AgentConfig["runtime"], AgentConfig[]>();
   for (const config of allConfigs) {
+    if (runtimeFilter && config.runtime !== runtimeFilter) continue;
     const snapshot = existing[config.id];
-    if (!force && snapshot?.runtimeKind === config.runtime) continue;
+    const probeState = modelProbeStates.get(workspaceId)?.get(config.runtime);
+    if (!force && snapshot?.runtimeKind === config.runtime && probeState?.status !== "error") continue;
     const targets = targetsByRuntime.get(config.runtime) ?? [];
     targets.push(config);
     targetsByRuntime.set(config.runtime, targets);
@@ -115,16 +118,44 @@ async function probeConfiguredAgentModels(force = false): Promise<void> {
 
   await Promise.all([...targetsByRuntime.entries()].map(async ([runtimeKind, targets]) => {
     const registration = defaultAcpRunnerRegistry.get(runtimeKind);
-    if (!registration) return;
+    if (!registration) {
+      setModelProbeState(workspaceId, runtimeKind, {
+        runtimeKind,
+        status: "error",
+        message: "该运行时不可用。",
+      });
+      return;
+    }
+    setModelProbeState(workspaceId, runtimeKind, { runtimeKind, status: "loading" });
     try {
       const first = targets[0]!;
       const snapshot = await probeAcpModelState(registration.definition, {
         agentId: first.id,
         cwd: workspace.path,
       });
-      if (!snapshot) return;
+      if (!snapshot) {
+        setModelProbeState(workspaceId, runtimeKind, {
+          runtimeKind,
+          status: "unsupported",
+          message: "该运行时未提供可选模型列表。",
+        });
+        return;
+      }
+      setModelProbeState(workspaceId, runtimeKind, {
+        runtimeKind,
+        status: snapshot.choices.length > 0 ? "ready" : "unsupported",
+        ...(snapshot.choices.length === 0 ? { message: "该运行时未提供可选模型列表。" } : {}),
+        updatedAt: snapshot.updatedAt,
+      });
       for (const target of targets) {
-        const targetSnapshot = { ...snapshot, agentId: target.id };
+        const previous = existing[target.id];
+        const hasSessionValue = previous?.runtimeKind === runtimeKind && previous.currentValueSource === "session";
+        const targetSnapshot = {
+          ...snapshot,
+          agentId: target.id,
+          currentValue: hasSessionValue ? previous.currentValue : undefined,
+          currentValueSource: hasSessionValue ? "session" as const : "probe" as const,
+        };
         agentModelStateStore.update(workspaceId, targetSnapshot);
         sseHub.publish({
           type: "agent.model_state",
@@ -134,11 +165,51 @@ async function probeConfiguredAgentModels(force = false): Promise<void> {
         });
       }
     } catch (error) {
+      setModelProbeState(workspaceId, runtimeKind, {
+        runtimeKind,
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
       console.warn(
         `[orbit] model discovery failed for ${registration.definition.displayName}:`,
         error instanceof Error ? error.message : String(error),
       );
     }
+  }));
+}
+
+function setModelProbeState(workspaceId: string, runtime: AgentConfig["runtime"], state: AgentModelProbeState): void {
+  const states = modelProbeStates.get(workspaceId) ?? new Map<AgentConfig["runtime"], AgentModelProbeState>();
+  states.set(runtime, state);
+  modelProbeStates.set(workspaceId, states);
+}
+
+function modelProbeStateFor(
+  workspaceId: string,
+  runtime: AgentConfig["runtime"],
+  snapshot?: AgentModelWithState,
+): AgentModelProbeState {
+  const known = modelProbeStates.get(workspaceId)?.get(runtime);
+  if (known) return known;
+  if (snapshot?.runtimeKind === runtime) {
+    return {
+      runtimeKind: runtime,
+      status: snapshot.choices.length > 0 ? "ready" : "unsupported",
+      ...(snapshot.choices.length === 0 ? { message: "该运行时未提供可选模型列表。" } : {}),
+      updatedAt: snapshot.updatedAt,
+    };
+  }
+  return { runtimeKind: runtime, status: "idle" };
+}
+
+type AgentModelWithState = NonNullable<AgentConfigWithModelState["modelState"]>;
+
+function configsWithModelState(workspaceId: string): AgentConfigWithModelState[] {
+  const modelStates = agentModelStateStore.load(workspaceId);
+  return allConfigs.map((config) => ({
+    ...config,
+    modelState: modelStates[config.id],
+    modelProbe: modelProbeStateFor(workspaceId, config.runtime, modelStates[config.id]),
   }));
 }
 
@@ -799,21 +870,19 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/agents") {
       // 合并 workspace 级模型快照（issue #142）：模型列表/当前值由 runtime 在
       // 运行时写入独立存储，agents.json 只保存用户偏好。
-      const modelStates = activeWorkspaceId ? agentModelStateStore.load(activeWorkspaceId) : {};
-      sendJson(res, 200, allConfigs.map((config) => ({
-        ...config,
-        modelState: modelStates[config.id],
-      })));
+      sendJson(res, 200, activeWorkspaceId ? configsWithModelState(activeWorkspaceId) : allConfigs);
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/agents/probe-models") {
-      await probeConfiguredAgentModels(url.searchParams.get("force") === "1");
-      const modelStates = activeWorkspaceId ? agentModelStateStore.load(activeWorkspaceId) : {};
-      sendJson(res, 200, allConfigs.map((config) => ({
-        ...config,
-        modelState: modelStates[config.id],
-      })));
+      const runtimeParam = url.searchParams.get("runtime");
+      const runtimeFilter = runtimeParam as AgentConfig["runtime"] | null;
+      if (runtimeFilter && !defaultAcpRunnerRegistry.get(runtimeFilter)) {
+        sendJson(res, 400, { ok: false, message: "未知的运行时。" });
+        return;
+      }
+      await probeConfiguredAgentModels(url.searchParams.get("force") === "1", runtimeFilter ?? undefined);
+      sendJson(res, 200, activeWorkspaceId ? configsWithModelState(activeWorkspaceId) : allConfigs);
       return;
     }
 
@@ -1647,14 +1716,10 @@ async function handlePutAgents(req: http.IncomingMessage, res: http.ServerRespon
   }
 
   // modelState 是 GET 响应合并的运行时快照，保存前剥离，避免污染 agents.json。
-  allConfigs = input.map(({ modelState: _modelState, ...config }) => config);
+  allConfigs = input.map(({ modelState: _modelState, modelProbe: _modelProbe, ...config }) => config);
   configStore.save(activeWorkspaceId, allConfigs);
   refreshEnabledAgents();
-  const modelStates = agentModelStateStore.load(activeWorkspaceId);
-  sendJson(res, 200, allConfigs.map((config) => ({
-    ...config,
-    modelState: modelStates[config.id],
-  })));
+  sendJson(res, 200, configsWithModelState(activeWorkspaceId));
 }
 
 function shutdown(): void {

@@ -396,7 +396,7 @@ export async function probeAcpModelState(
         cwd: path.resolve(probeOptions.cwd),
         mcpServers: [],
       });
-      return toModelSnapshot(created.configOptions, probeOptions, definition);
+      return toModelSnapshot(created.configOptions, probeOptions, definition, "probe");
     })();
     const deadline = new Promise<never>((_, reject) => {
       timeout = setTimeout(
@@ -540,6 +540,7 @@ export function toModelSnapshot(
   configOptions: Array<SessionConfigOption> | null | undefined,
   options: AcpRunOptions,
   definition: AcpRuntimeDefinition,
+  currentValueSource: "probe" | "session" = "session",
 ): AgentModelStateSnapshot | null {
   if (!configOptions) return null;
   const modelOption = configOptions.find(
@@ -551,7 +552,8 @@ export function toModelSnapshot(
     runtimeKind: definition.kind,
     configId: modelOption?.id ?? "",
     choices: modelOption ? flattenModelChoices(modelOption.options) : [],
-    currentValue: modelOption?.currentValue,
+    currentValue: currentValueSource === "session" ? modelOption?.currentValue : undefined,
+    currentValueSource,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -632,7 +634,8 @@ async function applyPreferredModel(
  * 持久化，不混入最终回复正文，也不会被 terminal 噪声分类降级成通用状态。
  */
 function emitModelNotice(options: AcpRunOptions, text: string): void {
-  options.onActivity?.({ type: "process.text", text, timestamp: new Date().toISOString(), stream: "progress" });
+  // Keep runtime notices visually separate from the following model narration.
+  options.onActivity?.({ type: "process.text", text: `${text}\n\n`, timestamp: new Date().toISOString(), stream: "progress" });
 }
 
 function validateInitializeResponse(response: InitializeResponse, displayName: string): void {
@@ -789,7 +792,7 @@ function handleSessionUpdate(
       const answerGroup = appendAnswerChunk(answerState, update, disposition, update.content.text, definition, turnState);
       // 流式期间当前分组的文本同样进入过程区实时展示；结算快照会剔除
       // 归入最终回复的部分。
-      emitProcessText(options, update.content.text, "answer", answerGroup);
+      emitProcessText(options, update.content.text, "answer", answerGroup, disposition === "final");
     }
     return;
   }
@@ -935,6 +938,7 @@ function emitProcessText(
   text: string,
   stream: "progress" | "answer",
   answerGroup: string,
+  isFinal = false,
 ): void {
   if (!text) return;
   emitActivity(options, {
@@ -942,6 +946,7 @@ function emitProcessText(
     text,
     stream,
     answerGroup,
+    ...(isFinal ? { isFinal: true } : {}),
     timestamp: new Date().toISOString(),
   });
 }

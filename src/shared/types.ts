@@ -162,7 +162,18 @@ export type AgentModelStateSnapshot = {
   configId: string;
   choices: AgentModelChoice[];
   currentValue: string | undefined;
+  /** currentValue 是否来自真实员工会话；探测会话只提供可选列表。 */
+  currentValueSource?: "probe" | "session";
   updatedAt: string;
+};
+
+export type AgentModelProbeStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
+
+export type AgentModelProbeState = {
+  runtimeKind: AgentRuntimeKind;
+  status: AgentModelProbeStatus;
+  message?: string;
+  updatedAt?: string;
 };
 
 /**
@@ -171,6 +182,7 @@ export type AgentModelStateSnapshot = {
  */
 export type AgentConfigWithModelState = AgentConfig & {
   modelState?: AgentModelStateSnapshot;
+  modelProbe?: AgentModelProbeState;
 };
 
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
@@ -258,6 +270,8 @@ export type AgentActivityEvent =
       /** ACP answer group used to remove the final reply from the transient process timeline. */
       answerGroup?: string;
       stream?: "progress" | "answer";
+      /** Runtime explicitly marked this chunk as part of the final visible answer. */
+      isFinal?: boolean;
       /** Present on a settlement snapshot, including when the selected group is the empty string. */
       excludedAnswerGroup?: string;
       timestamp: string;

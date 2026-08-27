@@ -1911,6 +1911,9 @@ function MessageRow({
   const isQueued = message.runStatus === "queued";
   const isAgentRun = message.kind === "agent" && Boolean(message.runId);
   const isLiveRun = isAgentRun && (isRunning || isCancelling || isQueued);
+  // 仅在回合仍处于执行态时提前展示显式 final_answer；排队或取消中的
+  // 消息不能继续沿用已经收到的最终分片作为正文。
+  const liveFinalAnswer = isRunning ? getLiveFinalAnswer(message.activity) : null;
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
   const compactHandoffSource = parentMessage?.kind === "agent"
     ? agentsById.get(parentMessage.agentId ?? "")?.label ?? parentMessage.agentId ?? "数字员工"
@@ -2003,13 +2006,15 @@ function MessageRow({
       ) : null}
       {isAgentRun
         ? isLiveRun
-          ? <LiveRunProcess message={message} isCancelling={isCancelling} />
+          ? liveFinalAnswer
+            ? <SettledRunProcess message={message} hideFinalAnswer />
+            : <LiveRunProcess message={message} isCancelling={isCancelling} />
           : <SettledRunProcess message={message} />
         : null}
       <div className="messageBody">
-        {isProgressPlaceholder ? (
+        {isProgressPlaceholder && !liveFinalAnswer ? (
           <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
-        ) : message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
+        ) : message.kind === "agent" ? <MarkdownContent content={liveFinalAnswer ?? message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
             {message.attachments.map((att) => (
@@ -2036,7 +2041,7 @@ function MessageRow({
 }
 
 type ProcessTimelineEntry =
-  | { kind: "text"; text: string; timestamp: string; stream: "progress" | "answer" }
+  | { kind: "text"; text: string; timestamp: string; stream: "progress" | "answer"; isFinal?: boolean }
   | { kind: "tools"; activities: ProcessToolActivity[] }
   | { kind: "tool-summary"; count: number; failedCount: number };
 
@@ -2044,19 +2049,22 @@ type ProcessTimelineEntry =
 export function buildProcessTimeline(
   activity: AgentActivityEvent[] | undefined,
   persistedTimeline?: PersistedProcessTimelineEntry[] | null,
+  options?: { hideFinalAnswer?: boolean },
 ): ProcessTimelineEntry[] {
   const timeline: ProcessTimelineEntry[] = [];
 
   for (const item of activity ?? []) {
     if (item.type === "process.text") {
       if (!item.text) continue;
+      if (options?.hideFinalAnswer && item.isFinal) continue;
       const stream = item.stream ?? "progress";
+      const isFinal = item.isFinal === true;
       const previous = timeline.at(-1);
       // 仅相邻同 stream 的文本合并，避免过程叙述与回答正文混入同一文本块。
-      if (previous?.kind === "text" && previous.stream === stream) {
+      if (previous?.kind === "text" && previous.stream === stream && Boolean(previous.isFinal) === isFinal) {
         previous.text += item.text;
       } else {
-        timeline.push({ kind: "text", text: item.text, timestamp: item.timestamp, stream });
+        timeline.push({ kind: "text", text: item.text, timestamp: item.timestamp, stream, ...(isFinal ? { isFinal: true } : {}) });
       }
       continue;
     }
@@ -2127,16 +2135,18 @@ function PersistedToolActivityGroup({ count, failedCount }: { count: number; fai
   );
 }
 
-function ProcessTimeline({ message, live = false }: { message: ChatMessage; live?: boolean }) {
-  const timeline = buildProcessTimeline(message.activity, message.processTimeline);
+function ProcessTimeline({ message, live = false, hideFinalAnswer = false }: { message: ChatMessage; live?: boolean; hideFinalAnswer?: boolean }) {
+  const timeline = buildProcessTimeline(message.activity, message.processTimeline, { hideFinalAnswer });
   if (timeline.length === 0) return null;
   return (
     <div className="processTimeline">
       {timeline.map((entry, index) => entry.kind === "text" ? (
         <div
           key={`text-${index}`}
-          className={live && entry.stream === "answer" ? "processNarrative answer" : "processNarrative"}
-        >{entry.text}</div>
+          className="processNarrative"
+        >
+          <MarkdownContent content={entry.text} />
+        </div>
       ) : entry.kind === "tools" ? (
         <ToolActivityGroup key={`tools-${index}`} activities={entry.activities} live={live} />
       ) : (
@@ -2148,19 +2158,26 @@ function ProcessTimeline({ message, live = false }: { message: ChatMessage; live
 
 /** 运行中的过程区：Plan 状态板 + ACP 有序过程流。运行期间回答正文也按到达顺序留在时间线。 */
 function LiveRunProcess({ message, isCancelling }: { message: ChatMessage; isCancelling: boolean }) {
+  const hasProcess = Boolean(message.plan || buildProcessTimeline(message.activity, message.processTimeline).length);
+  if (!hasProcess) return null;
+
   return (
     <div className={`liveProcess${isCancelling ? " cancelling" : ""}`} aria-label="执行过程">
-      {message.plan ? <PlanBoard plan={message.plan} /> : null}
+      <div className="liveProcessHeader">
+        <span>执行过程</span>
+        <span>实时更新</span>
+      </div>
       <ProcessTimeline message={message} live />
+      {message.plan ? <PlanBoard plan={message.plan} /> : null}
     </div>
   );
 }
 
 /** 运行结算后的折叠过程区；正文区只显示最终回复。 */
-function SettledRunProcess({ message }: { message: ChatMessage }) {
+function SettledRunProcess({ message, hideFinalAnswer = false }: { message: ChatMessage; hideFinalAnswer?: boolean }) {
   const activity = message.activity ?? [];
   const plan = message.plan ?? undefined;
-  const timeline = buildProcessTimeline(activity, message.processTimeline);
+  const timeline = buildProcessTimeline(activity, message.processTimeline, { hideFinalAnswer });
   if (!plan && timeline.length === 0) {
     return null;
   }
@@ -2189,11 +2206,25 @@ function SettledRunProcess({ message }: { message: ChatMessage }) {
         <ChevronRightIcon className="settledProcessChevron" aria-hidden="true" />
       </summary>
       <div className="settledProcessBody">
+        <ProcessTimeline message={message} hideFinalAnswer={hideFinalAnswer} />
         {plan ? <PlanBoard plan={plan} /> : null}
-        <ProcessTimeline message={message} />
       </div>
     </details>
   );
+}
+
+function getLiveFinalAnswer(activity: AgentActivityEvent[] | undefined): string | null {
+  const finalItems = (activity ?? [])
+    .filter((item): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
+      item.type === "process.text" && item.stream === "answer" && item.isFinal === true
+    ));
+  // 与服务端 selectFinalAnswer 保持一致：多个响应组存在时只展示最后一个 final 组。
+  const finalGroup = finalItems.at(-1)?.answerGroup ?? "";
+  const answer = finalItems
+    .filter((item) => (item.answerGroup ?? "") === finalGroup)
+    .map((item) => item.text)
+    .join("");
+  return answer || null;
 }
 
 function PlanBoard({ plan }: { plan: AgentPlanSnapshot }) {
@@ -2651,16 +2682,21 @@ function AgentManagerPanel({
       .catch(() => setTeamTemplates([]));
   }, []);
 
-  async function probeModels(force = false) {
+  async function probeModels(force = false, runtime?: AgentRuntimeKind) {
     if (isProbingModels) return;
     setIsProbingModels(true);
     try {
-      const response = await fetch(`/api/agents/probe-models${force ? "?force=1" : ""}`, { method: "POST" });
+      const params = new URLSearchParams();
+      if (force) params.set("force", "1");
+      if (runtime) params.set("runtime", runtime);
+      const query = params.toString();
+      const response = await fetch(`/api/agents/probe-models${query ? `?${query}` : ""}`, { method: "POST" });
       if (!response.ok) {
         setError("获取模型列表失败，请稍后重试。");
         return;
       }
-      setConfigs(await response.json() as AgentConfigWithModelState[]);
+      const probedConfigs = await response.json() as AgentConfigWithModelState[];
+      setConfigs((current) => mergeProbedConfigs(current, probedConfigs));
     } catch {
       setError("获取模型列表失败，请检查本地运行时是否可用。");
     } finally {
@@ -2840,21 +2876,15 @@ function AgentManagerPanel({
                 {isRefreshingRuntimes ? "检测中..." : "重新检测运行环境"}
               </button>
             </div>
-            <div className="modelProbeRow">
-              <span>{isProbingModels ? "正在获取各运行时的模型列表..." : "模型列表来自本地运行时，可在员工配置中选择。"}</span>
-              <button type="button" className="runtimeRefreshBtn" onClick={() => void probeModels(true)} disabled={isProbingModels}>
-                {isProbingModels ? "获取中..." : "刷新模型列表"}
-              </button>
-            </div>
             <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义数字员工</button>
             {configs.map((config, i) => {
               const isExpanded = expandedIndex === i;
-              // 模型区只在该员工当前运行时上报过可选模型时出现（issue #142）。
+              // 模型区按当前运行时展示模型列表、探测状态和重试入口（issue #142）。
               const modelSnapshot = config.modelState
                 && config.modelState.runtimeKind === config.runtime
-                && config.modelState.choices.length > 0
                 ? config.modelState
                 : undefined;
+              const modelProbe = config.modelProbe?.runtimeKind === config.runtime ? config.modelProbe : undefined;
               return (
                 <div key={`config-${i}`} className={`configCard ${isExpanded ? "configCardExpanded" : ""} ${!config.enabled ? "configCardDisabled" : ""}`}>
                   <div className="configCardHeader" onClick={() => setExpandedIndex(isExpanded ? null : i)}>
@@ -2929,9 +2959,14 @@ function AgentManagerPanel({
                             );
                           })()}
                         </div>
-                        {modelSnapshot ? (
-                          <AgentModelField config={config} snapshot={modelSnapshot} onChange={(patch) => updateConfig(i, patch)} />
-                        ) : null}
+                        <AgentModelField
+                          config={config}
+                          snapshot={modelSnapshot}
+                          probe={modelProbe}
+                          onChange={(patch) => updateConfig(i, patch)}
+                          onRefreshModels={() => void probeModels(true, config.runtime)}
+                          isRefreshing={isProbingModels}
+                        />
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -2956,23 +2991,34 @@ function AgentManagerPanel({
 
 /**
  * 员工模型选择区（issue #142）：列出 runtime 上报的模型单选列表，保存为员工
- * 偏好。偏好只在该员工下次运行开始时应用；runtime 不支持模型选择时不渲染。
+ * 偏好。偏好只在该员工下次运行开始时应用；探测失败或 runtime 不支持时保留状态和重试入口。
  */
-function AgentModelField({ config, snapshot, onChange }: {
+function AgentModelField({ config, snapshot, probe, onChange, onRefreshModels, isRefreshing }: {
   config: AgentConfigWithModelState;
-  snapshot: AgentModelStateSnapshot;
+  snapshot?: AgentModelStateSnapshot;
+  probe?: AgentConfigWithModelState["modelProbe"];
   onChange: (patch: Partial<AgentConfig>) => void;
+  onRefreshModels: () => void;
+  isRefreshing: boolean;
 }) {
   // 偏好按 runtime 归属过滤：切换运行时后旧偏好不生效也不显示。
   const preferred = config.model?.runtimeKind === config.runtime
     ? config.model?.preferredModelId?.trim() || undefined
     : undefined;
-  const choices = snapshot.choices;
+  const probeStatus = probe?.status ?? (snapshot ? (snapshot.choices.length > 0 ? "ready" : "unsupported") : "idle");
+  const choices = probeStatus === "ready" ? snapshot?.choices ?? [] : [];
   const nameOf = (value: string) => choices.find((choice) => choice.value === value)?.name ?? value;
-  const preferredMissing = preferred !== undefined && !choices.some((choice) => choice.value === preferred);
+  const preferredMissing = probeStatus === "ready"
+    && preferred !== undefined
+    && !choices.some((choice) => choice.value === preferred);
   return (
     <div className="modelField fieldFullWidth">
-      <span className="pillLabel">模型 <span className="fieldHint" title="该数字员工使用的模型。可选列表由所在运行时提供，每次运行开始时应用。">?</span></span>
+      <div className="modelFieldHeader">
+        <span className="pillLabel">模型 <span className="fieldHint" title="该数字员工使用的模型。可选列表由所在运行时提供，每次运行开始时应用。">?</span></span>
+        <button type="button" className="modelRefreshBtn" onClick={onRefreshModels} disabled={isRefreshing}>
+          {isRefreshing ? "获取中..." : "刷新模型列表"}
+        </button>
+      </div>
       <div className="modelChoiceList">
         <label className={`modelChoice ${preferred === undefined ? "modelChoiceActive" : ""}`}>
           <input
@@ -2981,7 +3027,7 @@ function AgentModelField({ config, snapshot, onChange }: {
             checked={preferred === undefined}
             onChange={() => onChange({ model: undefined })}
           />
-          <span>跟随运行时默认{snapshot.currentValue ? `（当前：${nameOf(snapshot.currentValue)}）` : ""}</span>
+          <span>跟随运行时默认{probeStatus === "ready" && snapshot?.currentValueSource === "session" && snapshot.currentValue ? `（当前：${nameOf(snapshot.currentValue)}）` : ""}</span>
         </label>
         {choices.map((choice) => (
           <label key={choice.value} className={`modelChoice ${preferred === choice.value ? "modelChoiceActive" : ""}`}>
@@ -2993,17 +3039,44 @@ function AgentModelField({ config, snapshot, onChange }: {
             />
             <span>
               {choice.name}
-              {snapshot.currentValue === choice.value && preferred !== choice.value ? "（当前）" : ""}
+              {probeStatus === "ready" && snapshot?.currentValueSource === "session" && snapshot.currentValue === choice.value && preferred !== choice.value ? "（当前）" : ""}
             </span>
           </label>
         ))}
       </div>
-      {preferredMissing ? (
+      {probeStatus === "error" ? (
+        <div className="modelHint modelHintWarn">{probe?.message ?? "模型列表获取失败，请重试。"}</div>
+      ) : probeStatus === "unsupported" ? (
+        <div className="modelHint">该运行时未提供可选模型列表。</div>
+      ) : probeStatus === "loading" ? (
+        <div className="modelHint">正在获取模型列表...</div>
+      ) : preferredMissing ? (
         <div className="modelHint modelHintWarn">首选模型 {nameOf(preferred)} 当前不可用，下次运行将继续使用当前模型并在对话中提示。</div>
       ) : null}
       <div className="modelHint">模型选择在该数字员工下次运行时生效。</div>
     </div>
   );
+}
+
+export function mergeProbedConfigs(
+  current: AgentConfigWithModelState[],
+  probed: AgentConfigWithModelState[],
+): AgentConfigWithModelState[] {
+  const currentById = new Map(current.map((config) => [config.id, config]));
+  const probedIds = new Set(probed.map((config) => config.id));
+  return [
+    ...probed.map((serverConfig) => {
+      const localConfig = currentById.get(serverConfig.id);
+      if (!localConfig) return serverConfig;
+      return {
+        ...serverConfig,
+        ...localConfig,
+        modelState: serverConfig.modelState,
+        modelProbe: serverConfig.modelProbe,
+      };
+    }),
+    ...current.filter((config) => !probedIds.has(config.id)),
+  ];
 }
 
 function MarkdownContent({ content }: { content: string }) {

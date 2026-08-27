@@ -471,6 +471,8 @@ test("probes model options without prompting and destroys the temporary connecti
     { value: "model-a", name: "模型 A" },
     { value: "model-b", name: "模型 B" },
   ]);
+  assert.equal(snapshot?.currentValue, undefined, "临时探测会话不得伪造员工当前模型");
+  assert.equal(snapshot?.currentValueSource, "probe");
   assert.equal(fake.calls.some((call) => call.startsWith("session/prompt:")), false);
   assert.ok(fake.calls.some((call) => call.startsWith("destroy:")));
 });
@@ -502,7 +504,9 @@ test("applies the preferred model after the session is established", async () =>
   assert.ok(notices.some((text) => text.includes("模型已切换为 模型 B")), "切换提示走过程叙述流对用户可见");
   assert.equal(snapshots.length, 2, "建立时与切换后各回调一次快照");
   assert.equal(snapshots[0]!.currentValue, "model-a");
+  assert.equal(snapshots[0]!.currentValueSource, "session");
   assert.equal(snapshots[1]!.currentValue, "model-b");
+  assert.equal(snapshots[1]!.currentValueSource, "session");
   assert.deepEqual(snapshots[0]!.choices, [
     { value: "model-a", name: "模型 A" },
     { value: "model-b", name: "模型 B" },

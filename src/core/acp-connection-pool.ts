@@ -9,7 +9,7 @@ import type {
   AcpRuntimeDefinition,
 } from "./acp-runtime.ts";
 
-export const DEFAULT_ACP_PROCESS_TTL_MS = 2 * 60 * 1000;
+export const DEFAULT_ACP_PROCESS_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PROCESSES = 8;
 
 type Entry = {

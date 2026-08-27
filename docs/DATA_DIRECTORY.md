@@ -47,12 +47,13 @@ employee's backend session. Image attachments live under
 the composer are drafts under `tmp/attachments` and are removed when they are
 sent or deleted.
 
-`agent-model-state.json` caches, per digital employee, the model list and
-current value reported by that employee's runtime through ACP session config
-options. It is runtime-derived state, not user configuration: model
-preferences chosen in the settings UI are stored in `agents.json`, and this
-cache is rewritten by Orbit whenever a model discovery probe or run reports a
-fresh snapshot.
+`agent-model-state.json` caches, per digital employee, the model choices
+reported through ACP session config options. Discovery probes write the
+runtime's available choices but no current employee-session value; a current
+value is written only when that employee's real ACP session reports it. It is
+runtime-derived state, not user configuration: model preferences chosen in the
+settings UI are stored in `agents.json`, and this cache is rewritten by Orbit
+whenever discovery or a real run reports a fresh snapshot.
 
 These files can contain project paths, conversation content, uploaded
 attachments, digital employee configuration, ACP session records, runtime

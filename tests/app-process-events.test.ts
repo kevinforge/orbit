@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyEvent, buildProcessTimeline, upsertMessage } from "../src/ui/App.tsx";
+import { applyEvent, buildProcessTimeline, mergeProbedConfigs, upsertMessage } from "../src/ui/App.tsx";
 import type { AgentActivityEvent, AgentModelStateSnapshot, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
 
 const CONVERSATION = "conv1";
@@ -299,6 +299,18 @@ test("persisted process timeline restores narration and compact tool groups in o
   assert.deepEqual(timeline[3], { kind: "tool-summary", count: 3, failedCount: 0 });
 });
 
+test("final answer groups stay out of the expanded process view", () => {
+  const activity: AgentActivityEvent[] = [
+    { type: "process.text", text: "过程说明", timestamp: "2026-01-01T00:00:00.000Z", stream: "progress" as const },
+    { type: "process.text", text: "最终回答", timestamp: "2026-01-01T00:00:01.000Z", stream: "answer" as const, isFinal: true, answerGroup: "response-1" },
+  ];
+  const timeline = buildProcessTimeline(activity);
+  const hidden = buildProcessTimeline(activity, undefined, { hideFinalAnswer: true });
+
+  assert.deepEqual(timeline.map((entry) => entry.kind), ["text", "text"]);
+  assert.deepEqual(hidden, [{ kind: "text", text: "过程说明", timestamp: "2026-01-01T00:00:00.000Z", stream: "progress" }]);
+});
+
 test("run.activity events from other conversations are ignored", () => {
   const initial = state([agentMessage()]);
   const result = applyEvent(initial, {
@@ -352,4 +364,41 @@ test("agent.model_state snapshots are stored per agent without conversation gati
     modelState: { ...snapshot, currentValue: "opus" },
   });
   assert.equal(otherWorkspace.agentModelStates.implementation, snapshot, "其他工作区的快照不得覆盖当前状态");
+});
+
+test("model probe responses preserve unsaved local employee configuration", () => {
+  const local = {
+    id: "developer",
+    name: "本地改名",
+    description: "未保存描述",
+    runtime: "codex" as const,
+    systemPrompt: "未保存提示词",
+    enabled: true,
+    model: { runtimeKind: "codex" as const, preferredModelId: "model-b" },
+    modelState: undefined,
+  };
+  const probed = {
+    ...local,
+    name: "服务端旧名称",
+    description: "服务端旧描述",
+    systemPrompt: "服务端旧提示词",
+    model: undefined,
+    modelState: {
+      agentId: "developer",
+      runtimeKind: "codex" as const,
+      configId: "model",
+      choices: [{ value: "model-a", name: "模型 A" }],
+      currentValue: undefined,
+      currentValueSource: "probe" as const,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+    modelProbe: { runtimeKind: "codex" as const, status: "ready" as const },
+  };
+
+  const merged = mergeProbedConfigs([local], [probed]);
+  assert.equal(merged[0]?.name, "本地改名");
+  assert.equal(merged[0]?.systemPrompt, "未保存提示词");
+  assert.equal(merged[0]?.model?.preferredModelId, "model-b");
+  assert.deepEqual(merged[0]?.modelState, probed.modelState);
+  assert.deepEqual(merged[0]?.modelProbe, probed.modelProbe);
 });

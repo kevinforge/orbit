@@ -6,8 +6,8 @@ import type { AgentId, AgentModelStateSnapshot } from "../shared/types.ts";
 
 /**
  * 员工模型快照的 workspace 级存储（issue #142）。runtime 每次新建/恢复会话
- * 返回的模型列表与当前值由服务端运行时写入这里；员工的模型偏好存放在
- * agents.json，两者分离，避免整表 PUT /api/agents 覆盖运行时探测结果。
+ * 返回的模型选项由探测写入这里，真实员工会话上报的当前值也会写入；员工的
+ * 模型偏好存放在 agents.json，两者分离，避免整表 PUT /api/agents 覆盖运行时状态。
  *
  * 写入采用与 agents.json 相同的临时文件 + 原子替换。
  */
@@ -72,6 +72,7 @@ function isAgentModelStateSnapshot(agentId: string, value: unknown): value is Ag
     && typeof (choice as Record<string, unknown>).value === "string"
     && typeof (choice as Record<string, unknown>).name === "string"
   ))) return false;
+  if (snapshot.currentValueSource !== undefined && snapshot.currentValueSource !== "probe" && snapshot.currentValueSource !== "session") return false;
   return snapshot.currentValue === undefined || typeof snapshot.currentValue === "string";
 }
 
