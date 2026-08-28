@@ -1,5 +1,5 @@
 import type { AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
-import { AgentSession } from "./agent-session.ts";
+import { AgentSession, type AgentModelStateBridge } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { DEFAULT_AGENT_RUNTIMES } from "./acp-runner-registry.ts";
 import { EventBus } from "./event-bus.ts";
@@ -15,6 +15,7 @@ export class AgentRegistry {
     private readonly sessionStore: SessionStore,
     private readonly conversationId: string,
     private readonly runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_AGENT_RUNTIMES,
+    private readonly modelState?: AgentModelStateBridge,
   ) {
     this.profilesById = [...profiles];
     for (const profile of profiles) {
@@ -33,6 +34,8 @@ export class AgentRegistry {
       eventBus: this.eventBus,
       sessionStore: this.sessionStore,
       conversationId: this.conversationId,
+      ...(profile.preferredModelId ? { preferredModelId: profile.preferredModelId } : {}),
+      ...(this.modelState ? { modelState: this.modelState } : {}),
     }));
   }
 

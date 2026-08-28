@@ -36,14 +36,20 @@ function fakeConnector(options: FakeOptions = {}) {
     },
     async loadSession(request) {
       calls.push({ method: "session/load", value: request });
+      return {};
     },
     async resumeSession(request) {
       calls.push({ method: "session/resume", value: request });
+      return {};
     },
     async prompt(request) {
       calls.push({ method: "session/prompt", value: request });
       options.onPrompt?.(notify);
       return options.promptResponse ?? { stopReason: "end_turn" };
+    },
+    async setConfigOption(request) {
+      calls.push({ method: "session/set_config_option", value: request });
+      return { configOptions: [] };
     },
     async cancel(sessionId) {
       calls.push({ method: "session/cancel", value: sessionId });
@@ -109,7 +115,7 @@ test("keeps Codex adapter warnings out of the final answer", async () => {
 
   assert.equal(await runtime.run(runOptions({ onActivity: (activity: unknown) => activities.push(activity) })).result, "clean answer");
   // 诊断告警保持为状态活动；正常答案只在流式期间出现在过程区，
-  // 结算时用空快照清除最终回复文本，避免完成态重复展示。
+  // 结算快照标记最终分组供 RunManager 在服务端内部消化，不转发前端。
   assert.deepEqual(activities, [
     {
       type: "status",
@@ -204,6 +210,80 @@ test("uses Codex final-answer phase instead of commentary or thought chunks", as
       { text: "Inspecting the project.Late commentary", snapshot: true },
     ],
   );
+});
+
+test("keeps commentary before tool calls in the process timeline and settles the final answer group", async () => {
+  // Issue #139 回归：commentary 文本 → 工具调用 → final_answer 文本 → 完成。
+  const activities: Array<{ type: string; text?: string; stream?: string; answerGroup?: string; snapshot?: boolean; excludedAnswerGroup?: string }> = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "commentary-1",
+          content: { type: "text", text: "正在检查项目。" },
+          _meta: { codex: { phase: "commentary" } },
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Run tests",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "npm test" },
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "completed",
+          rawOutput: "passed",
+        },
+      });
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "final-1",
+          content: { type: "text", text: "最终回复" },
+          _meta: { codex: { phase: "final_answer" } },
+        },
+      });
+    },
+  });
+  const runtime = createCodexAcpRuntime(fake.connector);
+  const result = await runtime.run(runOptions({
+    onActivity: (activity: { type: string; text?: string; stream?: string; answerGroup?: string; snapshot?: boolean; excludedAnswerGroup?: string }) => activities.push(activity),
+  })).result;
+
+  assert.equal(result, "最终回复");
+  assert.deepEqual(activities.map((activity) => activity.type), [
+    "process.text",
+    "tool.started",
+    "tool.completed",
+    "process.text",
+    "process.text",
+  ]);
+  // commentary 归入 progress 流；final_answer 分组成为最终回复。
+  assert.deepEqual(
+    activities
+      .filter((activity) => activity.type === "process.text" && !activity.snapshot)
+      .map((activity) => ({ text: activity.text, stream: activity.stream, answerGroup: activity.answerGroup })),
+    [
+      { text: "正在检查项目。", stream: "progress", answerGroup: "" },
+      { text: "最终回复", stream: "answer", answerGroup: "final-1" },
+    ],
+  );
+  const snapshot = activities.at(-1);
+  assert.equal(snapshot?.snapshot, true);
+  assert.equal(snapshot?.excludedAnswerGroup, "final-1");
+  assert.equal(snapshot?.text, "正在检查项目。");
 });
 
 test("creates a Codex ACP session and returns streamed text", async () => {
