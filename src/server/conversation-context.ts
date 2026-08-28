@@ -26,6 +26,7 @@ import {
 } from "../shared/types.ts";
 import { DEFAULT_WORKSPACE_CONFIG, DEFAULT_GLOBAL_CONFIG } from "../shared/types.ts";
 import { createSupervisorProfile, INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
+import type { AgentModelStateBridge } from "../core/agent-session.ts";
 
 const MAX_ROUTE_DEPTH = 10;
 
@@ -49,6 +50,8 @@ export type ConversationContextOptions = {
   lastDirectAgentId?: AgentId;
   /** 会话记录变更回调（如普通对话目标员工变化），由服务层负责持久化。 */
   onConversationPatch?: (patch: ConversationContextPatch) => void;
+  /** 模型快照桥（issue #142）：读写 workspace 级员工模型状态。 */
+  modelState?: AgentModelStateBridge;
 };
 
 export class ConversationContext {
@@ -109,7 +112,7 @@ export class ConversationContext {
     });
 
     const activeProfiles = this.buildActiveProfiles(this._profiles);
-    this.agents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId);
+    this.agents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId, undefined, options.modelState);
     this.agents.startAll();
 
     const agentIds = this.agents.ids();
@@ -175,7 +178,7 @@ export class ConversationContext {
 
     const { workspaceId, conversationId, eventBus, sessionStore } = this.options;
     const activeProfiles = this.buildActiveProfiles(profiles);
-    const newAgents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId);
+    const newAgents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId, undefined, this.options.modelState);
     newAgents.startAll();
 
     this._profiles = profiles.filter((profile) => !profile.internal);

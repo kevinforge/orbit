@@ -11,6 +11,7 @@ import {
   validateAgentConfigs,
   type AgentConfig,
 } from "../src/core/agent-config-store.ts";
+import { configsToProfiles } from "../src/core/agent-profiles.ts";
 
 function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-test-config-"));
@@ -101,4 +102,55 @@ test("reset restores defaults and workspaces are independent", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- issue #142：模型偏好字段校验与持久化 ----
+
+test("model preference round-trips through the store", () => {
+  const dir = tempDir();
+  try {
+    const store = new AgentConfigStore(dir);
+    const configs = [config({ name: "助手", model: { preferredModelId: "glm-5.2", runtimeKind: "claude-code" } })];
+    store.save("ws1", configs);
+    assert.deepEqual(store.load("ws1"), configs);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("model preference validation rejects malformed entries", () => {
+  assert.deepEqual(
+    validateAgentConfigs([config({ name: "助手", model: { preferredModelId: "glm-5.2", runtimeKind: "claude-code" } })]),
+    [],
+  );
+  assert.ok(
+    validateAgentConfigs([config({ name: "助手", model: { preferredModelId: "x", runtimeKind: "unknown" } as unknown as AgentConfig["model"] })])
+      .some((error) => error.includes("model.runtimeKind")),
+  );
+  assert.ok(
+    validateAgentConfigs([config({ name: "助手", model: { preferredModelId: "", runtimeKind: "codex" } })])
+      .some((error) => error.includes("model.preferredModelId")),
+  );
+  assert.ok(
+    validateAgentConfigs([config({ name: "助手", model: { preferredModelId: "x".repeat(129), runtimeKind: "codex" } })])
+      .some((error) => error.includes("at most 128")),
+  );
+  assert.ok(
+    validateAgentConfigs([config({ name: "助手", model: "claude-code" as unknown as AgentConfig["model"] })])
+      .some((error) => error.includes("model must be an object")),
+  );
+});
+
+test("configsToProfiles gates the preferred model by runtime (issue #142)", () => {
+  const profiles = configsToProfiles([
+    config({ id: "same", name: "同源", model: { preferredModelId: "glm-5.2", runtimeKind: "claude-code" } }),
+    config({ id: "cross", name: "跨端", runtime: "codex", model: { preferredModelId: "glm-5.2", runtimeKind: "claude-code" } }),
+    config({ id: "none", name: "无偏" }),
+    config({ id: "blank", name: "空白", model: { preferredModelId: "   ", runtimeKind: "claude-code" } }),
+  ], "D:/workspace");
+
+  assert.equal(profiles.find((p) => p.id === "same")?.preferredModelId, "glm-5.2");
+  assert.equal(profiles.find((p) => p.id === "cross")?.preferredModelId, undefined, "runtime 切换后偏好不得跨 runtime 应用");
+  assert.equal(profiles.find((p) => p.id === "none")?.preferredModelId, undefined);
+  assert.equal(profiles.find((p) => p.id === "blank")?.preferredModelId, undefined);
 });

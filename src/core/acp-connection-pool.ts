@@ -9,7 +9,7 @@ import type {
   AcpRuntimeDefinition,
 } from "./acp-runtime.ts";
 
-export const DEFAULT_ACP_PROCESS_TTL_MS = 2 * 60 * 1000;
+export const DEFAULT_ACP_PROCESS_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PROCESSES = 8;
 
 type Entry = {
@@ -131,13 +131,16 @@ export class AcpConnectionPool {
         return created;
       },
       loadSession: async (request) => {
-        await entry.connection.loadSession(request);
+        const loaded = await entry.connection.loadSession(request);
         entry.sessions.add(request.sessionId);
+        return loaded;
       },
       resumeSession: async (request) => {
-        await entry.connection.resumeSession(request);
+        const resumed = await entry.connection.resumeSession(request);
         entry.sessions.add(request.sessionId);
+        return resumed;
       },
+      setConfigOption: (request) => entry.connection.setConfigOption(request),
       prompt: (request) => entry.connection.prompt(request),
       cancel: (sessionId) => entry.connection.cancel(sessionId),
       hasSession: (sessionId) => entry.sessions.has(sessionId),
@@ -164,8 +167,30 @@ export class AcpConnectionPool {
     if (this.entries.get(entry.key) === entry) {
       this.entries.delete(entry.key);
     }
+    // 强制销毁与正常释放不同：先解除会话绑定，再走底层 destroy 终止进程并结束
+    // 所有 pending 请求；连接绝不回到空闲池（issue #136）。
+    entry.connection.deactivate();
+    if (entry.connection.destroy) {
+      entry.connection.destroy();
+      return;
+    }
     entry.connection.close();
   }
+}
+
+// 代理环境变量参与连接键（issue #141）：切换系统代理后，池中旧连接仍走旧
+// 出口，必须视为不可复用；代理值变化会产生不同的键，从而另起新进程。
+const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"] as const;
+
+function proxyEnvKey(baseEnv: NodeJS.ProcessEnv, runEnv: NodeJS.ProcessEnv): Record<string, string> {
+  const snapshot: Record<string, string> = {};
+  for (const key of PROXY_ENV_KEYS) {
+    // runEnv 覆盖 baseEnv（与 spawn 时的展开顺序一致）；大小写变体取先定义者，
+    // 统一以大写键写入快照，避免仅大小写不同的环境相互复用连接。
+    const value = runEnv[key] ?? runEnv[key.toLowerCase()] ?? baseEnv[key] ?? baseEnv[key.toLowerCase()];
+    if (value !== undefined) snapshot[key] = value;
+  }
+  return snapshot;
 }
 
 function connectionKey(definition: AcpRuntimeDefinition, options: AcpRunOptions): string {
@@ -179,5 +204,6 @@ function connectionKey(definition: AcpRuntimeDefinition, options: AcpRunOptions)
     approvalMode: options.approvalMode ?? "ask",
     command: [command.file, ...command.args],
     runEnv: Object.entries(runEnv).sort(([left], [right]) => left.localeCompare(right)),
+    proxyEnv: proxyEnvKey(baseEnv, runEnv),
   });
 }

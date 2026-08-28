@@ -17,6 +17,7 @@ import {
   type InitializeRequest,
   type InitializeResponse,
   type LoadSessionRequest,
+  type LoadSessionResponse,
   type NewSessionRequest,
   type NewSessionResponse,
   type PromptRequest,
@@ -24,7 +25,12 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type ResumeSessionRequest,
+  type ResumeSessionResponse,
+  type SessionConfigOption,
+  type SessionConfigSelectOptions,
   type SessionNotification,
+  type SetSessionConfigOptionRequest,
+  type SetSessionConfigOptionResponse,
   type ToolCallStatus,
   type ToolKind,
 } from "@agentclientprotocol/sdk";
@@ -33,6 +39,8 @@ import type {
   AgentActivityEvent,
   AgentElicitationRequest,
   AgentId,
+  AgentModelChoice,
+  AgentModelStateSnapshot,
   AgentRuntimeKind,
 } from "../shared/types.ts";
 import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunHandle, type AgentRuntimeRunOptions } from "./agent-runtime.ts";
@@ -44,7 +52,11 @@ import {
 } from "./acp-output-guard.ts";
 import { AcpConnectionPool } from "./acp-connection-pool.ts";
 
-const CANCEL_GRACE_MS = 1_500;
+/**
+ * 取消宽限期：interrupt 先发 session/cancel 优雅取消；超过该时限仍未结算的
+ * 回合强制销毁连接并收口结果，避免运行永久停留在取消中（issue #136）。
+ */
+export const CANCEL_GRACE_MS = 10_000;
 
 export type AcpRunOptions = AgentRuntimeRunOptions;
 
@@ -52,8 +64,9 @@ export type AcpConnection = {
   readonly pid: number;
   initialize(request: InitializeRequest): Promise<InitializeResponse>;
   newSession(request: NewSessionRequest): Promise<NewSessionResponse>;
-  loadSession(request: LoadSessionRequest): Promise<void>;
-  resumeSession(request: ResumeSessionRequest): Promise<void>;
+  loadSession(request: LoadSessionRequest): Promise<LoadSessionResponse>;
+  resumeSession(request: ResumeSessionRequest): Promise<ResumeSessionResponse>;
+  setConfigOption(request: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse>;
   prompt(request: PromptRequest): Promise<PromptResponse>;
   cancel(sessionId: string): Promise<void>;
   hasSession?(sessionId: string): boolean;
@@ -176,6 +189,7 @@ export function runAcp(
   let cancelled = false;
   let permissionRejected = false;
   let closed = false;
+  let forcedCancelled = false;
   let cancelTimer: NodeJS.Timeout | null = null;
   const answerState = createAnswerState();
   const turnState = createTurnState();
@@ -191,12 +205,15 @@ export function runAcp(
       }
       : undefined,
   };
-  const connection = connector(connectorOptions, (notification) => {
+  const handleSessionUpdateNotification = (notification: SessionNotification) => {
     if (!acceptingUpdates || notification.sessionId !== activeSessionId) {
       return;
     }
     handleSessionUpdate(notification, answerState, turnState, toolStates, options, definition);
-  });
+  };
+  // 重试恢复（issue #141）会销毁坏连接并重新 acquire，connection 必须可替换；
+  // close/interrupt 等闭包读取该变量，始终作用于当前连接。
+  let connection = connector(connectorOptions, handleSessionUpdateNotification);
 
   let resolveSessionId!: (sessionId: string | null) => void;
   let sessionIdSettled = false;
@@ -207,6 +224,14 @@ export function runAcp(
       resolve(value);
     };
   });
+
+  // 强制取消收口（issue #136）：runtime 无视 session/cancel 且底层 prompt 永不
+  // 结算时，由该 Promise 结束 handle.result，运行不会永久停留在取消中。
+  let rejectForcedCancel!: (error: AgentRunCancelledError) => void;
+  const forcedCancellation = new Promise<never>((_resolve, reject) => {
+    rejectForcedCancel = reject;
+  });
+  void forcedCancellation.catch(() => undefined);
 
   const close = (destroy = false) => {
     if (closed) return;
@@ -221,32 +246,63 @@ export function runAcp(
     permissionRejected ? "权限申请未获批准，任务已停止。" : "运行已取消。",
   );
 
-  const result = (async () => {
+  /**
+   * 强制收口：先落定 sessionId（AgentSession 的异常路径会 await 它，不能再次
+   * 无限等待）、停止接受晚到的会话更新、销毁连接终止进程，最后让 handle.result
+   * 以取消错误结束。
+   */
+  const forceCancel = (diagnostic: string) => {
+    if (forcedCancelled || closed) return;
+    forcedCancelled = true;
+    cancelled = true;
+    acceptingUpdates = false;
+    if (cancelTimer) {
+      clearTimeout(cancelTimer);
+      cancelTimer = null;
+    }
+    resolveSessionId(activeSessionId);
+    options.onOutput?.(`${definition.displayName} ${diagnostic}。`);
+    close(true);
+    rejectForcedCancel(new AgentRunCancelledError(
+      `${definition.displayName} ACP turn was force-cancelled: ${diagnostic}`,
+      permissionRejected ? "权限申请未获批准，任务已停止。" : "运行已取消。",
+    ));
+  };
+
+  const turn = (async () => {
     let succeeded = false;
+    const initializeRequest = createAcpInitializeRequest();
     try {
-      const initialized = await connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          elicitation: {
-            form: {},
-            url: {},
-          },
-          plan: {},
-        },
-        clientInfo: { name: "Orbit", version: "1.0.0" },
-      });
+      const initialized = await connection.initialize(initializeRequest);
       validateInitializeResponse(initialized, definition.displayName);
 
-      activeSessionId = await prepareSession(
+      const session = await restoreOrRecoverSession(
         connection,
+        options,
+        definition,
         initialized.agentCapabilities,
-        options.cwd,
-        options.resumeSessionId,
-        definition.displayName,
+        initializeRequest,
+        () => {
+          connection.destroy?.();
+          connection = connector(connectorOptions, handleSessionUpdateNotification);
+          return connection;
+        },
       );
+      activeSessionId = session.sessionId;
       resolveSessionId(activeSessionId);
 
-      acceptingUpdates = true;
+      // 会话建立后、prompt 前：先回调模型快照，再尽力应用员工首选模型
+      // （issue #142）。切换失败只输出过程提示，绝不让运行失败。
+      if (!cancelled && !forcedCancelled) {
+        await applyPreferredModel(connection, activeSessionId, options, definition, session.configOptions);
+      }
+      // Cancellation may arrive while applying the preferred model. Do not
+      // start a prompt after the turn has already entered cancellation.
+      if (cancelled || forcedCancelled) {
+        throw cancellationError();
+      }
+
+      acceptingUpdates = !forcedCancelled;
       const response = await connection.prompt({
         sessionId: activeSessionId,
         prompt: buildPromptContent(options.prompt, options.imagePaths, initialized.agentCapabilities),
@@ -281,17 +337,23 @@ export function runAcp(
       close(!succeeded);
     }
   })();
+  // 与正常回合竞速：强制收口时即使底层 prompt 永不结算，handle.result 也落定。
+  const result: Promise<string> = Promise.race([turn, forcedCancellation]);
 
   const interrupt = () => {
     if (cancelled || closed) return;
     cancelled = true;
     if (!activeSessionId) {
-      close(true);
+      forceCancel("会话尚未建立，已强制终止进程");
       return;
     }
 
-    void connection.cancel(activeSessionId).catch(() => close(true));
-    cancelTimer = setTimeout(() => close(true), CANCEL_GRACE_MS);
+    // 先尝试优雅取消；请求失败或宽限期超时都立即强制收口。
+    void connection.cancel(activeSessionId).catch(() => forceCancel("取消请求失败，已强制终止进程"));
+    cancelTimer = setTimeout(
+      () => forceCancel(`未在 ${CANCEL_GRACE_MS / 1000} 秒内响应取消，已强制终止进程`),
+      CANCEL_GRACE_MS,
+    );
     cancelTimer.unref?.();
   };
 
@@ -306,21 +368,72 @@ export function runAcp(
   };
 }
 
+const MODEL_PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * 在不发送 prompt 的前提下读取 runtime 的模型配置。设置面板首次打开时使用，
+ * 连接和临时 session 都会在读取完成后销毁，不会写入员工的会话记录。
+ */
+export async function probeAcpModelState(
+  definition: AcpRuntimeDefinition,
+  options: Pick<AcpRunOptions, "agentId" | "cwd" | "env">,
+  connector: AcpConnector = (runOptions, onSessionUpdate) =>
+    spawnAcpConnection(definition, runOptions, onSessionUpdate),
+): Promise<AgentModelStateSnapshot | null> {
+  const probeOptions: AcpRunOptions = {
+    ...options,
+    prompt: "",
+    approvalMode: "full-access",
+  };
+  let connection: AcpConnection | undefined;
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    const probe = (async () => {
+      connection = connector(probeOptions, () => {});
+      const initialized = await connection.initialize(createAcpInitializeRequest());
+      validateInitializeResponse(initialized, definition.displayName);
+      const created = await connection.newSession({
+        cwd: path.resolve(probeOptions.cwd),
+        mcpServers: [],
+      });
+      return toModelSnapshot(created.configOptions, probeOptions, definition, "probe");
+    })();
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error(`${definition.displayName} model discovery timed out.`)),
+        MODEL_PROBE_TIMEOUT_MS,
+      );
+      timeout.unref?.();
+    });
+    return await Promise.race([probe, deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    connection?.destroy?.();
+  }
+}
+
+/** 会话建立结果：sessionId 加上本次建立路径拿到的 config options 快照。 */
+export type AcpSessionSetup = {
+  sessionId: string;
+  configOptions: Array<SessionConfigOption> | null | undefined;
+};
+
 async function prepareSession(
   connection: AcpConnection,
   capabilities: AgentCapabilities | undefined,
   cwd: string,
   existingSessionId?: string,
   displayName = "Agent",
-): Promise<string> {
+): Promise<AcpSessionSetup> {
   const absoluteCwd = path.resolve(cwd);
   if (!existingSessionId) {
     const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
-    return created.sessionId;
+    return { sessionId: created.sessionId, configOptions: created.configOptions };
   }
 
   if (connection.hasSession?.(existingSessionId)) {
-    return existingSessionId;
+    // 池复用捷径：不发任何 RPC，没有新快照；调用方用上一次快照补发模型偏好。
+    return { sessionId: existingSessionId, configOptions: undefined };
   }
 
   const request = {
@@ -329,17 +442,200 @@ async function prepareSession(
     mcpServers: [],
   };
   if (capabilities?.sessionCapabilities?.resume) {
-    await connection.resumeSession(request satisfies ResumeSessionRequest);
-    return existingSessionId;
+    const resumed = await connection.resumeSession(request satisfies ResumeSessionRequest);
+    return { sessionId: existingSessionId, configOptions: resumed.configOptions };
   }
   if (capabilities?.loadSession) {
-    await connection.loadSession(request);
-    return existingSessionId;
+    const loaded = await connection.loadSession(request);
+    return { sessionId: existingSessionId, configOptions: loaded.configOptions };
   }
 
   throw new Error(
     `${displayName} ACP could not resume the session because the agent does not advertise session/load or session/resume.`,
   );
+}
+
+export type AcpSessionRestoreClassification = "recoverable" | "unrecoverable";
+
+/**
+ * 会话恢复失败的保守分类（issue #141）。只把 runtime 明确报告的会话状态
+ * 冲突或损坏归为不可恢复；传输断开、网络超时、进程退出归为可恢复（会话
+ * 本身仍有效，换一条连接即可）。识别不了的一律返回 null，按普通错误落定，
+ * 不自动降级。
+ */
+export function classifySessionRestoreError(error: unknown): AcpSessionRestoreClassification | null {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (/thread-store conflict|active writer|session (not found|corrupt|damaged|expired)|invalid session/.test(message)) {
+    return "unrecoverable";
+  }
+  if (/transport|connection closed|timeout|timed out|process exited|process failed|econnreset|econnrefused|epipe|socket hang up|aborted/.test(message)) {
+    return "recoverable";
+  }
+  return null;
+}
+
+function summarizeRestoreFailure(error: unknown): string {
+  const firstLine = (error instanceof Error ? error.message : String(error)).split("\n")[0]!.trim();
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine;
+}
+
+/**
+ * 恢复既有会话，失败时按分类降级（issue #141）：
+ * - 可恢复（传输断开/超时/进程退出）：销毁当前 lease，用新连接和同一个
+ *   sessionId 重试一次，再失败按普通错误落定；
+ * - 不可恢复（会话状态冲突或损坏）：直接 newSession，让调用方的 sessionId
+ *   落定新值（AgentSession 随后持久化新绑定；Orbit 侧会话、消息历史与员工
+ *   配置一律不变）。
+ * 两种路径都通过 onOutput 输出过程提示，不改写正文。
+ */
+async function restoreOrRecoverSession(
+  connection: AcpConnection,
+  options: AcpRunOptions,
+  definition: AcpRuntimeDefinition,
+  capabilities: AgentCapabilities | undefined,
+  initializeRequest: InitializeRequest,
+  reconnect: () => AcpConnection,
+): Promise<AcpSessionSetup> {
+  const absoluteCwd = path.resolve(options.cwd);
+  if (!options.resumeSessionId) {
+    const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
+    return { sessionId: created.sessionId, configOptions: created.configOptions };
+  }
+  try {
+    return await prepareSession(connection, capabilities, options.cwd, options.resumeSessionId, definition.displayName);
+  } catch (error) {
+    const classification = classifySessionRestoreError(error);
+    if (!classification) throw error;
+
+    if (classification === "recoverable") {
+      const replacement = reconnect();
+      const reinitialized = await replacement.initialize(initializeRequest);
+      validateInitializeResponse(reinitialized, definition.displayName);
+      const setup = await prepareSession(
+        replacement,
+        reinitialized.agentCapabilities,
+        options.cwd,
+        options.resumeSessionId,
+        definition.displayName,
+      );
+      options.onOutput?.(`${definition.displayName} 会话恢复时连接中断，已在新连接上恢复原会话。`);
+      return setup;
+    }
+
+    const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
+    options.onOutput?.(
+      `原 ${definition.displayName} 会话无法恢复（${summarizeRestoreFailure(error)}），已使用新的会话继续。`,
+    );
+    return { sessionId: created.sessionId, configOptions: created.configOptions };
+  }
+}
+
+/**
+ * 从 runtime 返回的 config options 中抽取模型选择快照（issue #142）。只认
+ * category 为 "model" 的 select 选项；configOptions 缺失（runtime 未返回配置）
+ * 时返回 null，不产生快照。runtime 返回了配置但没有模型选项时给出空列表，
+ * 调用方据此隐藏模型选择器。
+ */
+export function toModelSnapshot(
+  configOptions: Array<SessionConfigOption> | null | undefined,
+  options: AcpRunOptions,
+  definition: AcpRuntimeDefinition,
+  currentValueSource: "probe" | "session" = "session",
+): AgentModelStateSnapshot | null {
+  if (!configOptions) return null;
+  const modelOption = configOptions.find(
+    (option): option is Extract<SessionConfigOption, { type: "select" }> =>
+      option.type === "select" && option.category === "model",
+  );
+  return {
+    agentId: options.agentId,
+    runtimeKind: definition.kind,
+    configId: modelOption?.id ?? "",
+    choices: modelOption ? flattenModelChoices(modelOption.options) : [],
+    currentValue: currentValueSource === "session" ? modelOption?.currentValue : undefined,
+    currentValueSource,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function flattenModelChoices(values: SessionConfigSelectOptions): AgentModelChoice[] {
+  const choices: AgentModelChoice[] = [];
+  for (const value of values) {
+    if ("value" in value) {
+      choices.push({ value: value.value, name: value.name });
+      continue;
+    }
+    for (const inner of value.options) {
+      choices.push({ value: inner.value, name: inner.name });
+    }
+  }
+  return choices;
+}
+
+function modelLabel(snapshot: { choices: AgentModelChoice[] }, value: string): string {
+  return snapshot.choices.find((choice) => choice.value === value)?.name || value;
+}
+
+/**
+ * 会话建立后、prompt 前应用员工首选模型（issue #142）。模型切换是尽力而为的
+ * 过程提示：runtime 不提供模型选项、首选值不在列表或切换失败时都只提示并继续
+ * 用当前模型，绝不新建会话、绝不让运行失败。
+ *
+ * 池复用捷径（hasSession 命中，本次没有响应可读）没有新快照，改用上一次运行
+ * 的快照（lastSessionConfig）无条件幂等下发 set_config_option。
+ */
+async function applyPreferredModel(
+  connection: AcpConnection,
+  sessionId: string,
+  options: AcpRunOptions,
+  definition: AcpRuntimeDefinition,
+  configOptions: Array<SessionConfigOption> | null | undefined,
+): Promise<void> {
+  const snapshot = toModelSnapshot(configOptions, options, definition);
+  if (snapshot) options.onSessionConfig?.(snapshot);
+  const preferred = options.preferredModelId?.trim();
+  if (!preferred) return;
+
+  const last = options.lastSessionConfig;
+  const reference =
+    snapshot
+    ?? (last && last.runtimeKind === definition.kind && last.agentId === options.agentId ? last : null);
+  if (!reference || !reference.configId || reference.choices.length === 0) return;
+
+  if (reference.currentValue === preferred) return;
+  if (!reference.choices.some((choice) => choice.value === preferred)) {
+    const current = reference.currentValue ? modelLabel(reference, reference.currentValue) : "默认模型";
+    emitModelNotice(
+      options,
+      `${definition.displayName} 首选模型 ${modelLabel(reference, preferred)} 当前不可用，继续使用 ${current}。`,
+    );
+    return;
+  }
+
+  try {
+    const response = await connection.setConfigOption({
+      sessionId,
+      configId: reference.configId,
+      value: preferred,
+    });
+    const updated = toModelSnapshot(response.configOptions, options, definition);
+    if (updated) options.onSessionConfig?.(updated);
+    emitModelNotice(options, `${definition.displayName} 模型已切换为 ${modelLabel(updated ?? reference, preferred)}。`);
+  } catch (error) {
+    emitModelNotice(
+      options,
+      `${definition.displayName} 模型切换失败（${summarizeRestoreFailure(error)}），继续使用当前模型。`,
+    );
+  }
+}
+
+/**
+ * 模型切换提示走过程叙述流（process.text）：在回复卡片的过程区可见并随消息
+ * 持久化，不混入最终回复正文，也不会被 terminal 噪声分类降级成通用状态。
+ */
+function emitModelNotice(options: AcpRunOptions, text: string): void {
+  // Keep runtime notices visually separate from the following model narration.
+  options.onActivity?.({ type: "process.text", text: `${text}\n\n`, timestamp: new Date().toISOString(), stream: "progress" });
 }
 
 function validateInitializeResponse(response: InitializeResponse, displayName: string): void {
@@ -348,6 +644,21 @@ function validateInitializeResponse(response: InitializeResponse, displayName: s
       `Unsupported ${displayName} ACP protocol version ${response.protocolVersion}; Orbit requires ${PROTOCOL_VERSION}.`,
     );
   }
+}
+
+function createAcpInitializeRequest(): InitializeRequest {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: {
+      elicitation: {
+        form: {},
+        url: {},
+      },
+      plan: {},
+      session: { configOptions: {} },
+    },
+    clientInfo: { name: "Orbit", version: "1.0.0" },
+  } satisfies InitializeRequest;
 }
 
 function buildPromptContent(
@@ -404,6 +715,12 @@ function handleSessionUpdate(
 ): void {
   const update = notification.update;
   definition.observeSessionUpdate?.(update, turnState);
+  if (update.sessionUpdate === "config_option_update") {
+    // 部分运行时（如 CodeBuddy）会在运行中主动推送配置变化；刷新模型快照即可。
+    const snapshot = toModelSnapshot(update.configOptions, options, definition);
+    if (snapshot) options.onSessionConfig?.(snapshot);
+    return;
+  }
   if (update.sessionUpdate === "plan") {
     emitActivity(options, {
       type: "plan.updated",
@@ -475,7 +792,7 @@ function handleSessionUpdate(
       const answerGroup = appendAnswerChunk(answerState, update, disposition, update.content.text, definition, turnState);
       // 流式期间当前分组的文本同样进入过程区实时展示；结算快照会剔除
       // 归入最终回复的部分。
-      emitProcessText(options, update.content.text, "answer", answerGroup);
+      emitProcessText(options, update.content.text, "answer", answerGroup, disposition === "final");
     }
     return;
   }
@@ -621,6 +938,7 @@ function emitProcessText(
   text: string,
   stream: "progress" | "answer",
   answerGroup: string,
+  isFinal = false,
 ): void {
   if (!text) return;
   emitActivity(options, {
@@ -628,6 +946,7 @@ function emitProcessText(
     text,
     stream,
     answerGroup,
+    ...(isFinal ? { isFinal: true } : {}),
     timestamp: new Date().toISOString(),
   });
 }
@@ -858,6 +1177,12 @@ export function spawnAcpConnection(
   );
   const acp = app.connect(stream);
 
+  // stdout EOF（传输断开）的连接即使进程还活着也不可复用（issue #141）。
+  let stdoutEnded = false;
+  guardedStdout.once("end", () => {
+    stdoutEnded = true;
+  });
+
   const connection = connectionFromProcess(child, acp, definition.displayName, guardedStdout, () => stderrForwarder.tailText());
   return {
     ...connection,
@@ -869,7 +1194,7 @@ export function spawnAcpConnection(
       context = null;
     },
     isAlive() {
-      return child.exitCode === null && child.signalCode === null;
+      return child.exitCode === null && child.signalCode === null && !stdoutEnded;
     },
   };
 }
@@ -883,25 +1208,60 @@ function connectionFromProcess(
 ): AcpConnection {
   const pid = child.pid ?? 0;
   let closed = false;
+  let transportEnded = false;
   let rejectProcessFailure!: (error: Error) => void;
   const processFailure = new Promise<never>((_resolve, reject) => {
     rejectProcessFailure = reject;
   });
   void processFailure.catch(() => undefined);
-  child.once("error", (error) => rejectProcessFailure(error));
-  guardedStdout?.once("error", (error) => rejectProcessFailure(error));
+  guardedStdout?.once("end", () => {
+    transportEnded = true;
+  });
+  child.once("error", (error) => rejectProcessFailure(new Error(
+    `${displayName} ACP process failed (pid ${pid}): ${error.message}`,
+  )));
+  guardedStdout?.once("error", (error) => rejectProcessFailure(new Error(
+    `${displayName} ACP transport failed (pid ${pid}): ${error.message}`,
+  )));
+  // 进程活着但 stdout 提前 EOF（runtime 崩溃或只关闭了输出流）时，pending
+  // 请求会永久挂在 Promise.race 上；把传输结束也视为进程失败（issue #141）。
+  // Windows 上崩溃进程的 stdout EOF 会先于 exit 事件到达，这里延迟一拍落定，
+  // 让进程退出场景由 exit 监听给出带退出码的诊断；只有进程确实仍在运行才
+  // 报 transport closed。
+  guardedStdout?.once("end", () => {
+    if (closed) return;
+    const transportClosedTimer = setTimeout(() => {
+      if (closed) return;
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const stderr = stderrText?.().trim();
+      rejectProcessFailure(new Error(
+        `${displayName} ACP transport closed (stdout ended while pid ${pid} was still running).` +
+        (stderr ? `\n${stderr}` : ""),
+      ));
+    }, 50);
+    transportClosedTimer.unref?.();
+  });
   child.once("exit", (code, signal) => {
     if (!closed) {
       const stderr = stderrText?.().trim();
       rejectProcessFailure(new Error(
-        `${displayName} ACP process exited unexpectedly (${code === null ? signal : `code ${code}`}).` +
+        `${displayName} ACP process exited unexpectedly (pid ${pid}, ${code === null ? `signal ${signal}` : `code ${code}`}).` +
         (stderr ? `\n${stderr}` : ""),
       ));
     }
   });
-  const request = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, processFailure]);
+  // 失败诊断统一带 runtime displayName 与 pid（issue #141）：进程退出或连接
+  // 被关闭时，ACP SDK 可能抢先以裸 "ACP connection closed" 拒绝 pending 请求，
+  // 这里补上进程上下文；连接健康时的业务错误与本模块已带前缀的诊断保持原样。
+  const request = <T>(operation: Promise<T>): Promise<T> =>
+    Promise.race([operation, processFailure]).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const connectionDead = closed || transportEnded || child.exitCode !== null || child.signalCode !== null;
+      if (!connectionDead || message.startsWith(`${displayName} ACP `)) throw error;
+      throw new Error(`${displayName} ACP request failed (pid ${pid}): ${message}`);
+    });
 
-  const close = () => {
+  const terminate = () => {
     if (closed) return;
     closed = true;
     const processStillRunning = child.exitCode === null && child.signalCode === null;
@@ -922,19 +1282,31 @@ function connectionFromProcess(
     acp.close();
   };
 
+  const close = () => {
+    terminate();
+  };
+
+  /**
+   * 强制销毁（issue #136）：close() 置位 closed 后，进程 exit 事件不再触发
+   * processFailure 拒绝，pending 请求会永久挂在 Promise.race 上。destroy 必须
+   * 显式拒绝 processFailure，让所有未结算的 ACP 请求立即结束。
+   */
+  const destroy = () => {
+    terminate();
+    rejectProcessFailure(new Error(`${displayName} ACP connection was destroyed.`));
+  };
+
   return {
     pid,
     initialize: (params) => request(acp.agent.request(methods.agent.initialize, params)),
     newSession: (params) => request(acp.agent.request(methods.agent.session.new, params)),
-    loadSession: async (params) => {
-      await request(acp.agent.request(methods.agent.session.load, params));
-    },
-    resumeSession: async (params) => {
-      await request(acp.agent.request(methods.agent.session.resume, params));
-    },
+    loadSession: (params) => request(acp.agent.request(methods.agent.session.load, params)),
+    resumeSession: (params) => request(acp.agent.request(methods.agent.session.resume, params)),
+    setConfigOption: (params) => request(acp.agent.request(methods.agent.session.setConfigOption, params)),
     prompt: (params) => request(acp.agent.request(methods.agent.session.prompt, params)),
     cancel: (sessionId) => request(acp.agent.notify(methods.agent.session.cancel, { sessionId })),
     close,
+    destroy,
   };
 }
 

@@ -1,9 +1,9 @@
-import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { renderMarkdown } from "./markdown-renderer.ts";
+import { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentId, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
@@ -57,6 +57,7 @@ const initialState: AppState = {
   runtimeAvailability: [],
   pendingPermissions: [],
   pendingElicitations: [],
+  agentModelStates: {},
 };
 
 type ActiveView = "conversation" | "analysis";
@@ -85,6 +86,16 @@ function loadApprovalMode(): ApprovalMode {
   } catch {
     return "full-access";
   }
+}
+
+/**
+ * 判断按键是否发生在输入法组合（IME composition）期间。
+ * macOS 中文输入法组合中按 Enter 是"字母原文上屏"、方向键用于选择候选词，
+ * 这些按键必须交给输入法处理，不能触发发送、选中 @员工 等快捷键。
+ * keyCode 229 兼容旧版 Safari（其组合期 keydown 不带 isComposing）。
+ */
+export function isImeComposition(event: { nativeEvent: { isComposing?: boolean }; keyCode?: number }): boolean {
+  return event.nativeEvent.isComposing === true || event.keyCode === 229;
 }
 
 export function App() {
@@ -136,6 +147,7 @@ export function App() {
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<DraftAttachmentInfo[]>([]);
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
+  const [pathToast, setPathToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   /** 已占用附件槽位（含上传中）。同步计数：并发批次不会各自读到过期数量。 */
@@ -410,6 +422,59 @@ export function App() {
     isNearBottomRef.current = near;
     setIsNearBottom(near);
     if (near) setShowNewMessageHint(false);
+  }
+
+  function showPathToast(message: string) {
+    setPathToast(message);
+    window.setTimeout(() => setPathToast(null), 3000);
+  }
+
+  // 消息区事件委托：markdown 渲染出的本地路径入口（issue #143）点击或
+  // Enter/Space 激活后调用 /api/local-path/reveal 在资源管理器中定位；
+  // 失败或越界时提示原因，并把路径复制到剪贴板兜底。
+  function localPathEntryFromEventTarget(target: EventTarget | null): HTMLElement | null {
+    if (!(target instanceof HTMLElement)) return null;
+    return target.closest<HTMLElement>(`.${LOCAL_PATH_LINK_CLASS}`);
+  }
+
+  async function revealLocalPath(path: string) {
+    let reason = "";
+    try {
+      const response = await fetch("/api/local-path/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (response.ok && data.ok) return;
+      reason = data.message ?? "无法在资源管理器中定位该路径";
+    } catch {
+      reason = "无法在资源管理器中定位该路径";
+    }
+    try {
+      await navigator.clipboard.writeText(path);
+      showPathToast(`${reason}（路径已复制）`);
+    } catch {
+      showPathToast(reason);
+    }
+  }
+
+  async function handleMessagesClick(event: MouseEvent<HTMLDivElement>) {
+    const entry = localPathEntryFromEventTarget(event.target);
+    const path = entry?.dataset.path;
+    if (!path) return;
+    await revealLocalPath(path);
+  }
+
+  // 入口带 role="button" tabindex="0"，键盘激活必须与点击等价；Space 需
+  // preventDefault 避免滚动消息区。
+  function handleMessagesKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const entry = localPathEntryFromEventTarget(event.target);
+    const path = entry?.dataset.path;
+    if (!path) return;
+    event.preventDefault();
+    void revealLocalPath(path);
   }
 
   useLayoutEffect(() => {
@@ -952,6 +1017,10 @@ export function App() {
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (isImeComposition(event)) {
+      return;
+    }
+
     if (mentionCandidates.length === 0) {
       return;
     }
@@ -1256,7 +1325,7 @@ export function App() {
           </div>
         </header>
 
-        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="消息列表" onScroll={handleMessagesScroll}>
+        <div ref={messagesRef} className="messages" role="log" aria-live="polite" aria-label="消息列表" onScroll={handleMessagesScroll} onClick={(event) => { void handleMessagesClick(event); }} onKeyDown={handleMessagesKeyDown}>
           {state.messageHistory.hasOlderMessages ? (
             <button
               className="loadOlderMessagesBtn"
@@ -1331,6 +1400,7 @@ export function App() {
         ) : null}
         {interruptToast ? <div className="interruptToast">{interruptToast}</div> : null}
         {attachmentToast ? <div className="attachmentToast">{attachmentToast}</div> : null}
+        {pathToast ? <div className="attachmentToast pathToast">{pathToast}</div> : null}
         {state.pendingPermissions.length > 0 ? (
           <div className="permissionApprovalStack" aria-live="polite">
             {state.pendingPermissions.map((permission) => (
@@ -1430,6 +1500,9 @@ export function App() {
                 setCursorIndex(event.target.selectionStart ?? event.target.value.length);
               }}
               onKeyDown={(event) => {
+                if (isImeComposition(event)) {
+                  return;
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   sendMessage(event as unknown as FormEvent<HTMLFormElement>);
@@ -1610,6 +1683,7 @@ export function App() {
           runtimeAvailability={state.runtimeAvailability}
           isRefreshingRuntimes={isRefreshingRuntimes}
           onRefreshRuntimes={refreshRuntimeAvailability}
+          modelStates={state.agentModelStates}
         />
       ) : null}
       {previewAttachment ? (
@@ -1943,6 +2017,9 @@ function MessageRow({
   const isQueued = message.runStatus === "queued";
   const isAgentRun = message.kind === "agent" && Boolean(message.runId);
   const isLiveRun = isAgentRun && (isRunning || isCancelling || isQueued);
+  // 仅在回合仍处于执行态时提前展示显式 final_answer；排队或取消中的
+  // 消息不能继续沿用已经收到的最终分片作为正文。
+  const liveFinalAnswer = isRunning ? getLiveFinalAnswer(message.activity) : null;
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
   const compactHandoffSource = parentMessage?.kind === "agent"
     ? agentsById.get(parentMessage.agentId ?? "")?.label ?? parentMessage.agentId ?? "数字员工"
@@ -1952,7 +2029,6 @@ function MessageRow({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const copyResetTimer = useRef<number | null>(null);
   const canCopyMessage = message.content.trim().length > 0 && !isProgressPlaceholder;
-  const liveResponse = isLiveRun ? resolveLiveResponseText(message.activity) : undefined;
 
   useEffect(() => () => {
     if (copyResetTimer.current !== null) {
@@ -2036,17 +2112,15 @@ function MessageRow({
       ) : null}
       {isAgentRun
         ? isLiveRun
-          ? liveResponse
-            ? <SettledRunProcess message={message} live />
+          ? liveFinalAnswer
+            ? <SettledRunProcess message={message} hideFinalAnswer />
             : <LiveRunProcess message={message} isCancelling={isCancelling} />
           : <SettledRunProcess message={message} />
         : null}
       <div className="messageBody">
-        {isProgressPlaceholder ? (
-          liveResponse?.text
-            ? <MarkdownContent content={liveResponse.text} />
-            : <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
-        ) : message.kind === "agent" ? <MarkdownContent content={message.content} /> : <PlainText content={message.content} />}
+        {isProgressPlaceholder && !liveFinalAnswer ? (
+          <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
+        ) : message.kind === "agent" ? <MarkdownContent content={liveFinalAnswer ?? message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
             {message.attachments.map((att) => (
@@ -2087,29 +2161,30 @@ function MessageRow({
 }
 
 type ProcessTimelineEntry =
-  | { kind: "text"; text: string; timestamp: string }
+  | { kind: "text"; text: string; timestamp: string; stream: "progress" | "answer"; isFinal?: boolean }
   | { kind: "tools"; activities: ProcessToolActivity[] }
   | { kind: "tool-summary"; count: number; failedCount: number };
 
-/** Preserve the ACP order while combining adjacent text chunks and tool events. */
+/** Preserve the ACP order while combining adjacent same-stream text chunks and tool events. */
 export function buildProcessTimeline(
   activity: AgentActivityEvent[] | undefined,
-  hiddenAnswerGroup: string | null = null,
   persistedTimeline?: PersistedProcessTimelineEntry[] | null,
+  options?: { hideFinalAnswer?: boolean },
 ): ProcessTimelineEntry[] {
   const timeline: ProcessTimelineEntry[] = [];
 
   for (const item of activity ?? []) {
     if (item.type === "process.text") {
       if (!item.text) continue;
-      if (hiddenAnswerGroup !== null && item.stream === "answer" && item.answerGroup === hiddenAnswerGroup) {
-        continue;
-      }
+      if (options?.hideFinalAnswer && item.isFinal) continue;
+      const stream = item.stream ?? "progress";
+      const isFinal = item.isFinal === true;
       const previous = timeline.at(-1);
-      if (previous?.kind === "text") {
+      // 仅相邻同 stream 的文本合并，避免过程叙述与回答正文混入同一文本块。
+      if (previous?.kind === "text" && previous.stream === stream && Boolean(previous.isFinal) === isFinal) {
         previous.text += item.text;
       } else {
-        timeline.push({ kind: "text", text: item.text, timestamp: item.timestamp });
+        timeline.push({ kind: "text", text: item.text, timestamp: item.timestamp, stream, ...(isFinal ? { isFinal: true } : {}) });
       }
       continue;
     }
@@ -2128,47 +2203,10 @@ export function buildProcessTimeline(
 
   if (timeline.length === 0 && persistedTimeline?.length) {
     return persistedTimeline.map((entry) => entry.type === "text"
-      ? { kind: "text", text: entry.text, timestamp: "" }
+      ? { kind: "text", text: entry.text, timestamp: "", stream: "progress" as const }
       : { kind: "tool-summary", count: entry.count, failedCount: entry.failedCount });
   }
   return timeline;
-}
-
-export function resolveLiveResponseText(
-  activity: AgentActivityEvent[] | undefined,
-): { answerGroup: string; text: string } | undefined {
-  if (!activity?.length) return undefined;
-
-  let lastToolIndex = -1;
-  for (let index = activity.length - 1; index >= 0; index -= 1) {
-    const item = activity[index];
-    if (item?.type === "tool.started" || item?.type === "tool.completed" || item?.type === "tool.failed") {
-      lastToolIndex = index;
-      break;
-    }
-  }
-
-  let answerGroup: string | undefined;
-  for (let index = activity.length - 1; index > lastToolIndex; index -= 1) {
-    const item = activity[index];
-    if (item?.type === "process.text" && item.stream === "answer" && item.answerGroup !== undefined && item.text) {
-      answerGroup = item.answerGroup;
-      break;
-    }
-  }
-  if (answerGroup === undefined) return undefined;
-
-  const text = activity
-    .slice(lastToolIndex + 1)
-    .filter((item): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
-      item.type === "process.text"
-      && item.stream === "answer"
-      && item.answerGroup === answerGroup
-      && !item.snapshot
-    ))
-    .map((item) => item.text)
-    .join("");
-  return text ? { answerGroup, text } : undefined;
 }
 
 function toolExecutionLabel(execution: ProcessToolExecution): string {
@@ -2217,18 +2255,18 @@ function PersistedToolActivityGroup({ count, failedCount }: { count: number; fai
   );
 }
 
-function ProcessTimeline({ message, live }: { message: ChatMessage; live: boolean }) {
-  const liveResponse = live ? resolveLiveResponseText(message.activity) : undefined;
-  const timeline = buildProcessTimeline(
-    message.activity,
-    liveResponse?.answerGroup ?? null,
-    message.processTimeline,
-  );
+function ProcessTimeline({ message, live = false, hideFinalAnswer = false }: { message: ChatMessage; live?: boolean; hideFinalAnswer?: boolean }) {
+  const timeline = buildProcessTimeline(message.activity, message.processTimeline, { hideFinalAnswer });
   if (timeline.length === 0) return null;
   return (
     <div className="processTimeline">
       {timeline.map((entry, index) => entry.kind === "text" ? (
-        <div key={`text-${index}`} className="processNarrative">{entry.text}</div>
+        <div
+          key={`text-${index}`}
+          className="processNarrative"
+        >
+          <MarkdownContent content={entry.text} />
+        </div>
       ) : entry.kind === "tools" ? (
         <ToolActivityGroup key={`tools-${index}`} activities={entry.activities} live={live} />
       ) : (
@@ -2238,22 +2276,28 @@ function ProcessTimeline({ message, live }: { message: ChatMessage; live: boolea
   );
 }
 
-/** 运行中的过程区：Plan 状态板 + ACP 有序过程流。 */
+/** 运行中的过程区：Plan 状态板 + ACP 有序过程流。运行期间回答正文也按到达顺序留在时间线。 */
 function LiveRunProcess({ message, isCancelling }: { message: ChatMessage; isCancelling: boolean }) {
+  const hasProcess = Boolean(message.plan || buildProcessTimeline(message.activity, message.processTimeline).length);
+  if (!hasProcess) return null;
+
   return (
     <div className={`liveProcess${isCancelling ? " cancelling" : ""}`} aria-label="执行过程">
-      {message.plan ? <PlanBoard plan={message.plan} /> : null}
+      <div className="liveProcessHeader">
+        <span>执行过程</span>
+        <span>实时更新</span>
+      </div>
       <ProcessTimeline message={message} live />
+      {message.plan ? <PlanBoard plan={message.plan} /> : null}
     </div>
   );
 }
 
-/** 最终正文开始输出或运行结算后的折叠过程区。 */
-function SettledRunProcess({ message, live = false }: { message: ChatMessage; live?: boolean }) {
+/** 运行结算后的折叠过程区；正文区只显示最终回复。 */
+function SettledRunProcess({ message, hideFinalAnswer = false }: { message: ChatMessage; hideFinalAnswer?: boolean }) {
   const activity = message.activity ?? [];
   const plan = message.plan ?? undefined;
-  const liveResponse = live ? resolveLiveResponseText(activity) : undefined;
-  const timeline = buildProcessTimeline(activity, liveResponse?.answerGroup ?? null, message.processTimeline);
+  const timeline = buildProcessTimeline(activity, message.processTimeline, { hideFinalAnswer });
   if (!plan && timeline.length === 0) {
     return null;
   }
@@ -2282,11 +2326,25 @@ function SettledRunProcess({ message, live = false }: { message: ChatMessage; li
         <ChevronRightIcon className="settledProcessChevron" aria-hidden="true" />
       </summary>
       <div className="settledProcessBody">
+        <ProcessTimeline message={message} hideFinalAnswer={hideFinalAnswer} />
         {plan ? <PlanBoard plan={plan} /> : null}
-        <ProcessTimeline message={message} live={live} />
       </div>
     </details>
   );
+}
+
+function getLiveFinalAnswer(activity: AgentActivityEvent[] | undefined): string | null {
+  const finalItems = (activity ?? [])
+    .filter((item): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
+      item.type === "process.text" && item.stream === "answer" && item.isFinal === true
+    ));
+  // 与服务端 selectFinalAnswer 保持一致：多个响应组存在时只展示最后一个 final 组。
+  const finalGroup = finalItems.at(-1)?.answerGroup ?? "";
+  const answer = finalItems
+    .filter((item) => (item.answerGroup ?? "") === finalGroup)
+    .map((item) => item.text)
+    .join("");
+  return answer || null;
 }
 
 function PlanBoard({ plan }: { plan: AgentPlanSnapshot }) {
@@ -2657,6 +2715,9 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
                           onChange={(e) => updateRule(i, e.target.value)}
                           placeholder={`规则 ${i + 1}`}
                           onKeyDown={(e) => {
+                            if (isImeComposition(e)) {
+                              return;
+                            }
                             if (e.key === "Enter") {
                               e.preventDefault();
                               addRule();
@@ -2693,6 +2754,7 @@ function AgentManagerPanel({
   focusedAgentId,
   isRefreshingRuntimes,
   onRefreshRuntimes,
+  modelStates,
 }: {
   onClose: () => void;
   onSaved: () => void;
@@ -2700,13 +2762,15 @@ function AgentManagerPanel({
   focusedAgentId?: string | null;
   isRefreshingRuntimes: boolean;
   onRefreshRuntimes: () => void;
+  modelStates: AppState["agentModelStates"];
 }) {
-  const [configs, setConfigs] = useState<AgentConfig[]>([]);
+  const [configs, setConfigs] = useState<AgentConfigWithModelState[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [teamTemplates, setTeamTemplates] = useState<AgentTeamTemplate[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [isProbingModels, setIsProbingModels] = useState(false);
   const focusedAgentApplied = useRef(false);
 
   const availByRuntime = useMemo(() => {
@@ -2733,13 +2797,47 @@ function AgentManagerPanel({
   useEffect(() => {
     fetch("/api/agents")
       .then((r) => r.json())
-      .then((data) => { setConfigs(data as AgentConfig[]); setLoading(false); })
+      .then((data) => { setConfigs(data as AgentConfigWithModelState[]); setLoading(false); })
       .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
     fetch("/api/agent-teams")
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => setTeamTemplates(Array.isArray(data) ? data as AgentTeamTemplate[] : []))
       .catch(() => setTeamTemplates([]));
   }, []);
+
+  async function probeModels(force = false, runtime?: AgentRuntimeKind) {
+    if (isProbingModels) return;
+    setIsProbingModels(true);
+    try {
+      const params = new URLSearchParams();
+      if (force) params.set("force", "1");
+      if (runtime) params.set("runtime", runtime);
+      const query = params.toString();
+      const response = await fetch(`/api/agents/probe-models${query ? `?${query}` : ""}`, { method: "POST" });
+      if (!response.ok) {
+        setError("获取模型列表失败，请稍后重试。");
+        return;
+      }
+      const probedConfigs = await response.json() as AgentConfigWithModelState[];
+      setConfigs((current) => mergeProbedConfigs(current, probedConfigs));
+    } catch {
+      setError("获取模型列表失败，请检查本地运行时是否可用。");
+    } finally {
+      setIsProbingModels(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!loading) void probeModels();
+  }, [loading]);
+
+  // 面板打开期间员工运行产生的模型快照（SSE agent.model_state）实时合并进列表，
+  // 保证"当前模型"与可选列表反映 runtime 的最新状态。
+  useEffect(() => {
+    setConfigs((prev) => prev.map((config) => (
+      modelStates[config.id] ? { ...config, modelState: modelStates[config.id] } : config
+    )));
+  }, [modelStates]);
 
   // Auto-expand the focused agent once configs are loaded
   useEffect(() => {
@@ -2789,8 +2887,10 @@ function AgentManagerPanel({
   function copyConfig(index: number) {
     const source = configs[index];
     const newId = generateUniqueId(source.id, configs);
-    const copy: AgentConfig = {
-      ...structuredClone(source),
+    // modelState 是源员工 id 的运行时快照，新副本尚未运行，不随复制带走。
+    const { modelState: _sourceModelState, ...sourceConfig } = structuredClone(source);
+    const copy: AgentConfigWithModelState = {
+      ...sourceConfig,
       id: newId,
       name: `${source.name} (副本)`,
       enabled: false,
@@ -2902,6 +3002,12 @@ function AgentManagerPanel({
             <button type="button" className="addBtn addBtnTop" onClick={addConfig}>+ 添加自定义数字员工</button>
             {configs.map((config, i) => {
               const isExpanded = expandedIndex === i;
+              // 模型区按当前运行时展示模型列表、探测状态和重试入口（issue #142）。
+              const modelSnapshot = config.modelState
+                && config.modelState.runtimeKind === config.runtime
+                ? config.modelState
+                : undefined;
+              const modelProbe = config.modelProbe?.runtimeKind === config.runtime ? config.modelProbe : undefined;
               return (
                 <div key={`config-${i}`} className={`configCard ${isExpanded ? "configCardExpanded" : ""} ${!config.enabled ? "configCardDisabled" : ""}`}>
                   <div className="configCardHeader" onClick={() => setExpandedIndex(isExpanded ? null : i)}>
@@ -2976,6 +3082,14 @@ function AgentManagerPanel({
                             );
                           })()}
                         </div>
+                        <AgentModelField
+                          config={config}
+                          snapshot={modelSnapshot}
+                          probe={modelProbe}
+                          onChange={(patch) => updateConfig(i, patch)}
+                          onRefreshModels={() => void probeModels(true, config.runtime)}
+                          isRefreshing={isProbingModels}
+                        />
                         <div className="fieldWithHint fieldFullWidth">
                           <textarea placeholder="系统提示词" value={config.systemPrompt} onChange={(e) => updateConfig(i, { systemPrompt: e.target.value })} rows={3} />
                           <span className="fieldHint fieldHintTop" title="每次运行时发送给数字员工的指令。定义其角色、专业能力和行为约束。">?</span>
@@ -2996,6 +3110,96 @@ function AgentManagerPanel({
       </div>
     </div>
   );
+}
+
+/**
+ * 员工模型选择区（issue #142）：列出 runtime 上报的模型单选列表，保存为员工
+ * 偏好。偏好只在该员工下次运行开始时应用；探测失败或 runtime 不支持时保留状态和重试入口。
+ */
+function AgentModelField({ config, snapshot, probe, onChange, onRefreshModels, isRefreshing }: {
+  config: AgentConfigWithModelState;
+  snapshot?: AgentModelStateSnapshot;
+  probe?: AgentConfigWithModelState["modelProbe"];
+  onChange: (patch: Partial<AgentConfig>) => void;
+  onRefreshModels: () => void;
+  isRefreshing: boolean;
+}) {
+  // 偏好按 runtime 归属过滤：切换运行时后旧偏好不生效也不显示。
+  const preferred = config.model?.runtimeKind === config.runtime
+    ? config.model?.preferredModelId?.trim() || undefined
+    : undefined;
+  const probeStatus = probe?.status ?? (snapshot ? (snapshot.choices.length > 0 ? "ready" : "unsupported") : "idle");
+  const choices = probeStatus === "ready" ? snapshot?.choices ?? [] : [];
+  const nameOf = (value: string) => choices.find((choice) => choice.value === value)?.name ?? value;
+  const preferredMissing = probeStatus === "ready"
+    && preferred !== undefined
+    && !choices.some((choice) => choice.value === preferred);
+  return (
+    <div className="modelField fieldFullWidth">
+      <div className="modelFieldHeader">
+        <span className="pillLabel">模型 <span className="fieldHint" title="该数字员工使用的模型。可选列表由所在运行时提供，每次运行开始时应用。">?</span></span>
+        <button type="button" className="modelRefreshBtn" onClick={onRefreshModels} disabled={isRefreshing}>
+          {isRefreshing ? "获取中..." : "刷新模型列表"}
+        </button>
+      </div>
+      <div className="modelChoiceList">
+        <label className={`modelChoice ${preferred === undefined ? "modelChoiceActive" : ""}`}>
+          <input
+            type="radio"
+            name={`model-${config.id}`}
+            checked={preferred === undefined}
+            onChange={() => onChange({ model: undefined })}
+          />
+          <span>跟随运行时默认{probeStatus === "ready" && snapshot?.currentValueSource === "session" && snapshot.currentValue ? `（当前：${nameOf(snapshot.currentValue)}）` : ""}</span>
+        </label>
+        {choices.map((choice) => (
+          <label key={choice.value} className={`modelChoice ${preferred === choice.value ? "modelChoiceActive" : ""}`}>
+            <input
+              type="radio"
+              name={`model-${config.id}`}
+              checked={preferred === choice.value}
+              onChange={() => onChange({ model: { preferredModelId: choice.value, runtimeKind: config.runtime } })}
+            />
+            <span>
+              {choice.name}
+              {probeStatus === "ready" && snapshot?.currentValueSource === "session" && snapshot.currentValue === choice.value && preferred !== choice.value ? "（当前）" : ""}
+            </span>
+          </label>
+        ))}
+      </div>
+      {probeStatus === "error" ? (
+        <div className="modelHint modelHintWarn">{probe?.message ?? "模型列表获取失败，请重试。"}</div>
+      ) : probeStatus === "unsupported" ? (
+        <div className="modelHint">该运行时未提供可选模型列表。</div>
+      ) : probeStatus === "loading" ? (
+        <div className="modelHint">正在获取模型列表...</div>
+      ) : preferredMissing ? (
+        <div className="modelHint modelHintWarn">首选模型 {nameOf(preferred)} 当前不可用，下次运行将继续使用当前模型并在对话中提示。</div>
+      ) : null}
+      <div className="modelHint">模型选择在该数字员工下次运行时生效。</div>
+    </div>
+  );
+}
+
+export function mergeProbedConfigs(
+  current: AgentConfigWithModelState[],
+  probed: AgentConfigWithModelState[],
+): AgentConfigWithModelState[] {
+  const currentById = new Map(current.map((config) => [config.id, config]));
+  const probedIds = new Set(probed.map((config) => config.id));
+  return [
+    ...probed.map((serverConfig) => {
+      const localConfig = currentById.get(serverConfig.id);
+      if (!localConfig) return serverConfig;
+      return {
+        ...serverConfig,
+        ...localConfig,
+        modelState: serverConfig.modelState,
+        modelProbe: serverConfig.modelProbe,
+      };
+    }),
+    ...current.filter((config) => !probedIds.has(config.id)),
+  ];
 }
 
 function MarkdownContent({ content }: { content: string }) {
@@ -3033,6 +3237,16 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
+  // agent.model_state 是 workspace 级事件（无 conversationId），在会话过滤前处理，
+  // 但不能让后台工作区的同名员工覆盖当前工作区的模型状态。
+  if (event.type === "agent.model_state") {
+    if (event.workspaceId !== state.workspace.id) return state;
+    return {
+      ...state,
+      agentModelStates: { ...state.agentModelStates, [event.agentId]: event.modelState },
+    };
+  }
+
   // For conversation-scoped events, only process if they match the active conversation
   if ("conversationId" in event && event.conversationId !== state.conversation.id) {
     return state;
@@ -3045,6 +3259,7 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
   if (event.type === "message.updated") {
     return upsertMessage(state, event.message, {
       settleTransientActivity: event.settleTransientActivity,
+      excludedAnswerGroup: event.excludedAnswerGroup,
     });
   }
 
@@ -3121,21 +3336,21 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
 export function upsertMessage(
   state: AppState,
   nextMessage: ChatMessage,
-  options?: { settleTransientActivity?: boolean },
+  options?: { settleTransientActivity?: boolean; excludedAnswerGroup?: string },
 ): AppState {
   const index = state.messages.findIndex((message) => message.id === nextMessage.id);
   if (index === -1) {
     return { ...state, messages: [...state.messages, nextMessage] };
   }
 
-  // 中间更新保留页面实时值；终态事件只剔除最终回答分片，保留当前页面的
-  // 过程文本和完整工具明细。刷新后因没有 activity，才会回退到持久化摘要。
+  // 中间更新保留页面实时值；终态事件按结算快照显式标记的分组剔除最终回答分片，
+  // 保留当前页面的过程文本和完整工具明细。刷新后因没有 activity，才会回退到持久化摘要。
   return {
     ...state,
     messages: state.messages.map((message) => {
       if (message.id !== nextMessage.id) return message;
       const settledActivity = options?.settleTransientActivity
-        ? removeSettledAnswerActivity(message.activity)
+        ? removeSettledAnswerActivity(message.activity, options?.excludedAnswerGroup)
         : message.activity;
       return {
         ...nextMessage,
@@ -3147,14 +3362,18 @@ export function upsertMessage(
   };
 }
 
-function removeSettledAnswerActivity(activity: AgentActivityEvent[] | undefined): AgentActivityEvent[] | undefined {
+/** 只剔除结算事件显式标记的最终回答分组；无标识时保留全部实时活动（不误删部分回答）。 */
+function removeSettledAnswerActivity(
+  activity: AgentActivityEvent[] | undefined,
+  excludedAnswerGroup?: string,
+): AgentActivityEvent[] | undefined {
   if (!activity?.length) return activity;
-  const response = resolveLiveResponseText(activity);
-  if (!response) return activity;
+  // 空字符串是有效分组（未分组回答），必须用 !== undefined 判断。
+  if (excludedAnswerGroup === undefined) return activity;
   return activity.filter((item) => !(
     item.type === "process.text"
     && item.stream === "answer"
-    && item.answerGroup === response.answerGroup
+    && item.answerGroup === excludedAnswerGroup
   ));
 }
 
@@ -3174,6 +3393,7 @@ function normalizeState(nextState: AppState): AppState {
     runtimeAvailability: nextState.runtimeAvailability ?? [],
     pendingPermissions: nextState.pendingPermissions ?? [],
     pendingElicitations: nextState.pendingElicitations ?? [],
+    agentModelStates: nextState.agentModelStates ?? {},
   };
 }
 

@@ -48,5 +48,10 @@ export function configsToProfiles(configs: readonly AgentConfig[], cwd: string):
     runtime: config.runtime,
     cwd,
     systemPrompt: config.systemPrompt,
+    // 模型偏好跟随 runtime（issue #142）：value ID 不跨 runtime 通用，选择偏好
+    // 时所处的 runtime 与当前 runtime 不一致即不应用。
+    ...(config.model?.runtimeKind === config.runtime && config.model.preferredModelId?.trim()
+      ? { preferredModelId: config.model.preferredModelId.trim() }
+      : {}),
   }));
 }

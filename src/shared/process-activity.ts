@@ -26,12 +26,8 @@ export function appendTransientProcessActivity(
     return [...current, activity];
   }
 
-  if ("excludedAnswerGroup" in activity) {
-    return current.filter((item) => !(
-      item.type === "process.text"
-      && item.stream === "answer"
-      && item.answerGroup === activity.excludedAnswerGroup
-    ));
+  if (activity.excludedAnswerGroup !== undefined) {
+    return withoutAnswerGroup(current, activity.excludedAnswerGroup);
   }
 
   // Compatibility for snapshot events created before ordered process metadata.
@@ -42,6 +38,22 @@ export function appendTransientProcessActivity(
     snapshot: false,
     stream: "progress",
   }];
+}
+
+/**
+ * Removes the answer group explicitly marked by a settlement snapshot (the
+ * empty string is a valid group id). Callers must gate on
+ * `excludedAnswerGroup !== undefined` before using this.
+ */
+export function withoutAnswerGroup(
+  activity: AgentActivityEvent[],
+  answerGroup: string,
+): AgentActivityEvent[] {
+  return activity.filter((item) => !(
+    item.type === "process.text"
+    && item.stream === "answer"
+    && item.answerGroup === answerGroup
+  ));
 }
 
 export function collapseToolExecutions(activities: ProcessToolActivity[]): ProcessToolExecution[] {

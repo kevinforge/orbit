@@ -21,7 +21,7 @@ function state(conversationId: string, messages: ChatMessage[]): AppState {
     conversation: { id: conversationId, name: conversationId },
     messages,
     messageHistory: { hasOlderMessages: true, olderCursor: messages[0]?.id ?? null },
-    agents: [], terminal: {}, runningSummaries: [], runtimeAvailability: [], pendingPermissions: [], pendingElicitations: [],
+    agents: [], terminal: {}, runningSummaries: [], runtimeAvailability: [], pendingPermissions: [], pendingElicitations: [], agentModelStates: {},
   };
 }
 

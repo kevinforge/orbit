@@ -43,14 +43,20 @@ function fakeConnector(options: FakeOptions = {}) {
     async loadSession(request) {
       calls.push({ method: "session/load", value: request });
       options.onLoad?.(notify);
+      return {};
     },
     async resumeSession(request) {
       calls.push({ method: "session/resume", value: request });
+      return {};
     },
     async prompt(request) {
       calls.push({ method: "session/prompt", value: request });
       options.onPrompt?.(notify);
       return options.promptResponse ?? { stopReason: cancelled ? "cancelled" : "end_turn" };
+    },
+    async setConfigOption(request) {
+      calls.push({ method: "session/set_config_option", value: request });
+      return { configOptions: [] };
     },
     async cancel(sessionId) {
       cancelled = true;
@@ -276,14 +282,34 @@ test("splits CodeBuddy process narration from the final answer using agentPhase 
   })).result;
 
   assert.equal(result, "Tests passed.");
+  // Issue #139 回归：文本 → 工具调用/完成 → 新文本 → 回合完成。所有文本按
+  // 到达顺序进入过程时间线；结算快照显式标记最终分组（响应序号分组）。
+  assert.deepEqual(activities.map((activity) => activity.type), [
+    "process.text",
+    "tool.started",
+    "tool.completed",
+    "process.text",
+    "process.text",
+  ]);
   const processText = activities.filter((activity) => activity.type === "process.text");
   assert.deepEqual(
-    processText.map((activity) => (activity.type === "process.text" ? { text: activity.text, snapshot: Boolean(activity.snapshot) } : null)),
+    processText.map((activity) => (activity.type === "process.text"
+      ? { text: activity.text, snapshot: Boolean(activity.snapshot), stream: activity.stream, answerGroup: activity.answerGroup }
+      : null)),
     [
-      { text: "Let me check the build. ", snapshot: false },
-      { text: "Tests passed.", snapshot: false },
-      { text: "Let me check the build. ", snapshot: true },
+      { text: "Let me check the build. ", snapshot: false, stream: "answer", answerGroup: "codebuddy-response-1" },
+      { text: "Tests passed.", snapshot: false, stream: "answer", answerGroup: "codebuddy-response-2" },
+      { text: "Let me check the build. ", snapshot: true, stream: undefined, answerGroup: undefined },
     ],
+  );
+  const snapshot = processText.at(-1);
+  assert.ok(
+    snapshot?.type === "process.text" && snapshot.excludedAnswerGroup === "codebuddy-response-2",
+    "settlement snapshot must explicitly mark the final answer group",
+  );
+  assert.ok(
+    snapshot?.type === "process.text" && !snapshot.text.includes("Tests passed."),
+    "snapshot text must exclude the final answer group",
   );
 });
 
@@ -399,8 +425,9 @@ test("rejects incompatible ACP protocol versions", async () => {
     pid: 12345,
     async initialize() { return { protocolVersion: 2 }; },
     async newSession() { return { sessionId: "unused" }; },
-    async loadSession() {},
-    async resumeSession() {},
+    async loadSession() { return {}; },
+    async resumeSession() { return {}; },
+    async setConfigOption() { return { configOptions: [] }; },
     async prompt() { return { stopReason: "end_turn" }; },
     async cancel() {},
     close() {},
@@ -466,7 +493,7 @@ test("maps ACP tool lifecycle updates to Orbit activity events", async () => {
   );
   assert.ok(
     activities[3]?.type === "process.text" && activities[3].text === "" && activities[3].snapshot,
-    "the settlement snapshot clears the final answer from the process region",
+    "the settlement snapshot marks the final answer group for server-side terminal cleanup",
   );
 });
 

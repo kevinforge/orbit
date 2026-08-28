@@ -28,6 +28,7 @@ The data directory is organized by data type and workspace id:
 ~/.orbit/
   workspaces/<workspace-id>/workspace.json
   workspaces/<workspace-id>/agents.json
+  workspaces/<workspace-id>/agent-model-state.json
   workspaces/<workspace-id>/config.json
   conversations/<workspace-id>/conversations.json
   conversations/<workspace-id>/<conversation-id>/messages/manifest.json
@@ -52,6 +53,14 @@ at most 5 attachments per message. Executables, shell scripts, and archives
 (`exe`, `sh`, `bat`, `zip`, …) are rejected at upload. Drafts that are neither
 sent nor deleted expire after one hour, and each conversation keeps at most 20
 pending drafts.
+
+`agent-model-state.json` caches, per digital employee, the model choices
+reported through ACP session config options. Discovery probes write the
+runtime's available choices but no current employee-session value; a current
+value is written only when that employee's real ACP session reports it. It is
+runtime-derived state, not user configuration: model preferences chosen in the
+settings UI are stored in `agents.json`, and this cache is rewritten by Orbit
+whenever discovery or a real run reports a fresh snapshot.
 
 These files can contain project paths, conversation content, uploaded
 attachments, digital employee configuration, ACP session records, runtime

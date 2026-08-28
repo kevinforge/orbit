@@ -5,9 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { AgentSession } from "../src/core/agent-session.ts";
-import type { AgentRuntime, AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
+import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
+import type { AgentModelStateSnapshot } from "../src/shared/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-agent-session-test-"));
@@ -425,6 +426,69 @@ test("interrupt does NOT clear session — preserves conversation context", asyn
   assert.equal(sessionAfterInterrupt?.sessionId, "session-before-interrupt", "session should survive interrupt");
 });
 
+test("session downgrade inside the runtime persists the replacement sessionId", async () => {
+  // #141 后半：runtime 在 resume 失败且不可恢复时内部降级到新 runtime 会话。
+  // AgentSession 必须持久化降级后的新 sessionId（而非旧的 resume 值），且
+  // 不把它当作 resume 失败做二次重试。
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  store.save("codebuddy", "default", "developer", {
+    agentId: "developer",
+    runtime: "codebuddy",
+    sessionId: "stale-session",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+
+  const eventBus = new EventBus();
+  const events: Array<{ type: string; text?: string }> = [];
+  eventBus.subscribe((event) => events.push(event));
+
+  const calls: AgentRuntimeRunOptions[] = [];
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      calls.push(options);
+      // 模拟 acp-runtime 的不可恢复降级：resume 报 thread-store conflict，
+      // runtime 内部改走 session/new 拿到新 id，并发出过程提示。
+      options.onOutput?.("原 CodeBuddy 会话无法恢复（thread-store conflict），已使用新的会话继续。");
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: Promise.resolve("clean final"),
+        sessionId: Promise.resolve("fresh-session"),
+      };
+    },
+  };
+
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  session.start();
+  const result = await session.send("run-1", "hello");
+
+  assert.equal(result.content, "clean final");
+  assert.equal(result.sessionId, "fresh-session");
+  // 降级发生在 runtime 内部：AgentSession 只发起一次 run，不做二次重试。
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.resumeSessionId, "stale-session");
+  // 持久化的是降级后的新 sessionId。
+  const persisted = store.load("codebuddy", "default", "developer");
+  assert.equal(persisted!.sessionId, "fresh-session", "降级后的新 sessionId 必须被持久化");
+  assert.equal(persisted!.runCount, 2);
+  // 降级提示作为过程输出进入事件流，不改写正文。
+  const downgradeNotice = events.find(
+    (event) => event.type === "terminal.chunk" && event.text?.includes("已使用新的会话继续"),
+  );
+  assert.ok(downgradeNotice, "降级提示必须进入 runtime 输出事件流");
+});
+
 test("error case (rate limit) still persists sessionId if one was generated", async () => {
   const dir = tmpDir();
   const store = new SessionStore(dir);
@@ -549,6 +613,62 @@ test("interrupt followed by result reject should NOT change status to error", as
   // CRITICAL: Status should STILL be idle, NOT error
   // This is the bug we're testing for - catch() should not overwrite idle status
   assert.equal(session.getStatus(), "idle", "status should remain idle after interrupt-induced reject, not become error");
+});
+
+test("interrupt settles pending permissions and elicitations, then forced cancel returns to idle", async () => {
+  // Issue #136：runtime 无视取消被强制收口时，挂起的权限/表单请求必须先被
+  // 清理（权限拒绝、表单取消），会话最终回到 idle 而不是 error。
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const eventBus = new EventBus();
+  let capturedOptions: AgentRuntimeRunOptions | null = null;
+  let rejectRun!: (error: Error) => void;
+  const resultPromise = new Promise<string>((_resolve, reject) => { rejectRun = reject; });
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      capturedOptions = options;
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: resultPromise,
+        sessionId: Promise.resolve(null),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  session.start();
+  const sendPromise = session.send("run-force", "hello", undefined, "ask");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const permissionDecision = capturedOptions!.requestPermission!({ id: "tool-1", title: "Run tests" });
+  const elicitationResponse = capturedOptions!.requestElicitation!({ message: "Choose", mode: "form" });
+  assert.equal(session.pendingPermissions().length, 1);
+  assert.equal(session.pendingElicitations().length, 1);
+
+  session.interrupt("run-force");
+  assert.equal(await permissionDecision, "reject");
+  assert.deepEqual(await elicitationResponse, { action: "cancel" });
+  assert.equal(session.pendingPermissions().length, 0);
+  assert.equal(session.pendingElicitations().length, 0);
+
+  // 修复后的 runAcp 保证 handle.result 在有限时间内以取消错误收口。
+  rejectRun(new AgentRunCancelledError("CodeBuddy ACP turn was force-cancelled"));
+  try {
+    await sendPromise;
+    assert.fail("send should reject after forced cancel");
+  } catch (error) {
+    assert.ok(error instanceof AgentRunCancelledError);
+  }
+  assert.equal(session.getStatus(), "idle", "强制取消后必须回到 idle，而不是 error");
 });
 
 test("publishes and resolves runtime permission requests", async () => {
@@ -782,4 +902,49 @@ test("expires pending elicitation requests and ignores late responses", async ()
 
   finishRun("clean final");
   await sendPromise;
+});
+
+// ---- issue #142：模型偏好与快照桥流转 ----
+
+test("model preference and snapshot bridge reach the runtime run options", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const controlled = controllableRuntime("ok", "sess-1");
+  const lastSnapshot: AgentModelStateSnapshot = {
+    agentId: "developer",
+    runtimeKind: "codebuddy",
+    configId: "model",
+    choices: [{ value: "model-a", name: "模型 A" }, { value: "model-b", name: "模型 B" }],
+    currentValue: "model-a",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const updates: AgentModelStateSnapshot[] = [];
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: controlled.runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "conv-model",
+    preferredModelId: "model-b",
+    modelState: {
+      load: (agentId) => (agentId === "developer" ? lastSnapshot : undefined),
+      update: (snapshot) => updates.push(snapshot),
+    },
+  });
+  session.start();
+
+  const result = await session.send("run-1", "hello");
+  assert.equal(result.content, "ok");
+  assert.equal(controlled.calls.length, 1);
+  assert.equal(controlled.calls[0]!.preferredModelId, "model-b");
+  assert.equal(controlled.calls[0]!.lastSessionConfig, lastSnapshot);
+  assert.equal(typeof controlled.calls[0]!.onSessionConfig, "function");
+
+  const next = { ...lastSnapshot, currentValue: "model-b" };
+  controlled.calls[0]!.onSessionConfig!(next);
+  assert.deepEqual(updates, [next]);
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });

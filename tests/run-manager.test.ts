@@ -413,13 +413,22 @@ test("persists an ordered compact process timeline and plan while raw tool activ
   publish({ type: "process.text", text: "最终回复正文", stream: "answer", answerGroup: "response-final", timestamp: ts() });
   publish({ type: "process.text", text: "先检查相关文件。继续验证。", snapshot: true, excludedAnswerGroup: "response-final", timestamp: ts() });
 
-  // 运行中：实时流按序收到全部事件，持久化消息没有任何 activity。
-  assert.equal(activities.length, 12);
+  // 运行中：实时流按序收到全部 delta 与工具事件；结算快照是服务端内部
+  // 信号，不作为 run.activity 转发，避免前端先清空过程区再等正文。
+  assert.equal(activities.length, 11);
   assert.deepEqual(
     activities.map((item) => item.type),
-    ["process.text", "process.text", "tool.started", "tool.completed", "tool.started", "tool.failed", "process.text", "tool.started", "tool.completed", "plan.updated", "process.text", "process.text"],
+    ["process.text", "process.text", "tool.started", "tool.completed", "tool.started", "tool.failed", "process.text", "tool.started", "tool.completed", "plan.updated", "process.text"],
   );
+  assert.ok(activities.every((item) => !(item.type === "process.text" && item.snapshot)), "settlement snapshots must not stream to the client");
   assert.equal(messages.get(run.resultMessageId)?.activity, undefined);
+  // 快照之后、终态之前：运行中投影仍保留最终回答分片，不出现结算空档。
+  const projected = manager.projectLiveProcessState(messages.list());
+  const projectedMessage = projected.find((message) => message.id === run.resultMessageId);
+  assert.ok(
+    projectedMessage?.activity?.some((item) => item.type === "process.text" && item.text === "最终回复正文"),
+    "live projection must keep the final answer until the terminal event",
+  );
 
   pending.resolve({ content: "最终回复正文" });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -435,11 +444,71 @@ test("persists an ordered compact process timeline and plan while raw tool activ
   ]);
   assert.equal(settled?.plan?.format, "items");
   assert.equal(settled?.activity, undefined);
-  assert.ok(events.some((event) => (
+  // 结算事件显式携带最终回答分组：客户端无需按"最后一次工具调用后"推断剔除对象。
+  const terminalUpdate = events.find((event) => (
     event.type === "message.updated"
     && event.message.id === run.resultMessageId
     && event.settleTransientActivity === true
-  )), "terminal message update must settle client-only activity");
+  ));
+  assert.ok(terminalUpdate, "terminal message update must settle client-only activity");
+  assert.equal(
+    terminalUpdate?.type === "message.updated" ? terminalUpdate.excludedAnswerGroup : undefined,
+    "response-final",
+    "terminal message update must carry the settlement snapshot's excluded answer group",
+  );
+  // 持久化时间线在结算时基于剔除分组后的副本生成，不包含最终回复正文。
+  assert.ok(
+    settled?.processTimeline?.every((entry) => entry.type !== "text" || !entry.text.includes("最终回复正文")),
+    "persisted process timeline must exclude the final answer text",
+  );
+});
+
+test("terminal events without a settlement snapshot omit excludedAnswerGroup so partial answers survive", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const events: RuntimeEvent[] = [];
+  eventBus.subscribe((event) => events.push(event));
+  const pending = deferred();
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send() { return pending.promise; },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+  const run = manager.enqueue("developer", "work", createSourceMessage());
+
+  // 崩溃前的部分回答：没有结算快照，也就没有 excludedAnswerGroup。
+  eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: run.id,
+    activity: { type: "process.text", text: "部分回答", stream: "answer", answerGroup: "partial-1", timestamp: new Date().toISOString() },
+  });
+
+  pending.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const terminalUpdate = events.find((event) => (
+    event.type === "message.updated"
+    && event.message.id === run.resultMessageId
+    && event.settleTransientActivity === true
+  ));
+  assert.ok(terminalUpdate, "terminal message update must exist");
+  assert.equal(
+    terminalUpdate?.type === "message.updated" ? "excludedAnswerGroup" in terminalUpdate : true,
+    false,
+    "terminal events must omit excludedAnswerGroup when no settlement snapshot arrived",
+  );
 });
 
 test("caps persisted process timeline text at settlement", async () => {
@@ -1124,6 +1193,71 @@ test("cancelling a running run starts the next queued run (no stall, FIFO preser
   // FIFO: a new R3 enqueued after must queue behind R2, not jump ahead of it.
   const r3 = manager.enqueue("developer", "R3", source);
   assert.equal(r3.status, "queued", "R3 must queue behind the running R2 (FIFO preserved)");
+
+  second.resolve({ content: "R2 done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+test("forced cancel settles the message, releases the slot, and ignores late runtime events", async () => {
+  // Issue #136：runtime 无视取消且 prompt 永不结算时，适配层在宽限期后以
+  // AgentRunCancelledError 强制收口（见 acp-runtime.test.ts）。这里验证
+  // RunManager 收到该结果后的行为：消息落定为已取消、槽位释放、队列推进、
+  // 晚到的 runtime 活动不影响已取消的运行。
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+  const prompts: string[] = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(_runId: string, prompt: string) {
+            prompts.push(prompt);
+            return pending.shift()?.promise ?? Promise.reject(new Error("unexpected run"));
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  const source = createSourceMessage();
+  const r1 = manager.enqueue("developer", "R1", source);
+  const r2 = manager.enqueue("developer", "R2", source);
+  const r1Activities = captureRunActivity(eventBus, r1.id);
+
+  manager.cancel(r1.id);
+  assert.equal(r1.status, "cancelling");
+
+  first.reject(new AgentRunCancelledError("CodeBuddy ACP turn was force-cancelled"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(messages.get(r1.resultMessageId)?.status, "cancelled", "强制收口后消息必须落定为已取消");
+  assert.deepEqual(prompts, ["R1", "R2"], "槽位释放后队列中的下一条必须启动");
+  assert.equal(r2.status, "running");
+
+  const settledActivityCount = r1Activities.length;
+  eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "developer",
+    runId: r1.id,
+    activity: { type: "status", text: "晚到活动", timestamp: new Date().toISOString() },
+  } satisfies RuntimeEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(r1Activities.length, settledActivityCount, "已取消运行不得再接收晚到的活动");
+  assert.ok(
+    !r1Activities.some((activity) => activity.type === "status" && activity.text === "晚到活动"),
+    "晚到的 runtime 活动必须被丢弃",
+  );
 
   second.resolve({ content: "R2 done" });
   await new Promise((resolve) => setTimeout(resolve, 0));

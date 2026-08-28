@@ -39,14 +39,20 @@ function fakeConnector(options: FakeOptions = {}) {
     async loadSession(request) {
       calls.push({ method: "session/load", value: request });
       options.onLoad?.(notify);
+      return {};
     },
     async resumeSession(request) {
       calls.push({ method: "session/resume", value: request });
+      return {};
     },
     async prompt(request) {
       calls.push({ method: "session/prompt", value: request });
       options.onPrompt?.(notify);
       return options.promptResponse ?? { stopReason: "end_turn" };
+    },
+    async setConfigOption(request) {
+      calls.push({ method: "session/set_config_option", value: request });
+      return { configOptions: [] };
     },
     async cancel(sessionId) {
       calls.push({ method: "session/cancel", value: sessionId });
@@ -114,6 +120,87 @@ test("creates a Claude ACP session and advertises elicitation", async () => {
       { text: "Claude answer", snapshot: false },
       { text: "", snapshot: true },
     ],
+  );
+});
+
+test("keeps mid-turn answer text in the process timeline and settles the final group after tool calls", async () => {
+  // Issue #139 回归：文本 → 工具调用 → 新文本。运行期间两段文本都按到达
+  // 顺序进入过程时间线；结算快照显式标记最终分组（RunManager 内部消化，
+  // 不转发前端），快照文本不含最终回复。
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify({
+        sessionId: "claude-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "interim-1",
+          content: { type: "text", text: "先检查一下。" },
+        },
+      });
+      notify({
+        sessionId: "claude-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Read file",
+          kind: "read",
+          status: "in_progress",
+          rawInput: { path: "package.json" },
+        },
+      });
+      notify({
+        sessionId: "claude-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "completed",
+          rawOutput: "done",
+        },
+      });
+      notify({
+        sessionId: "claude-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "final-1",
+          content: { type: "text", text: "最终回复" },
+        },
+      });
+    },
+  });
+  const runtime = createClaudeAcpRuntime(fake.connector);
+  const result = await runtime.run(runOptions({
+    onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+  })).result;
+
+  assert.equal(result, "最终回复");
+  assert.deepEqual(activities.map((activity) => activity.type), [
+    "process.text",
+    "tool.started",
+    "tool.completed",
+    "process.text",
+    "process.text",
+  ]);
+  // 不同 assistant messageId 形成前后两个 answer 分组；两组文本都不被隐藏。
+  assert.deepEqual(
+    activities
+      .filter((activity) => activity.type === "process.text" && !activity.snapshot)
+      .map((activity) => activity.type === "process.text"
+        ? { text: activity.text, stream: activity.stream, answerGroup: activity.answerGroup }
+        : null),
+    [
+      { text: "先检查一下。", stream: "answer", answerGroup: "interim-1" },
+      { text: "最终回复", stream: "answer", answerGroup: "final-1" },
+    ],
+  );
+  const snapshot = activities.at(-1);
+  assert.ok(
+    snapshot?.type === "process.text" && snapshot.snapshot === true && snapshot.excludedAnswerGroup === "final-1",
+    "settlement snapshot must explicitly mark the final answer group",
+  );
+  assert.ok(
+    snapshot?.type === "process.text" && snapshot.text === "先检查一下。" && !snapshot.text.includes("最终回复"),
+    "snapshot text must exclude the final answer group",
   );
 });
 

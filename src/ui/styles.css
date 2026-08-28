@@ -1090,13 +1090,29 @@ button:active:not(:disabled) {
   gap: 12px;
   min-width: 0;
   max-width: 100%;
-  margin: 4px 0 10px;
-  padding: 2px 0;
+  margin: 8px 0 0;
+  padding: 0 0 12px;
   background: transparent;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .liveProcess.cancelling {
   opacity: 0.72;
+}
+
+.liveProcessHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.liveProcessHeader span:first-child {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .processTimeline {
@@ -1112,9 +1128,32 @@ button:active:not(:disabled) {
   color: var(--text-secondary);
   font-size: 13.5px;
   line-height: 1.7;
-  white-space: pre-wrap;
+  white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* 过程文本沿用正文 Markdown 结构，但保留更轻的字号和间距。 */
+.processNarrative .markdown {
+  gap: 8px;
+}
+
+.processNarrative .markdown h1 {
+  font-size: 18px;
+}
+
+.processNarrative .markdown h2 {
+  font-size: 16px;
+}
+
+.processNarrative .markdown h3,
+.processNarrative .markdown h4 {
+  font-size: 14px;
+}
+
+.processNarrative .markdown pre {
+  padding: 12px 14px;
+  font-size: 12px;
 }
 
 .processToolGroup {
@@ -1496,6 +1535,21 @@ button:active:not(:disabled) {
 .markdown a:hover {
   color: var(--accent-hover);
   border-bottom-color: currentColor;
+}
+
+/* 本地路径入口（issue #143）：虚线下划线区分于外部链接，点击由消息区
+   事件委托转发到 /api/local-path/reveal。 */
+.markdown .localPathLink {
+  color: var(--accent);
+  cursor: pointer;
+  border-bottom: 1px dashed currentColor;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown .localPathLink:hover,
+.markdown .localPathLink:focus-visible {
+  color: var(--accent-hover);
 }
 
 .markdown strong {
@@ -4159,6 +4213,78 @@ button:active:not(:disabled) {
   color: var(--secondary);
 }
 
+/* 员工模型选择区（issue #142）：runtime 上报的模型单选列表 */
+.modelField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modelFieldHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modelChoiceList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 4px;
+  max-height: 236px;
+  overflow-y: auto;
+  padding: 2px 4px 2px 0;
+}
+
+.modelChoice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.modelChoice:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.modelChoiceActive {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+  font-weight: 600;
+}
+
+.modelChoice input[type="radio"] {
+  accent-color: var(--accent);
+  margin: 0;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.modelChoice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.modelHint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.modelHintWarn {
+  color: var(--secondary);
+}
+
 .runtimeRefreshBtn {
   display: inline-flex;
   align-items: center;
@@ -4174,6 +4300,28 @@ button:active:not(:disabled) {
   font-weight: 700;
   cursor: pointer;
   transition: all var(--transition-fast);
+}
+
+.modelRefreshBtn {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.modelRefreshBtn:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.modelRefreshBtn:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .runtimeRefreshBtn:hover:not(:disabled) {
