@@ -85,6 +85,16 @@ function loadApprovalMode(): ApprovalMode {
   }
 }
 
+/**
+ * 判断按键是否发生在输入法组合（IME composition）期间。
+ * macOS 中文输入法组合中按 Enter 是"字母原文上屏"、方向键用于选择候选词，
+ * 这些按键必须交给输入法处理，不能触发发送、选中 @员工 等快捷键。
+ * keyCode 229 兼容旧版 Safari（其组合期 keydown 不带 isComposing）。
+ */
+export function isImeComposition(event: { nativeEvent: { isComposing?: boolean }; keyCode?: number }): boolean {
+  return event.nativeEvent.isComposing === true || event.keyCode === 229;
+}
+
 export function App() {
   const [state, setState] = useState<AppState>(initialState);
   const [activeView, setActiveView] = useState<ActiveView>(loadActiveView);
@@ -905,6 +915,10 @@ export function App() {
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (isImeComposition(event)) {
+      return;
+    }
+
     if (mentionCandidates.length === 0) {
       return;
     }
@@ -1353,6 +1367,9 @@ export function App() {
                 setCursorIndex(event.target.selectionStart ?? event.target.value.length);
               }}
               onKeyDown={(event) => {
+                if (isImeComposition(event)) {
+                  return;
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   sendMessage(event as unknown as FormEvent<HTMLFormElement>);
@@ -2554,6 +2571,9 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
                           onChange={(e) => updateRule(i, e.target.value)}
                           placeholder={`规则 ${i + 1}`}
                           onKeyDown={(e) => {
+                            if (isImeComposition(e)) {
+                              return;
+                            }
                             if (e.key === "Enter") {
                               e.preventDefault();
                               addRule();
