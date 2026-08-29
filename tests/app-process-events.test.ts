@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyEvent, buildProcessTimeline, mergeProbedConfigs, upsertMessage } from "../src/ui/App.tsx";
+import { applyEvent, buildProcessTimeline, mergeModelProbeResponse, mergeProbedConfigs, upsertMessage } from "../src/ui/App.tsx";
 import type { AgentActivityEvent, AgentModelStateSnapshot, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
 
 const CONVERSATION = "conv1";
@@ -401,4 +401,75 @@ test("model probe responses preserve unsaved local employee configuration", () =
   assert.equal(merged[0]?.model?.preferredModelId, "model-b");
   assert.deepEqual(merged[0]?.modelState, probed.modelState);
   assert.deepEqual(merged[0]?.modelProbe, probed.modelProbe);
+});
+
+test("targeted model probe applies to an unsaved runtime switch", () => {
+  const local = {
+    id: "developer",
+    name: "本地改名",
+    description: "未保存描述",
+    runtime: "codebuddy" as const,
+    systemPrompt: "未保存提示词",
+    enabled: true,
+  };
+  const serverConfig = {
+    ...local,
+    name: "服务端旧名称",
+    runtime: "claude-code" as const,
+  };
+  const modelState: AgentModelStateSnapshot = {
+    agentId: "developer",
+    runtimeKind: "codebuddy",
+    configId: "model",
+    choices: [{ value: "glm-5.3", name: "GLM-5.3" }],
+    currentValue: undefined,
+    currentValueSource: "probe",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  const merged = mergeModelProbeResponse([local], {
+    configs: [serverConfig],
+    target: {
+      agentId: "developer",
+      runtimeKind: "codebuddy",
+      modelState,
+      modelProbe: { runtimeKind: "codebuddy", status: "ready", updatedAt: modelState.updatedAt },
+    },
+  });
+
+  assert.equal(merged[0]?.name, "本地改名");
+  assert.equal(merged[0]?.runtime, "codebuddy");
+  assert.equal(merged[0]?.systemPrompt, "未保存提示词");
+  assert.deepEqual(merged[0]?.modelState, modelState);
+  assert.equal(merged[0]?.modelProbe?.status, "ready");
+});
+
+test("targeted model probe does not overwrite a later runtime switch", () => {
+  const local = {
+    id: "developer",
+    name: "开发",
+    runtime: "codex" as const,
+    systemPrompt: "实现任务",
+    enabled: true,
+  };
+  const merged = mergeModelProbeResponse([local], {
+    configs: [local],
+    target: {
+      agentId: "developer",
+      runtimeKind: "codebuddy",
+      modelState: {
+        agentId: "developer",
+        runtimeKind: "codebuddy",
+        configId: "model",
+        choices: [{ value: "glm-5.3", name: "GLM-5.3" }],
+        currentValue: undefined,
+        currentValueSource: "probe",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      modelProbe: { runtimeKind: "codebuddy", status: "ready" },
+    },
+  });
+
+  assert.equal(merged[0]?.runtime, "codex");
+  assert.equal(merged[0]?.modelState, undefined);
 });
