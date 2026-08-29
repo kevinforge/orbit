@@ -47,12 +47,14 @@ describe("attachment upload lifecycle state machine", () => {
     const kept = lifecycle.beginUpload({ workspaceId: "ws", conversationId: "conv-a" }, 1);
     lifecycle.finishUpload(kept);
     assert.equal(lifecycle.getSlotCount(), 1);
-    lifecycle.removeSlot();
+    const removeContext = lifecycle.captureContext({ workspaceId: "ws", conversationId: "conv-a" });
+    assert.equal(lifecycle.removeSlot(removeContext), true);
     assert.equal(lifecycle.getSlotCount(), 0, "removing a pending attachment releases its slot");
 
     const second = lifecycle.beginUpload({ workspaceId: "ws", conversationId: "conv-a" }, 1);
     lifecycle.finishUpload(second);
-    lifecycle.clearSlots();
+    const sendContext = lifecycle.captureContext({ workspaceId: "ws", conversationId: "conv-a" });
+    assert.equal(lifecycle.clearSlots(sendContext), true);
     assert.equal(lifecycle.getSlotCount(), 0, "a sent message releases every slot");
   });
 
@@ -139,6 +141,63 @@ describe("attachment upload lifecycle state machine", () => {
     assert.equal(lifecycle.getSlotCount() + 5 > MAX_FILES, true, "a full extra batch must still be rejected");
   });
 
+  test("a stale delete confirmation does not decrement the new conversation's slots", async () => {
+    // 真实异步时序：A 会话的删除附件请求在途回调期间用户切到 B。
+    const lifecycle = createAttachmentUploadLifecycle();
+
+    // A 有一个已上传附件（占 1 槽）。
+    const uploadA = lifecycle.beginUpload({ workspaceId: "ws", conversationId: "conv-a" }, 1);
+    lifecycle.finishUpload(uploadA);
+    const removeContextA = lifecycle.captureContext({ workspaceId: "ws", conversationId: "conv-a" });
+
+    const settleDelete = (async () => {
+      // 删除请求挂起：让出事件循环到宏任务，模拟网络延迟后回调到达。
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return lifecycle.removeSlot(removeContextA);
+    })();
+
+    // 请求在途（回调仍在宏任务队列中）：用户切到 B（A 的槽位随之清零），
+    // B 上传两个附件。宏任务回调必然在这些同步操作之后执行。
+    lifecycle.resetContext();
+    const uploadB = lifecycle.beginUpload({ workspaceId: "ws", conversationId: "conv-b" }, 2);
+    lifecycle.finishUpload(uploadB);
+    assert.equal(lifecycle.getSlotCount(), 2);
+
+    // A 的删除响应迟到：必须被忽略，B 的两个槽位原封不动。
+    assert.equal(await settleDelete, false, "the stale delete must be ignored");
+    assert.equal(lifecycle.getSlotCount(), 2, "conv-b slots must be untouched by conv-a's late delete");
+    // 上限依然有效：B 已占 2 槽，只能再添 3 个。
+    assert.equal(lifecycle.getSlotCount() + 4 > MAX_FILES, true);
+  });
+
+  test("a stale send confirmation does not clear the new conversation's slots", async () => {
+    // 真实异步时序：A 会话的发送请求在途回调期间用户切到 B 并添加附件。
+    const lifecycle = createAttachmentUploadLifecycle();
+
+    // A 有一个待发送附件（占 1 槽），发送捕获当前上下文。
+    const uploadA = lifecycle.beginUpload({ workspaceId: "ws", conversationId: "conv-a" }, 1);
+    lifecycle.finishUpload(uploadA);
+    const sendContextA = lifecycle.captureContext({ workspaceId: "ws", conversationId: "conv-a" });
+
+    const settleSend = (async () => {
+      // 发送请求挂起：让出事件循环到宏任务，模拟网络延迟后回调到达。
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return lifecycle.clearSlots(sendContextA);
+    })();
+
+    // 请求在途（回调仍在宏任务队列中）：用户切到 B，B 上传三个附件并完成。
+    lifecycle.resetContext();
+    const uploadB = lifecycle.beginUpload({ workspaceId: "ws", conversationId: "conv-b" }, 3);
+    lifecycle.finishUpload(uploadB);
+    assert.equal(lifecycle.getSlotCount(), 3);
+
+    // A 的发送响应迟到：不得清空 B 的输入区占用。
+    assert.equal(await settleSend, false, "the stale send must not clear the new composer");
+    assert.equal(lifecycle.getSlotCount(), 3, "conv-b slots must be untouched by conv-a's late send");
+    assert.equal(lifecycle.getUploadingCount(), 0);
+  });
+
   test("switching back to the original conversation still rejects the old result", () => {
     const lifecycle = createAttachmentUploadLifecycle();
     const stale = lifecycle.beginUpload({ workspaceId: "ws", conversationId: "conv-a" }, 1);
@@ -210,7 +269,41 @@ describe("App composer wiring for upload races", () => {
     const releases = uploadMatch[0].match(/lifecycle\.releaseSlots\(uploadContext[^)]*\)/g) ?? [];
     assert.ok(releases.length >= 4, "every failure path must release slots through the upload context");
     assert.ok(uploadMatch[0].includes("lifecycle.getSlotCount()"), "the per-message cap must read the lifecycle slot count");
-    assert.ok(appSource.includes("removeSlot()"), "removing a pending attachment must release its slot");
-    assert.ok(appSource.includes("clearSlots()"), "sending must clear every slot");
+    assert.ok(
+      appSource.includes("lifecycle.removeSlot(removeContext)"),
+      "removing a pending attachment must release its slot through the captured context",
+    );
+    assert.ok(
+      appSource.includes("lifecycle.clearSlots(sendContext)"),
+      "sending must clear slots through the captured send context",
+    );
+  });
+
+  test("send and delete responses guard UI settlement on the captured context", () => {
+    const sendMatch = appSource.match(/async function sendMessage\([\s\S]*?\n  \}/)!;
+    assert.ok(
+      sendMatch[0].includes("lifecycle.captureContext("),
+      "sendMessage must capture the context before awaiting the request",
+    );
+    assert.ok(
+      sendMatch[0].indexOf("lifecycle.isStale(sendContext)") >= 0 &&
+        sendMatch[0].indexOf('setContent("")') > sendMatch[0].indexOf("lifecycle.isStale(sendContext)"),
+      "clearing the composer after a send must happen only for a non-stale context",
+    );
+    assert.ok(
+      sendMatch[0].includes("workspaceId: sendContext.workspaceId") &&
+        sendMatch[0].includes("conversationId: sendContext.conversationId"),
+      "the message request must carry the captured workspace/conversation ids",
+    );
+
+    const removeMatch = appSource.match(/async function removePendingAttachment\([\s\S]*?\n  \}/)!;
+    assert.ok(
+      removeMatch[0].includes("lifecycle.captureContext("),
+      "removePendingAttachment must capture the context before awaiting the delete",
+    );
+    assert.ok(
+      removeMatch[0].includes("lifecycle.removeSlot(removeContext)"),
+      "slot release on delete must flow through the captured context",
+    );
   });
 });

@@ -39,6 +39,13 @@ export function createAttachmentUploadLifecycle() {
       uploadingCount = 0;
       slotCount = 0;
     },
+    /**
+     * 为不上传文件的异步操作（删除附件、发送消息）捕获上下文快照：
+     * 不占用任何计数，仅用于响应到达时判定是否过期。
+     */
+    captureContext(context: { workspaceId: string; conversationId: string }): AttachmentUploadContext {
+      return { ...context, version };
+    },
     /** 上传完成回调是否仍属于当前上下文（过期结果必须丢弃）。 */
     isStale(context: AttachmentUploadContext): boolean {
       return context.version !== version;
@@ -60,13 +67,23 @@ export function createAttachmentUploadLifecycle() {
       if (context.version !== version) return;
       slotCount = Math.max(0, slotCount - count);
     },
-    /** 用户在当前上下文移除一个输入区附件。 */
-    removeSlot(): void {
+    /**
+     * 删除附件请求确认后释放槽位：请求在途期间切换会话则忽略
+     * （该槽位属于发起时的会话，其占用已随上下文清零消失）。
+     */
+    removeSlot(context: AttachmentUploadContext): boolean {
+      if (context.version !== version) return false;
       slotCount = Math.max(0, slotCount - 1);
+      return true;
     },
-    /** 发送成功：附件随消息离开输入区，槽位整体清零。 */
-    clearSlots(): void {
+    /**
+     * 发送成功后清零槽位：请求在途期间切换会话则忽略，绝不清空
+     * 新会话的输入区占用。
+     */
+    clearSlots(context: AttachmentUploadContext): boolean {
+      if (context.version !== version) return false;
       slotCount = 0;
+      return true;
     },
     /** 同步上传计数：发送前的权威拦截以此为准。 */
     getUploadingCount(): number {

@@ -517,10 +517,28 @@ export function App() {
     }
 
     setIsSending(true);
+    // 发送链路同样绑定上下文快照：请求在途期间切换工作区/会话时，消息
+    // 的业务结算仍按发起时的会话完成（服务端持久化与运行分发），但响应
+    // 到达后不得清空或污染新会话的输入区、附件状态与槽位（PR #147 M1）。
+    const lifecycle = attachmentUploadLifecycleRef.current;
+    const sendContext = lifecycle.captureContext({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversation.id,
+    });
     try {
-      const body: { content: string; approvalMode: ApprovalMode; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
+      const body: {
+        content: string;
+        approvalMode: ApprovalMode;
+        workspaceId: string;
+        conversationId: string;
+        draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }>;
+      } = {
         content: trimmed,
         approvalMode,
+        // 目标快照随请求发送：服务端全程使用它归属本条消息，不依赖全局
+        // active 指针（PR #147 M1 服务端）。
+        workspaceId: sendContext.workspaceId,
+        conversationId: sendContext.conversationId,
       };
       if (pendingAttachments.length > 0) {
         body.draftAttachments = pendingAttachments.map((a) => ({
@@ -541,22 +559,28 @@ export function App() {
         throw new Error((err as { message?: string }).message ?? `Message request failed: ${response.status}`);
       }
 
-      setContent("");
-      setPendingAttachments([]);
-      attachmentUploadLifecycleRef.current.clearSlots();
-      isNearBottomRef.current = true;
-      setIsNearBottom(true);
-      setShowNewMessageHint(false);
-      window.setTimeout(() => inputRef.current?.focus(), 0);
+      // 仅当仍在发起发送的上下文中才清空输入区；过期响应跳过全部 UI 结算。
+      if (!lifecycle.isStale(sendContext)) {
+        setContent("");
+        setPendingAttachments([]);
+        lifecycle.clearSlots(sendContext);
+        isNearBottomRef.current = true;
+        setIsNearBottom(true);
+        setShowNewMessageHint(false);
+        window.setTimeout(() => inputRef.current?.focus(), 0);
+      }
     } catch (error) {
-      // 附件草稿保留在输入区，修正后可直接重发。
-      const detail = error instanceof Error && error.message && !error.message.startsWith("Message request failed")
-        ? error.message
-        : null;
-      setState((current) => ({
-        ...current,
-        messages: [...current.messages, createLocalSystemMessage(detail ? `发送失败：${detail}` : "发送失败，请检查本地服务是否正在运行。")],
-      }));
+      // 过期上下文的失败提示不再注入当前会话的消息列表。
+      if (!lifecycle.isStale(sendContext)) {
+        // 附件草稿保留在输入区，修正后可直接重发。
+        const detail = error instanceof Error && error.message && !error.message.startsWith("Message request failed")
+          ? error.message
+          : null;
+        setState((current) => ({
+          ...current,
+          messages: [...current.messages, createLocalSystemMessage(detail ? `发送失败：${detail}` : "发送失败，请检查本地服务是否正在运行。")],
+        }));
+      }
     } finally {
       setIsSending(false);
     }
@@ -776,14 +800,23 @@ export function App() {
   }
 
   async function removePendingAttachment(id: string) {
+    const lifecycle = attachmentUploadLifecycleRef.current;
+    // 删除请求绑定发起时的上下文快照：在途期间切换会话后，槽位释放
+    // 对过期上下文直接忽略，不递减新会话的占用（PR #147 M1）。
+    const removeContext = lifecycle.captureContext({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversation.id,
+    });
+    const hadAttachment = pendingAttachments.some((a) => a.id === id);
     try {
-      await fetch(`/api/attachments/drafts/${state.workspace.id}/${state.conversation.id}/${id}`, {
+      await fetch(`/api/attachments/drafts/${removeContext.workspaceId}/${removeContext.conversationId}/${id}`, {
         method: "DELETE",
       });
     } catch { /* best effort */ }
-    if (pendingAttachments.some((a) => a.id === id)) {
-      attachmentUploadLifecycleRef.current.removeSlot();
+    if (hadAttachment) {
+      lifecycle.removeSlot(removeContext);
     }
+    // 过期上下文时该 id 已随切换清空，过滤是幂等 no-op。
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   }
 

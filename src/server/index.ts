@@ -1511,6 +1511,8 @@ function wait(ms: number): Promise<void> {
 async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const input = (await readJson(req)) as {
     content?: unknown;
+    workspaceId?: unknown;
+    conversationId?: unknown;
     draftAttachments?: unknown;
     approvalMode?: unknown;
   };
@@ -1522,28 +1524,49 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  if (!activeWorkspaceId) {
+  // 目标会话优先取请求快照（PR #147 M1）：请求体传输或附件提交的 await
+  // 期间切换会话，不会改变本条消息的归属。缺省回退全局 active 指针。
+  const requestedWorkspaceId = typeof input.workspaceId === "string" ? input.workspaceId : "";
+  const requestedConversationId = typeof input.conversationId === "string" ? input.conversationId : "";
+  const workspaceId = requestedWorkspaceId || activeWorkspaceId;
+
+  if (!workspaceId) {
     sendJson(res, 409, { ok: false, message: "Create or select a workspace before sending a message." });
     return;
   }
+  if (requestedWorkspaceId && !workspaceStore.get(requestedWorkspaceId)) {
+    sendJson(res, 404, { ok: false, message: "Workspace not found." });
+    return;
+  }
+  if (requestedConversationId && !conversationStore.get(workspaceId, requestedConversationId)) {
+    sendJson(res, 404, { ok: false, message: "Conversation not found." });
+    return;
+  }
 
-  let context = getActiveContext();
+  let conversation = requestedConversationId || activeConversationId
+    ? conversationStore.get(workspaceId, requestedConversationId || activeConversationId)
+    : null;
+  let context = conversation ? (contextMap.get(contextKey(workspaceId, conversation.id)) ?? null) : null;
 
   if (!context) {
-    const conversation = conversationStore.create(activeWorkspaceId, conversationTitle(content));
-    activeConversationId = conversation.id;
-    activeConversation = toActiveConversation(conversation);
-    conversationStore.touchLastOpened(activeWorkspaceId, activeConversationId);
-    context = getOrCreateContext(activeWorkspaceId, activeConversationId);
-    saveLastActive(activeWorkspaceId, activeConversationId);
+    conversation = conversationStore.create(workspaceId, conversationTitle(content));
+    conversationStore.touchLastOpened(workspaceId, conversation.id);
+    context = getOrCreateContext(workspaceId, conversation.id);
+    // 新会话仅在发送时仍无 active 会话且未切换工作区时成为 active，
+    // 避免把用户从发送期间切到的会话拽回（PR #147 M1）。
+    if (workspaceId === activeWorkspaceId && !activeConversationId) {
+      activeConversationId = conversation.id;
+      activeConversation = toActiveConversation(conversation);
+      saveLastActive(workspaceId, conversation.id);
+    }
     publishContextSwitched();
-  } else if (activeConversation.name === UNTITLED_CONVERSATION_NAME) {
-    const renamed = conversationStore.update(activeWorkspaceId, activeConversationId, { name: conversationTitle(content) });
-    activeConversation = toActiveConversation(renamed);
+  } else if (conversation && conversation.name === UNTITLED_CONVERSATION_NAME && conversation.id === activeConversationId) {
+    conversation = conversationStore.update(workspaceId, conversation.id, { name: conversationTitle(content) });
+    activeConversation = toActiveConversation(conversation);
     publishContextSwitched();
   }
 
-  if (!context) {
+  if (!context || !conversation) {
     sendJson(res, 500, { ok: false, message: "Conversation context was not initialized." });
     return;
   }
@@ -1565,8 +1588,8 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     }
     try {
       attachments = await attachmentStore.commitDrafts({
-        workspaceId: activeWorkspaceId,
-        conversationId: activeConversationId,
+        workspaceId,
+        conversationId: conversation.id,
         draftAttachments,
       });
     } catch (error) {
@@ -1585,9 +1608,9 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     status: "sent",
     attachments,
     approvalMode,
-    interactionMode: activeConversation.interactionMode ?? "direct",
+    interactionMode: conversation?.interactionMode ?? "direct",
   });
-  eventBus.publish({ type: "message.created", conversationId: activeConversationId, message: userMessage });
+  eventBus.publish({ type: "message.created", conversationId: conversation.id, message: userMessage });
   context.messageRouter.process(userMessage);
 
   sendJson(res, 200, { ok: true, messageId: userMessage.id });
