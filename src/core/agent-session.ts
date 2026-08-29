@@ -74,8 +74,24 @@ export class AgentSession {
   private readonly pendingElicitationStates = new Map<string, PendingElicitationState>();
   private elicitationCount = 0;
   private runCount = 0;
+  /** 首选模型可在会话运行期间更新（issue #153），下一次运行开始时生效。 */
+  private preferredModelId?: string;
 
-  constructor(private readonly options: AgentSessionOptions) {}
+  constructor(private readonly options: AgentSessionOptions) {
+    this.preferredModelId = options.preferredModelId;
+  }
+
+  /**
+   * 更新首选模型。只改内存中的偏好，不重启会话、不中断当前运行：
+   * 偏好在每次运行开始时惰性应用，因此新值从下一次运行开始生效。
+   */
+  setPreferredModelId(preferredModelId?: string): void {
+    this.preferredModelId = preferredModelId?.trim() || undefined;
+  }
+
+  preferredModel(): string | undefined {
+    return this.preferredModelId;
+  }
 
   private publish(event: RuntimeEvent): void {
     this.options.eventBus.publish(
@@ -228,7 +244,8 @@ export class AgentSession {
       resumeSessionId,
       imagePaths,
       // 模型偏好（issue #142）：每次运行开始时读最近快照并惰性应用。
-      preferredModelId: this.options.preferredModelId,
+      // 读可变字段而非 options，使运行期更新的偏好在下一次运行生效（issue #153）。
+      preferredModelId: this.preferredModelId,
       lastSessionConfig: this.options.modelState?.load(this.id),
       onSessionConfig: this.options.modelState
         ? (snapshot) => this.options.modelState!.update(snapshot)

@@ -182,6 +182,39 @@ The final agent prompt is assembled in this order:
 
 Workspace prompts inject optional shared user context across all employees, while each employee retains its own task-specific instruction. They do not define or replace Orbit's three interaction modes. Complex collaboration uses a separate internal supervisor profile, and its persisted runtime session is retained when the conversation switches to another mode.
 
+### Supervisor Configuration
+
+The built-in supervisor used by 复杂协作 is configurable per conversation through
+`ConversationInfo.supervisorConfig`:
+
+```ts
+type SupervisorConfig = {
+  runtime: AgentRuntimeKind;
+  model?: AgentModelPreference;
+};
+```
+
+- **Runtime** — which of Claude Code, Codex, or CodeBuddy runs the supervisor.
+  Changing it cancels the supervisor's queued or running checks and rebuilds its
+  session. Other employees and message history are unaffected.
+- **Model** — a preference recorded with the runtime it was chosen under, so a
+  preference is ignored once the runtime changes (model value ids are not
+  portable across runtimes). Changing only the model does **not** cancel work or
+  rebuild the session; the new preference is applied lazily when the supervisor's
+  next run starts, matching how regular employee preferences behave.
+
+The supervisor keeps its internal id across all conversations, so its model
+snapshot is stored per conversation (`supervisor:<conversation-id>` in
+`agent-model-state.json`) and `agent.model_state` events for it carry a
+`conversationId` so page-scoped SSE delivery filters them correctly.
+
+Configuration is reachable from the collaboration mode menu before or after
+enabling 复杂协作, and is saved through
+`PUT /api/conversations/:id/supervisor-config?workspaceId=...&conversationId=...`.
+Conversations recorded before this field existed keep only `supervisionRuntime`;
+`ConversationStore` maps it to `{ runtime: supervisionRuntime }` on read and new
+writes use `supervisorConfig` only.
+
 `WorkspaceConfigStore` (`src/core/workspace-config-store.ts`) manages load/save with atomic writes and graceful fallback to defaults when the file is missing or corrupted.
 
 ## Channel History

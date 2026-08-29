@@ -1,19 +1,27 @@
-import type { AgentConfig, AgentId, AgentProfile, AgentRuntimeKind } from "../shared/types.ts";
+import type { AgentConfig, AgentId, AgentProfile, AgentRuntimeKind, SupervisorConfig } from "../shared/types.ts";
 
 export type AgentRuntimeOverrides = Partial<Record<AgentId, AgentRuntimeKind>>;
 
 export const INTERNAL_SUPERVISOR_ID = "supervisor";
 
-export function createSupervisorProfile(cwd: string, runtime: AgentRuntimeKind): AgentProfile {
+/**
+ * 监工 profile（issue #153）：运行时与模型偏好来自会话级配置。
+ * 模型偏好沿用普通员工的 runtime 归属门控——value ID 不跨 runtime 通用，
+ * 偏好所属 runtime 与当前 runtime 不一致即不应用。
+ */
+export function createSupervisorProfile(cwd: string, config: SupervisorConfig): AgentProfile {
   return {
     id: INTERNAL_SUPERVISOR_ID,
     name: "监工",
     description: "Coordinates the conversation and moves assigned work toward completion.",
-    runtime,
+    runtime: config.runtime,
     cwd,
     internal: true,
     systemPrompt: "You are Orbit's built-in collaboration supervisor. Monitor the conversation and coordinate enabled digital employees toward task completion. You may only use the conversation history. Never read files, search code, run commands, modify files, or access external resources. Delegate through the exact @employee-name: markers listed in the available employees section and conclude to the user with @user:.",
     triggers: { onUnassignedMessage: true, onAgentBlocked: true, onRunFailed: true },
+    ...(config.model?.runtimeKind === config.runtime && config.model.preferredModelId?.trim()
+      ? { preferredModelId: config.model.preferredModelId.trim() }
+      : {}),
   };
 }
 

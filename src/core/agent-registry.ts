@@ -89,6 +89,29 @@ export class AgentRegistry {
     this.sessions.get(profile.id)?.start();
   }
 
+  /**
+   * 更新员工的首选模型（issue #153）。只改 profile 与会话内的偏好，
+   * 不重建会话、不取消排队/运行中的任务；偏好在每次运行开始时惰性应用，
+   * 因此新值从该员工的下一次运行开始生效。
+   */
+  updatePreferredModel(agentId: AgentId, preferredModelId?: string): boolean {
+    const session = this.sessions.get(agentId);
+    if (!session) return false;
+    const trimmed = preferredModelId?.trim() || undefined;
+    this.profilesById = this.profilesById.map((profile) => {
+      if (profile.id !== agentId) return profile;
+      const { preferredModelId: _previous, ...rest } = profile;
+      return trimmed ? { ...rest, preferredModelId: trimmed } : rest;
+    });
+    session.setPreferredModelId(trimmed);
+    return true;
+  }
+
+  /** 当前注册员工的 profile（含运行期更新后的偏好）。 */
+  profile(agentId: AgentId): AgentProfile | undefined {
+    return this.profilesById.find((profile) => profile.id === agentId);
+  }
+
   remove(agentId: AgentId): void {
     const session = this.sessions.get(agentId);
     if (!session) return;

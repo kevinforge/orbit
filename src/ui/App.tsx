@@ -2,8 +2,9 @@ import { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, useEffect, useLayo
 import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
+import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelProbeResponse, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
@@ -174,6 +175,7 @@ export function App() {
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
   const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
+  const [showSupervisorSettings, setShowSupervisorSettings] = useState(false);
   const isNearBottomRef = useRef(true);
   const stateRequestVersionRef = useRef(0);
   const sseLastEventIdRef = useRef(0);
@@ -252,6 +254,45 @@ export function App() {
       })
       .catch(() => setConnectionState("offline"));
   };
+
+  /**
+   * 保存监工配置（issue #153）。无会话时先创建会话并采用返回的会话 ID，
+   * 再通过显式页面上下文保存，避免依赖全局 active 指针。
+   */
+  async function saveSupervisorConfig(config: SupervisorConfig): Promise<void> {
+    const targetWorkspaceId = state.workspace.id;
+    if (!targetWorkspaceId) throw new Error("请先选择或创建工作区。");
+    let conversationId = state.conversation.id;
+    if (!conversationId) {
+      const createResponse = await fetch(withPageContext("/api/conversations", { workspaceId: targetWorkspaceId, conversationId: "" }), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const created = await createResponse.json() as { id?: string; message?: string };
+      if (!createResponse.ok || !created.id) throw new Error(created.message ?? "创建会话失败。");
+      if (readPageContext(window.location.search).workspaceId !== targetWorkspaceId) return;
+      conversationId = created.id;
+      // 先同步地址栏，后续请求与状态刷新都以页面上下文为准。
+      window.history.replaceState(null, "", `${window.location.pathname}${pageContextQuery({ workspaceId: targetWorkspaceId, conversationId })}${window.location.hash}`);
+      setState((current) => ({ ...current, conversation: { ...current.conversation, id: conversationId } }));
+      refreshConversations();
+    }
+    const targetContext = { workspaceId: targetWorkspaceId, conversationId };
+    const response = await fetch(withPageContext(`/api/conversations/${conversationId}/supervisor-config`, targetContext), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    const body = await response.json() as { message?: string; conversation?: ConversationInfo };
+    if (!response.ok) throw new Error(body.message ?? "保存监工设置失败。");
+    const pageContext = readPageContext(window.location.search);
+    if (pageContext.workspaceId !== targetContext.workspaceId
+      || pageContext.conversationId !== targetContext.conversationId) return;
+    if (body.conversation) {
+      setState((current) => ({ ...current, conversation: { ...current.conversation, ...body.conversation! } }));
+    }
+  }
 
   async function refreshRuntimeAvailability() {
     if (isRefreshingRuntimes) return;
@@ -371,16 +412,23 @@ export function App() {
     refreshConversations();
   }, [workspaces, state.workspace.id]);
 
+  // 监工的运行时与模型偏好来自会话级配置（issue #153）。
+  const supervisorConfig: SupervisorConfig = state.conversation.supervisorConfig
+    ?? { runtime: preferredSupervisionRuntime(state.runtimeAvailability) ?? "codebuddy" };
   const agentsById = useMemo(() => {
     const agents = new Map(state.agents.map((agent) => [agent.id, agent]));
-    agents.set("supervisor", {
-      id: "supervisor",
-      label: "监工",
-      runtime: state.conversation.supervisionRuntime ?? "codebuddy",
-      status: "idle",
-    });
+    // 监工是内部员工，通常不在服务端员工列表里；若服务端返回了就保留其真实状态，
+    // 不要强制覆盖成 idle。
+    if (!agents.has(INTERNAL_SUPERVISOR_ID)) {
+      agents.set(INTERNAL_SUPERVISOR_ID, {
+        id: INTERNAL_SUPERVISOR_ID,
+        label: "监工",
+        runtime: supervisorConfig.runtime,
+        status: "idle",
+      });
+    }
     return agents;
-  }, [state.agents, state.conversation.supervisionRuntime]);
+  }, [state.agents, supervisorConfig.runtime]);
   const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
   const visibleMessages = useMemo(() => state.messages.filter((message) => !message.discarded), [state.messages]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
@@ -639,9 +687,9 @@ export function App() {
     const label = interactionModeLabel(mode);
     const targetWorkspaceId = state.workspace.id;
     try {
-      // 复杂协作需要监工运行时：优先沿用会话已记录的运行时，否则按可用性选择
+      // 复杂协作需要监工运行时：优先沿用会话已配置的运行时，否则按可用性选择
       const runtime = mode === "supervised"
-        ? state.conversation.supervisionRuntime ?? preferredSupervisionRuntime(state.runtimeAvailability)
+        ? state.conversation.supervisorConfig?.runtime ?? preferredSupervisionRuntime(state.runtimeAvailability)
         : undefined;
 
       // 首次对话还没有会话：先创建一个会话，再切换模式，保证菜单在首条消息前即可使用
@@ -1642,18 +1690,33 @@ export function App() {
                 {showInteractionModeMenu ? (
                   <div className="interactionModeMenu" role="menu" aria-label="会话协作模式">
                     {INTERACTION_MODE_META.map((meta) => (
-                      <button
-                        key={meta.mode}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={interactionMode === meta.mode}
-                        title={meta.tooltip}
-                        onClick={() => { void selectInteractionMode(meta.mode); }}
-                      >
-                        <InteractionModeIcon mode={meta.mode} />
-                        <span><strong>{meta.label}</strong><small>{meta.tooltip}</small></span>
-                        {interactionMode === meta.mode ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
-                      </button>
+                      <div className="interactionModeRow" key={meta.mode}>
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={interactionMode === meta.mode}
+                          title={meta.tooltip}
+                          onClick={() => { void selectInteractionMode(meta.mode); }}
+                        >
+                          <InteractionModeIcon mode={meta.mode} />
+                          <span><strong>{meta.label}</strong><small>{meta.tooltip}</small></span>
+                          {interactionMode === meta.mode ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
+                        </button>
+                        {/* 监工设置是独立入口而非嵌套按钮：复杂协作开启前后都能改。 */}
+                        {meta.mode === "supervised" ? (
+                          <button
+                            type="button"
+                            className="supervisorSettingsTrigger"
+                            title="设置监工使用的运行时与模型"
+                            onClick={() => {
+                              setShowInteractionModeMenu(false);
+                              setShowSupervisorSettings(true);
+                            }}
+                          >
+                            监工设置
+                          </button>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
                 ) : null}
@@ -1765,6 +1828,16 @@ export function App() {
           isRefreshingRuntimes={isRefreshingRuntimes}
           onRefreshRuntimes={refreshRuntimeAvailability}
           modelStates={state.agentModelStates}
+        />
+      ) : null}
+      {showSupervisorSettings ? (
+        <SupervisorSettingsPanel
+          workspaceId={state.workspace.id}
+          conversationId={state.conversation.id}
+          config={supervisorConfig}
+          availability={state.runtimeAvailability}
+          onClose={() => setShowSupervisorSettings(false)}
+          onSave={saveSupervisorConfig}
         />
       ) : null}
       {previewAttachment ? (
@@ -3301,6 +3374,193 @@ function PlainText({ content }: { content: string }) {
   return <div className="plainText">{content}</div>;
 }
 
+/**
+ * 监工设置（issue #153）：运行时与模型偏好按会话保存。
+ *
+ * - 运行时与模型都可在开启复杂协作前后修改，入口在协作模式菜单里独立存在。
+ * - 模型列表由所选运行时提供，按会话隔离探测（监工是所有会话共用的内部 ID）。
+ * - 偏好按 runtime 归属门控：换运行时后旧偏好既不生效也不展示。
+ */
+function SupervisorSettingsPanel({
+  workspaceId,
+  conversationId,
+  config,
+  availability,
+  onClose,
+  onSave,
+}: {
+  workspaceId: string;
+  conversationId: string;
+  config: SupervisorConfig;
+  availability: AppState["runtimeAvailability"];
+  onClose: () => void;
+  onSave: (config: SupervisorConfig) => Promise<void>;
+}) {
+  const [runtime, setRuntime] = useState<AgentRuntimeKind>(config.runtime);
+  const [model, setModel] = useState<AgentModelPreference | undefined>(config.model);
+  const [snapshot, setSnapshot] = useState<AgentModelStateSnapshot | undefined>(undefined);
+  const [probe, setProbe] = useState<AgentModelProbeState | undefined>(undefined);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const probedRuntimeRef = useRef<AgentRuntimeKind | undefined>(undefined);
+
+  async function refreshModels(targetRuntime: AgentRuntimeKind, force = false): Promise<void> {
+    if (!workspaceId) return;
+    setIsRefreshing(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ workspaceId, runtime: targetRuntime, agentId: INTERNAL_SUPERVISOR_ID });
+      // 监工是所有会话共用的内部 ID，模型快照按会话隔离，必须带会话维度。
+      if (conversationId) params.set("conversationId", conversationId);
+      if (force) params.set("force", "1");
+      const response = await fetch(`/api/agents/probe-models?${params.toString()}`, { method: "POST" });
+      const body = await response.json() as AgentModelProbeResponse;
+      const target = body.target;
+      if (target && target.runtimeKind === targetRuntime) {
+        setSnapshot(target.modelState ?? undefined);
+        setProbe(target.modelProbe);
+      }
+    } catch {
+      setError("模型列表获取失败，请重试。");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  // 首次打开按需探测当前监工的运行时；切换运行时后再探测一次新的。
+  useEffect(() => {
+    if (probedRuntimeRef.current === runtime) return;
+    probedRuntimeRef.current = runtime;
+    void refreshModels(runtime);
+  }, [runtime, workspaceId, conversationId]);
+
+  function chooseRuntime(next: AgentRuntimeKind): void {
+    if (next === runtime) return;
+    setRuntime(next);
+    // 切换运行时后旧偏好不再生效，也不展示。
+    setModel(undefined);
+    setSnapshot(undefined);
+    setProbe(undefined);
+  }
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(model ? { runtime, model } : { runtime });
+      onClose();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "保存监工设置失败。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const probeStatus = probe?.status ?? (snapshot ? (snapshot.choices.length > 0 ? "ready" : "unsupported") : "idle");
+  const choices = probeStatus === "ready" ? snapshot?.choices ?? [] : [];
+  const nameOf = (value: string) => choices.find((choice) => choice.value === value)?.name ?? value;
+  // 偏好按 runtime 归属：与当前 runtime 不一致即不应用、不展示。
+  const preferred = model?.runtimeKind === runtime ? model.preferredModelId?.trim() || undefined : undefined;
+  const unavailable = new Set(
+    availability.filter((item) => !item.available).map((item) => runtimeKindToCliKey(item.runtime)),
+  );
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader">
+          <h2>监工设置</h2>
+          <button type="button" onClick={onClose}>&times;</button>
+        </div>
+        <div className="settingsBody">
+          <p className="modelHint">
+            选择监工使用的运行时与模型。修改从监工的下一次运行开始生效；更换运行时会重建监工会话，普通员工和历史消息不受影响。
+          </p>
+          <div className="modelField fieldFullWidth">
+            <span className="pillLabel">运行时</span>
+            <div className="modelChoiceList">
+              {AGENT_RUNTIME_PRIORITY.map((kind) => (
+                <label key={kind} className={`modelChoice ${runtime === kind ? "modelChoiceActive" : ""}`}>
+                  <input
+                    type="radio"
+                    name="supervisor-runtime"
+                    checked={runtime === kind}
+                    onChange={() => chooseRuntime(kind)}
+                  />
+                  <span>
+                    {runtimeMeta(kind).label}
+                    {unavailable.has(runtimeKindToCliKey(kind)) ? "（当前不可用）" : ""}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="modelField fieldFullWidth">
+            <div className="modelFieldHeader">
+              <span className="pillLabel">模型 <span className="fieldHint" title="监工使用的模型。可选列表由所选运行时提供，每次运行开始时应用。">?</span></span>
+              <button
+                type="button"
+                className="modelRefreshBtn"
+                onClick={() => { void refreshModels(runtime, true); }}
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? "获取中..." : "刷新模型列表"}
+              </button>
+            </div>
+            <div className="modelChoiceList">
+              <label className={`modelChoice ${preferred === undefined ? "modelChoiceActive" : ""}`}>
+                <input
+                  type="radio"
+                  name="supervisor-model"
+                  checked={preferred === undefined}
+                  onChange={() => setModel(undefined)}
+                />
+                <span>
+                  跟随运行时默认
+                  {probeStatus === "ready" && snapshot?.currentValueSource === "session" && snapshot.currentValue
+                    ? `（当前：${nameOf(snapshot.currentValue)}）`
+                    : ""}
+                </span>
+              </label>
+              {choices.map((choice) => (
+                <label key={choice.value} className={`modelChoice ${preferred === choice.value ? "modelChoiceActive" : ""}`}>
+                  <input
+                    type="radio"
+                    name="supervisor-model"
+                    checked={preferred === choice.value}
+                    onChange={() => setModel({ preferredModelId: choice.value, runtimeKind: runtime })}
+                  />
+                  <span>
+                    {choice.name}
+                    {probeStatus === "ready" && snapshot?.currentValueSource === "session"
+                      && snapshot.currentValue === choice.value && preferred !== choice.value ? "（当前）" : ""}
+                  </span>
+                </label>
+              ))}
+            </div>
+            {probeStatus === "error" ? (
+              <div className="modelHint modelHintWarn">{probe?.message ?? "模型列表获取失败，请重试。"}</div>
+            ) : probeStatus === "unsupported" ? (
+              <div className="modelHint">该运行时未提供可选模型列表。</div>
+            ) : probeStatus === "loading" ? (
+              <div className="modelHint">正在获取模型列表...</div>
+            ) : null}
+            <div className="modelHint">模型选择在监工下次运行时生效。</div>
+          </div>
+          {error ? <div className="modelHint modelHintWarn">{error}</div> : null}
+          <div className="modalFooter">
+            <button type="button" onClick={onClose} disabled={saving}>关闭</button>
+            <button type="button" className="primaryBtn" onClick={() => { void save(); }} disabled={saving}>
+              {saving ? "保存中..." : "保存"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function preferredSupervisionRuntime(availability: AppState["runtimeAvailability"]): AgentRuntimeKind | undefined {
   const available = new Set(availability.filter((item) => item.available).map((item) => item.runtime));
   return AGENT_RUNTIME_PRIORITY.find((runtime) => available.has(runtimeKindToCliKey(runtime)));
@@ -3328,10 +3588,13 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
-  // agent.model_state 是 workspace 级事件（无 conversationId），在会话过滤前处理，
+  // agent.model_state 通常是 workspace 级事件（无 conversationId），在会话过滤前处理，
   // 但不能让后台工作区的同名员工覆盖当前工作区的模型状态。
   if (event.type === "agent.model_state") {
     if (event.workspaceId !== state.workspace.id) return state;
+    // 监工是所有会话共用的内部 ID，其快照带会话维度（issue #153）：
+    // 其他会话的监工状态不能覆盖本页。
+    if (event.conversationId !== undefined && event.conversationId !== state.conversation.id) return state;
     return {
       ...state,
       agentModelStates: { ...state.agentModelStates, [event.agentId]: event.modelState },

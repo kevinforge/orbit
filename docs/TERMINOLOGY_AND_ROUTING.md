@@ -23,7 +23,9 @@ Use these terms in docs, issues, PRs, screenshots, and user-facing copy.
 - **Supervisor**: the built-in coordinator enabled by 复杂协作. It decomposes
   the goal, schedules digital employees, tracks progress, recovers from
   failures, and drives the task to closure. It is not a user-configured digital
-  employee.
+  employee. Its runtime and model preference are configurable per conversation
+  (see [Supervisor Configuration](#supervisor-configuration)); its display name,
+  system prompt, and triggers are not.
 - **Assignment marker**: an `@display-name:` marker that tells Orbit which
   digital employee should receive work. The name is the configured display name,
   not the internal id.
@@ -51,6 +53,25 @@ never loses context.
 
 These mode rules are built into Orbit and apply to custom teams as well as the
 built-in templates. They do not depend on editable workspace prompts or rules.
+
+## Supervisor Configuration
+
+The supervisor is not a digital employee, but its runtime and model preference
+are user-configurable per conversation and can be changed before or after
+enabling 复杂协作:
+
+- **Runtime** (Claude Code, Codex, CodeBuddy): changing it cancels the
+  supervisor's queued or running checks and rebuilds its session. Other digital
+  employees and message history are unaffected.
+- **Model**: recorded together with the runtime it was chosen under, so it stops
+  applying once the runtime changes. Changing only the model cancels nothing and
+  takes effect on the supervisor's next run.
+
+Switching away from 复杂协作 keeps the configuration and the supervisor's
+resumable session, so returning to the mode restores the previous setup.
+
+Call the supervisor **监工** in user-facing copy. The bare word `supervisor` is
+an internal id and must not appear in UI text.
 
 ## Routing Markers
 

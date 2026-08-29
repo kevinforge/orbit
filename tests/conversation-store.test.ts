@@ -28,13 +28,46 @@ test("interaction mode persists across repeated switches", () => {
   const store = new ConversationStore(dir);
   const conv = store.create("ws1", "Mode switching");
 
-  store.update("ws1", conv.id, { interactionMode: "supervised", supervisionRuntime: "codebuddy" });
+  store.update("ws1", conv.id, { interactionMode: "supervised", supervisorConfig: { runtime: "codebuddy" } });
   store.update("ws1", conv.id, { interactionMode: "direct" });
   store.update("ws1", conv.id, { interactionMode: "supervised" });
 
   const reloaded = new ConversationStore(dir).get("ws1", conv.id)!;
   assert.equal(reloaded.interactionMode, "supervised");
-  assert.equal(reloaded.supervisionRuntime, "codebuddy");
+  assert.equal(reloaded.supervisorConfig?.runtime, "codebuddy");
+});
+
+test("legacy supervisionRuntime records are read as supervisorConfig", () => {
+  const dir = tmpDir();
+  const store = new ConversationStore(dir);
+  const conv = store.create("ws1", "Legacy supervision runtime");
+
+  // 直接改底层文件，模拟 issue #153 之前只保存 supervisionRuntime 的记录。
+  const file = path.join(dir, "conversations", "ws1", "conversations.json");
+  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as {
+    conversations: Array<Record<string, unknown>>;
+  };
+  fs.writeFileSync(file, JSON.stringify({
+    conversations: raw.conversations.map((entry) => ({ ...entry, supervisionRuntime: "codex" })),
+  }, null, 2));
+
+  const reloaded = new ConversationStore(dir).get("ws1", conv.id)!;
+  assert.equal(reloaded.supervisorConfig?.runtime, "codex");
+});
+
+test("supervisor model preference persists across reload", () => {
+  const dir = tmpDir();
+  const store = new ConversationStore(dir);
+  const conv = store.create("ws1", "Supervisor model");
+
+  store.update("ws1", conv.id, {
+    supervisorConfig: { runtime: "codebuddy", model: { preferredModelId: "gpt-5", runtimeKind: "codebuddy" } },
+  });
+
+  const reloaded = new ConversationStore(dir).get("ws1", conv.id)!;
+  assert.equal(reloaded.supervisorConfig?.runtime, "codebuddy");
+  assert.equal(reloaded.supervisorConfig?.model?.preferredModelId, "gpt-5");
+  assert.equal(reloaded.supervisorConfig?.model?.runtimeKind, "codebuddy");
 });
 
 test("last direct employee persists alongside mode switches away and back", () => {

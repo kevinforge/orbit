@@ -5,11 +5,11 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { configsToProfiles } from "../core/agent-profiles.ts";
+import { configsToProfiles, INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import { disposeAcpConnectionPool, probeAcpModelState } from "../core/acp-runtime.ts";
 import { defaultAcpRunnerRegistry } from "../core/acp-runner-registry.ts";
 import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
-import { AgentModelStateStore } from "../core/agent-model-state-store.ts";
+import { AgentModelStateStore, supervisorStorageKey } from "../core/agent-model-state-store.ts";
 import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { WorkspaceConfigStore } from "../core/workspace-config-store.ts";
@@ -24,8 +24,8 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
-import { isInteractionMode } from "../shared/types.ts";
+import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo } from "../shared/types.ts";
+import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { ConversationContext } from "./conversation-context.ts";
@@ -47,14 +47,14 @@ function toActiveConversation(conversation: Conversation | {
   name: string;
   interactionMode?: InteractionMode;
   lastDirectAgentId?: ConversationInfo["lastDirectAgentId"];
-  supervisionRuntime?: ConversationInfo["supervisionRuntime"];
+  supervisorConfig?: ConversationInfo["supervisorConfig"];
 }): ConversationInfo {
   return {
     id: conversation.id,
     name: conversation.name,
     interactionMode: conversation.interactionMode ?? "direct",
     lastDirectAgentId: conversation.lastDirectAgentId,
-    supervisionRuntime: conversation.supervisionRuntime,
+    supervisorConfig: conversation.supervisorConfig,
   };
 }
 const execFileAsync = promisify(execFile);
@@ -103,6 +103,7 @@ async function probeConfiguredAgentModels(
   runtimeFilter?: AgentConfig["runtime"],
   targetAgentId?: string,
   targetWorkspaceId?: string,
+  targetConversationId?: string,
 ): Promise<void> {
   const workspaceId = targetWorkspaceId || activeWorkspaceId;
   if (!workspaceId) return;
@@ -157,7 +158,11 @@ async function probeConfiguredAgentModels(
         updatedAt: snapshot.updatedAt,
       });
       for (const target of targets) {
-        const previous = existing[target.id];
+        // 监工快照按会话隔离（issue #153）：存储键带会话后缀，
+        // 事件带 conversationId 以便 SSE 按页面过滤。
+        const isSupervisor = target.id === INTERNAL_SUPERVISOR_ID && targetConversationId !== undefined;
+        const storageKey = isSupervisor ? supervisorStorageKey(targetConversationId!) : target.id;
+        const previous = existing[storageKey];
         const hasSessionValue = previous?.runtimeKind === runtimeKind && previous.currentValueSource === "session";
         const targetSnapshot = {
           ...snapshot,
@@ -165,12 +170,13 @@ async function probeConfiguredAgentModels(
           currentValue: hasSessionValue ? previous.currentValue : undefined,
           currentValueSource: hasSessionValue ? "session" as const : "probe" as const,
         };
-        agentModelStateStore.update(workspaceId, targetSnapshot);
+        agentModelStateStore.update(workspaceId, targetSnapshot, storageKey);
         sseHub.publish({
           type: "agent.model_state",
           workspaceId,
           agentId: target.id,
           modelState: targetSnapshot,
+          ...(isSupervisor ? { conversationId: targetConversationId! } : {}),
         });
       }
     } catch (error) {
@@ -257,15 +263,19 @@ eventBus.subscribe((event) => {
   if (event.type === "runtime.activity") return;
   let scopedEvent = event;
   if (event.type !== "events.gap" && "conversationId" in event && event.workspaceId === undefined) {
-    const matches = [...contextMap.keys()].filter((key) => key.endsWith(`:${event.conversationId}`));
-    // An unscoped legacy event is safe to infer only when the conversation id
-    // is unique in this process. Otherwise dropping it is safer than leaking
-    // one workspace's activity into another page.
-    if (matches.length === 1) {
-      const key = matches[0]!;
-      scopedEvent = { ...event, workspaceId: key.slice(0, key.length - event.conversationId.length - 1) };
-    } else if (matches.length > 1) {
-      return;
+    // agent.model_state 的 conversationId 是可选的（issue #153），缺失时不做推断。
+    const eventConversationId = event.conversationId;
+    if (eventConversationId !== undefined) {
+      const matches = [...contextMap.keys()].filter((key) => key.endsWith(`:${eventConversationId}`));
+      // An unscoped legacy event is safe to infer only when the conversation id
+      // is unique in this process. Otherwise dropping it is safer than leaking
+      // one workspace's activity into another page.
+      if (matches.length === 1) {
+        const key = matches[0]!;
+        scopedEvent = { ...event, workspaceId: key.slice(0, key.length - eventConversationId.length - 1) };
+      } else if (matches.length > 1) {
+        return;
+      }
     }
   }
   sseHub.publish(scopedEvent);
@@ -441,15 +451,31 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
     workspaceConfig,
     globalConfig: globalConfigStore.load(),
     interactionMode: conversation?.interactionMode,
-    supervisionRuntime: conversation?.supervisionRuntime,
+    supervisorConfig: conversation?.supervisorConfig,
     lastDirectAgentId: conversation?.lastDirectAgentId,
     // 模型快照桥（issue #142）：runtime 返回的模型列表/当前值写穿到 workspace
     // 级存储，同时广播给 UI；读取供池复用捷径补发偏好。
+    // 监工按会话隔离（issue #153）：所有会话共用 agentId "supervisor"，
+    // 存储键须带会话后缀，事件须带 conversationId 才能按页面过滤。
     modelState: {
-      load: (agentId) => agentModelStateStore.get(workspaceId, agentId),
+      load: (agentId) => agentModelStateStore.get(
+        workspaceId,
+        agentId === INTERNAL_SUPERVISOR_ID ? supervisorStorageKey(conversationId) : agentId,
+      ),
       update: (snapshot) => {
-        agentModelStateStore.update(workspaceId, snapshot);
-        sseHub.publish({ type: "agent.model_state", workspaceId, agentId: snapshot.agentId, modelState: snapshot });
+        const isSupervisor = snapshot.agentId === INTERNAL_SUPERVISOR_ID;
+        agentModelStateStore.update(
+          workspaceId,
+          snapshot,
+          isSupervisor ? supervisorStorageKey(conversationId) : snapshot.agentId,
+        );
+        sseHub.publish({
+          type: "agent.model_state",
+          workspaceId,
+          agentId: snapshot.agentId,
+          modelState: snapshot,
+          ...(isSupervisor ? { conversationId } : {}),
+        });
       },
     },
     onConversationPatch: (patch) => {
@@ -612,6 +638,46 @@ migrateChannelLayer();
 initActiveContext();
 runHistoryCleanup();
 runAttachmentDraftCleanup();
+
+/**
+ * 解析并校验监工配置（issue #153）。
+ *
+ * 模型取值不在当前列表里时不拒绝保存：运行时会在应用时提示并回退，
+ * 提前拒绝会让用户在模型列表刷新不出来时无法保存其他改动。
+ */
+function parseSupervisorConfig(input: { runtime?: unknown; model?: unknown }):
+  { config: SupervisorConfig } | { error: string } {
+  if (!isAgentRuntimeKind(input.runtime)) {
+    return { error: "监工运行时必须是 claude-code、codex 或 codebuddy。" };
+  }
+  const runtime = input.runtime;
+  if (input.model === undefined || input.model === null) return { config: { runtime } };
+  if (typeof input.model !== "object" || Array.isArray(input.model)) {
+    return { error: "监工模型配置格式不正确。" };
+  }
+  const model = input.model as { preferredModelId?: unknown; runtimeKind?: unknown };
+  if (model.runtimeKind !== undefined && !isAgentRuntimeKind(model.runtimeKind)) {
+    return { error: "监工模型配置格式不正确。" };
+  }
+  if (model.preferredModelId !== undefined
+    && model.preferredModelId !== null
+    && typeof model.preferredModelId !== "string") {
+    return { error: "监工模型配置格式不正确。" };
+  }
+  const preferredModelId = typeof model.preferredModelId === "string"
+    ? model.preferredModelId.trim()
+    : "";
+  if (preferredModelId.length > 512) {
+    return { error: "监工模型标识过长。" };
+  }
+  if (!preferredModelId) return { config: { runtime } };
+  return {
+    config: {
+      runtime,
+      model: { preferredModelId, runtimeKind: isAgentRuntimeKind(model.runtimeKind) ? model.runtimeKind : runtime },
+    },
+  };
+}
 
 // --- HTTP Server (created before probe to avoid blocking setup) ---
 const server = http.createServer(async (req, res) => {
@@ -911,17 +977,29 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "刷新指定员工模型时需要有效的员工 ID 和运行时。" });
         return;
       }
+      const targetConversationId = url.searchParams.get("conversationId")?.trim() || undefined;
+      // 监工是内部保留 ID，所有会话共用；缺会话维度会读写到别的会话的快照。
+      if (targetAgentId === INTERNAL_SUPERVISOR_ID && !targetConversationId) {
+        sendJson(res, 400, { ok: false, message: "刷新监工模型列表时需要会话 ID。" });
+        return;
+      }
       await probeConfiguredAgentModels(
         url.searchParams.get("force") === "1",
         runtimeFilter ?? undefined,
         targetAgentId,
         url.searchParams.get("workspaceId") || undefined,
+        targetConversationId,
       );
       const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
       const configs = workspaceId ? configsWithModelState(workspaceId) : allConfigs;
       const response: AgentModelProbeResponse = { configs };
       if (workspaceId && runtimeFilter && targetAgentId) {
-        const snapshot = agentModelStateStore.get(workspaceId, targetAgentId);
+        const snapshot = agentModelStateStore.get(
+          workspaceId,
+          targetAgentId === INTERNAL_SUPERVISOR_ID && targetConversationId
+            ? supervisorStorageKey(targetConversationId)
+            : targetAgentId,
+        );
         const matchingSnapshot = snapshot?.runtimeKind === runtimeFilter ? snapshot : undefined;
         response.target = {
           agentId: targetAgentId,
@@ -1278,15 +1356,54 @@ const server = http.createServer(async (req, res) => {
       try {
         const current = conversationStoreFor(target.workspaceId).get(target.workspaceId, convId);
         if (!current) throw new Error("Conversation not found.");
-        const runtime = typeof input.runtime === "string" ? input.runtime as import("../shared/types.ts").AgentRuntimeKind : current.supervisionRuntime;
+        // runtime 参数仅用于兼容旧调用方；内部统一以 supervisorConfig 为准。
+        const runtime = typeof input.runtime === "string"
+          ? input.runtime as import("../shared/types.ts").AgentRuntimeKind
+          : current.supervisorConfig?.runtime;
         if (mode === "supervised" && (!runtime || !runtimeAvailable(runtimeKindToCliKey(runtime)))) {
           sendJson(res, 409, { ok: false, message: "Choose an available runtime before enabling supervised collaboration." });
           return;
         }
-        // setInteractionMode 通过 onConversationPatch 持久化模式与监工运行时
+        // setInteractionMode 通过 onConversationPatch 持久化模式与监工配置
         ctx.setInteractionMode(mode, runtime);
         const updated = conversationStoreFor(target.workspaceId).get(target.workspaceId, convId) ?? current;
         sendJson(res, 200, { ok: true, conversation: updated });
+      } catch (error) {
+        sendJson(res, 409, { ok: false, message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+
+    // 监工配置（issue #153）：显式页面上下文，可在任意协作模式下修改，
+    // 不依赖全局 active 指针。
+    if (req.method === "PUT" && url.pathname.startsWith("/api/conversations/") && url.pathname.endsWith("/supervisor-config")) {
+      const parts = url.pathname.split("/");
+      const convId = parts[3];
+      if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
+      const target = resolveTarget(url);
+      if (!target || target.conversationId !== convId) {
+        sendJson(res, 409, { ok: false, message: "workspaceId and conversationId are required." });
+        return;
+      }
+      const input = (await readJson(req)) as { runtime?: unknown; model?: unknown };
+      const parsed = parseSupervisorConfig(input);
+      if ("error" in parsed) {
+        sendJson(res, 400, { ok: false, message: parsed.error });
+        return;
+      }
+      if (!runtimeAvailable(runtimeKindToCliKey(parsed.config.runtime))) {
+        sendJson(res, 409, { ok: false, message: "所选运行时当前不可用，请先安装或换一个运行时。" });
+        return;
+      }
+      const ctx = contextForTarget(target);
+      if (!ctx) { sendJson(res, 409, { ok: false, message: "No active conversation context." }); return; }
+      try {
+        if (!conversationStoreFor(target.workspaceId).get(target.workspaceId, convId)) {
+          throw new Error("Conversation not found.");
+        }
+        ctx.setSupervisorConfig(parsed.config);
+        const updated = conversationStoreFor(target.workspaceId).get(target.workspaceId, convId);
+        sendJson(res, 200, { ok: true, conversation: updated ? toActiveConversation(updated) : undefined });
       } catch (error) {
         sendJson(res, 409, { ok: false, message: error instanceof Error ? error.message : String(error) });
       }
