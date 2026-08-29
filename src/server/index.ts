@@ -727,19 +727,29 @@ const server = http.createServer(async (req, res) => {
     // --- Attachment endpoints ---
 
     if (req.method === "POST" && url.pathname === "/api/attachments/drafts") {
-      if (!activeWorkspaceId || !activeConversationId) {
-        sendJson(res, 409, { ok: false, message: "No active conversation." });
-        return;
-      }
       const input = (await readJson(req)) as {
+        workspaceId?: unknown;
+        conversationId?: unknown;
         data?: unknown;
         mimeType?: unknown;
         filename?: unknown;
       };
+      // 目标来自请求快照而非全局 active 指针：上传进行中切换会话时，
+      // 文件仍保存到发起上传的会话目录，不会错投到新会话（PR #147 M1）。
+      const workspaceId = typeof input.workspaceId === "string" ? input.workspaceId : "";
+      const conversationId = typeof input.conversationId === "string" ? input.conversationId : "";
       const base64Data = typeof input.data === "string" ? input.data : "";
       const mimeType = typeof input.mimeType === "string" ? input.mimeType : "";
       const filename = typeof input.filename === "string" ? input.filename : "";
 
+      if (!workspaceId || !conversationId) {
+        sendJson(res, 409, { ok: false, message: "No active conversation." });
+        return;
+      }
+      if (!workspaceStore.get(workspaceId) || !conversationStore.get(workspaceId, conversationId)) {
+        sendJson(res, 404, { ok: false, message: "Workspace or conversation not found." });
+        return;
+      }
       if (!base64Data) {
         sendJson(res, 400, { ok: false, message: "Missing attachment data." });
         return;
@@ -754,7 +764,7 @@ const server = http.createServer(async (req, res) => {
       const validated = validation.attachment;
 
       // Issue #88: Check draft count limit before saving
-      const draftCount = await attachmentStore.countDrafts(activeWorkspaceId, activeConversationId);
+      const draftCount = await attachmentStore.countDrafts(workspaceId, conversationId);
       if (draftCount >= ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION) {
         sendJson(res, 400, {
           ok: false,
@@ -764,8 +774,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       const saved = await attachmentStore.saveDraft({
-        workspaceId: activeWorkspaceId,
-        conversationId: activeConversationId,
+        workspaceId,
+        conversationId,
         data: buffer,
         ext: validated.ext,
         filename: validated.filename,
@@ -780,7 +790,7 @@ const server = http.createServer(async (req, res) => {
           filename: validated.filename,
           size: saved.size,
           ...(validated.kind === "image"
-            ? { previewUrl: `/api/attachments/drafts/${activeWorkspaceId}/${activeConversationId}/${saved.id}` }
+            ? { previewUrl: `/api/attachments/drafts/${workspaceId}/${conversationId}/${saved.id}` }
             : {}),
         },
       });

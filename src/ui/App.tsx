@@ -5,6 +5,7 @@ import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../cor
 import { matchPreset } from "../core/workspace-presets.ts";
 import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
+import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
@@ -152,6 +153,9 @@ export function App() {
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   /** 已占用附件槽位（含上传中）。同步计数：并发批次不会各自读到过期数量。 */
   const attachmentSlotCountRef = useRef(0);
+  /** 附件上传生命周期：上下文版本绑定 + 同步上传计数（PR #147 M1 竞态修复）。 */
+  const attachmentUploadLifecycleRef = useRef(createAttachmentUploadLifecycle());
+  const [uploadingAttachments, setUploadingAttachments] = useState(0);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
   const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
@@ -286,9 +290,12 @@ export function App() {
     refreshWorkspaces();
   }, [state.workspace.id, state.conversation.id]);
 
-  // Clear pending attachments when workspace or conversation changes
-  // to avoid preview URL pointing to wrong workspace/conversation path
-  useEffect(() => {
+  // 切换工作区或会话时：作废进行中的上传（旧请求完成后不得回写新会话的
+  // 输入区或递减新会话的计数），并清空输入区附件，避免预览 URL 指向错误
+  // 的工作区/会话路径（PR #147 M1）。
+  useLayoutEffect(() => {
+    attachmentUploadLifecycleRef.current.resetContext();
+    setUploadingAttachments(0);
     setPendingAttachments([]);
     attachmentSlotCountRef.current = 0;
   }, [state.workspace.id, state.conversation.id]);
@@ -501,6 +508,12 @@ export function App() {
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // 权威拦截：附件上传未完成时不允许发送（同步计数，不依赖渲染时序）。
+    if (attachmentUploadLifecycleRef.current.getUploadingCount() > 0) {
+      setAttachmentToast("附件还在上传中，请稍候再发送");
+      window.setTimeout(() => setAttachmentToast(null), 3000);
+      return;
+    }
     const trimmed = content.trim();
     if (!trimmed || isSending || isSwitchingInteractionMode) {
       return;
@@ -661,11 +674,24 @@ export function App() {
       return;
     }
     attachmentSlotCountRef.current += files.length;
-    const releaseSlot = () => {
-      attachmentSlotCountRef.current = Math.max(0, attachmentSlotCountRef.current - 1);
+    const lifecycle = attachmentUploadLifecycleRef.current;
+    // 每批上传绑定发起时的工作区/会话快照；请求显式携带目标 ID，服务端
+    // 不再依赖全局 active 指针（PR #147 M1：上传中切换会话不得错投）。
+    const uploadContext = lifecycle.beginUpload({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversation.id,
+    });
+    setUploadingAttachments(lifecycle.getUploadingCount());
+    const releaseSlot = (count = 1) => {
+      attachmentSlotCountRef.current = Math.max(0, attachmentSlotCountRef.current - count);
     };
 
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
+      // 上下文已过期（切换了工作区/会话）：停止上传剩余文件并释放其槽位。
+      if (lifecycle.isStale(uploadContext)) {
+        releaseSlot(files.length - index);
+        break;
+      }
       const base64 = await readFileAsBase64(file);
       if (!base64) {
         releaseSlot();
@@ -676,6 +702,8 @@ export function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            workspaceId: uploadContext.workspaceId,
+            conversationId: uploadContext.conversationId,
             data: base64,
             mimeType: file.type,
             // 剪贴板图片可能没有文件名：回退到固定名，保证服务端可校验扩展名。
@@ -690,16 +718,30 @@ export function App() {
           continue;
         }
         const result = await response.json();
-        if (result.ok && result.attachment) {
-          setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
-        } else {
+        if (!(result.ok && result.attachment)) {
           releaseSlot();
+          continue;
         }
+        if (lifecycle.isStale(uploadContext)) {
+          // 过期结果：尽力删除已生成的草稿，绝不回写当前输入区。
+          releaseSlot();
+          void fetch(
+            `/api/attachments/drafts/${uploadContext.workspaceId}/${uploadContext.conversationId}/${result.attachment.id}`,
+            { method: "DELETE" },
+          ).catch(() => { /* best effort */ });
+          continue;
+        }
+        setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
       } catch {
         setAttachmentToast("附件上传失败");
         window.setTimeout(() => setAttachmentToast(null), 3000);
         releaseSlot();
       }
+    }
+
+    // 批次结束释放上传计数；过期回调不触碰新会话的计数与渲染态。
+    if (lifecycle.finishUpload(uploadContext)) {
+      setUploadingAttachments(lifecycle.getUploadingCount());
     }
   }
 
@@ -1632,8 +1674,14 @@ export function App() {
                 {isInterrupting || hasCancellingRun ? <><span className="sendSpinner" aria-hidden="true" />正在停止…</> : "停止所有任务"}
               </Button>
             ) : null}
-            <Button type="submit" theme="primary" icon={<SendIcon />} disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode}>
-              {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
+            <Button
+              type="submit"
+              theme="primary"
+              icon={<SendIcon />}
+              disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode || uploadingAttachments > 0}
+              title={uploadingAttachments > 0 ? "附件上传中，完成后可发送" : undefined}
+            >
+              {isSending ? <span className="sendSpinner" aria-hidden="true" /> : uploadingAttachments > 0 ? "上传中…" : "发送"}
             </Button>
             </div>
           </div>
