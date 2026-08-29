@@ -225,8 +225,10 @@ type MessageAttachmentBase = {
 };
 
 /**
- * 附件判别联合：图片（进入 ACP image 块与缩略图预览）与文件
- * （PDF/文本/代码，仅通过本地路径注入提示词，下载时强制为附件）。
+ * 附件判别联合：图片（图片能力开启时进入 ACP image 块，并作为缩略图
+ * 预览）与文件（PDF/文本/代码）。凡不是原生 image 块的附件一律以 ACP
+ * `resource_link` 内容块传递（file:// URI 指向服务端存储的文件）；下载
+ * 时强制为附件响应。
  */
 export type MessageAttachment = MessageAttachmentBase & (
   | { kind: "image"; mimeType: "image/png" | "image/jpeg" | "image/webp" }

@@ -151,9 +151,7 @@ export function App() {
   const [pathToast, setPathToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
-  /** 已占用附件槽位（含上传中）。同步计数：并发批次不会各自读到过期数量。 */
-  const attachmentSlotCountRef = useRef(0);
-  /** 附件上传生命周期：上下文版本绑定 + 同步上传计数（PR #147 M1 竞态修复）。 */
+  /** 附件上传生命周期：上下文版本绑定的上传计数与附件槽位（PR #147 M1 竞态修复）。 */
   const attachmentUploadLifecycleRef = useRef(createAttachmentUploadLifecycle());
   const [uploadingAttachments, setUploadingAttachments] = useState(0);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
@@ -291,13 +289,12 @@ export function App() {
   }, [state.workspace.id, state.conversation.id]);
 
   // 切换工作区或会话时：作废进行中的上传（旧请求完成后不得回写新会话的
-  // 输入区或递减新会话的计数），并清空输入区附件，避免预览 URL 指向错误
-  // 的工作区/会话路径（PR #147 M1）。
+  // 输入区或递减新会话的计数与槽位），并清空输入区附件，避免预览 URL 指
+  // 向错误的工作区/会话路径（PR #147 M1）。
   useLayoutEffect(() => {
     attachmentUploadLifecycleRef.current.resetContext();
     setUploadingAttachments(0);
     setPendingAttachments([]);
-    attachmentSlotCountRef.current = 0;
   }, [state.workspace.id, state.conversation.id]);
 
   // Auto-expand the active workspace on initial load
@@ -546,7 +543,7 @@ export function App() {
 
       setContent("");
       setPendingAttachments([]);
-      attachmentSlotCountRef.current = 0;
+      attachmentUploadLifecycleRef.current.clearSlots();
       isNearBottomRef.current = true;
       setIsNearBottom(true);
       setShowNewMessageHint(false);
@@ -667,34 +664,30 @@ export function App() {
     if (files.length === 0) return;
 
     const maxFiles = ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE;
+    const lifecycle = attachmentUploadLifecycleRef.current;
     // 以同步计数的“已占用槽位（含上传中）”判断上限：并发批次合计不会超过 5 个。
-    if (attachmentSlotCountRef.current + files.length > maxFiles) {
+    if (lifecycle.getSlotCount() + files.length > maxFiles) {
       setAttachmentToast(`最多只能添加 ${maxFiles} 个附件`);
       window.setTimeout(() => setAttachmentToast(null), 3000);
       return;
     }
-    attachmentSlotCountRef.current += files.length;
-    const lifecycle = attachmentUploadLifecycleRef.current;
     // 每批上传绑定发起时的工作区/会话快照；请求显式携带目标 ID，服务端
     // 不再依赖全局 active 指针（PR #147 M1：上传中切换会话不得错投）。
     const uploadContext = lifecycle.beginUpload({
       workspaceId: state.workspace.id,
       conversationId: state.conversation.id,
-    });
+    }, files.length);
     setUploadingAttachments(lifecycle.getUploadingCount());
-    const releaseSlot = (count = 1) => {
-      attachmentSlotCountRef.current = Math.max(0, attachmentSlotCountRef.current - count);
-    };
 
     for (const [index, file] of files.entries()) {
-      // 上下文已过期（切换了工作区/会话）：停止上传剩余文件并释放其槽位。
+      // 上下文已过期（切换了工作区/会话）：停止上传剩余文件。其槽位随
+      // resetContext 清零消失，不再释放（释放会污染新会话的计数）。
       if (lifecycle.isStale(uploadContext)) {
-        releaseSlot(files.length - index);
         break;
       }
       const base64 = await readFileAsBase64(file);
       if (!base64) {
-        releaseSlot();
+        lifecycle.releaseSlots(uploadContext);
         continue;
       }
       try {
@@ -714,17 +707,17 @@ export function App() {
           const err = await response.json().catch(() => ({}));
           setAttachmentToast((err as { message?: string }).message ?? "附件上传失败");
           window.setTimeout(() => setAttachmentToast(null), 3000);
-          releaseSlot();
+          lifecycle.releaseSlots(uploadContext);
           continue;
         }
         const result = await response.json();
         if (!(result.ok && result.attachment)) {
-          releaseSlot();
+          lifecycle.releaseSlots(uploadContext);
           continue;
         }
         if (lifecycle.isStale(uploadContext)) {
-          // 过期结果：尽力删除已生成的草稿，绝不回写当前输入区。
-          releaseSlot();
+          // 过期结果：尽力删除已生成的草稿，绝不回写当前输入区；槽位同样
+          // 不再释放（同上），避免递减新会话的占用。
           void fetch(
             `/api/attachments/drafts/${uploadContext.workspaceId}/${uploadContext.conversationId}/${result.attachment.id}`,
             { method: "DELETE" },
@@ -735,7 +728,7 @@ export function App() {
       } catch {
         setAttachmentToast("附件上传失败");
         window.setTimeout(() => setAttachmentToast(null), 3000);
-        releaseSlot();
+        lifecycle.releaseSlots(uploadContext);
       }
     }
 
@@ -789,7 +782,7 @@ export function App() {
       });
     } catch { /* best effort */ }
     if (pendingAttachments.some((a) => a.id === id)) {
-      attachmentSlotCountRef.current = Math.max(0, attachmentSlotCountRef.current - 1);
+      attachmentUploadLifecycleRef.current.removeSlot();
     }
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   }
