@@ -529,16 +529,17 @@ export function App() {
       const body: {
         content: string;
         approvalMode: ApprovalMode;
-        workspaceId: string;
-        conversationId: string;
+        workspaceId?: string;
+        conversationId?: string;
         draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }>;
       } = {
         content: trimmed,
         approvalMode,
         // 目标快照随请求发送：服务端全程使用它归属本条消息，不依赖全局
-        // active 指针（PR #147 M1 服务端）。
-        workspaceId: sendContext.workspaceId,
-        conversationId: sendContext.conversationId,
+        // active 指针（PR #147 M1 服务端）。无会话时（首条消息）省略字段，
+        // 服务端在入口快照工作区内新建；空串会被显式拒绝。
+        ...(sendContext.workspaceId ? { workspaceId: sendContext.workspaceId } : {}),
+        ...(sendContext.conversationId ? { conversationId: sendContext.conversationId } : {}),
       };
       if (pendingAttachments.length > 0) {
         body.draftAttachments = pendingAttachments.map((a) => ({
@@ -816,8 +817,10 @@ export function App() {
     if (hadAttachment) {
       lifecycle.removeSlot(removeContext);
     }
-    // 过期上下文时该 id 已随切换清空，过滤是幂等 no-op。
-    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+    // 过期回调不得触碰当前输入区 state（即使 UUID 过滤通常为 no-op）。
+    if (!lifecycle.isStale(removeContext)) {
+      setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+    }
   }
 
   async function interruptChain() {

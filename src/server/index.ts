@@ -30,6 +30,7 @@ import { isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { buildAttachmentHeaders } from "./attachment-response.ts";
+import { resolveMessageTarget } from "./message-target.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { serveStatic } from "./static-server.ts";
@@ -1509,6 +1510,10 @@ function wait(ms: number): Promise<void> {
 // --- Helpers ---
 
 async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  // 请求入口一次性快照 active 指针：读取请求体、提交附件或任何后续 await
+  // 期间切换会话，都不会改变本条消息按入口时刻会话的归属（PR #147 M1）。
+  const entryActiveWorkspaceId = activeWorkspaceId;
+  const entryActiveConversationId = activeConversationId;
   const input = (await readJson(req)) as {
     content?: unknown;
     workspaceId?: unknown;
@@ -1524,45 +1529,49 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  // 目标会话优先取请求快照（PR #147 M1）：请求体传输或附件提交的 await
-  // 期间切换会话，不会改变本条消息的归属。缺省回退全局 active 指针。
-  const requestedWorkspaceId = typeof input.workspaceId === "string" ? input.workspaceId : "";
-  const requestedConversationId = typeof input.conversationId === "string" ? input.conversationId : "";
-  const workspaceId = requestedWorkspaceId || activeWorkspaceId;
-
-  if (!workspaceId) {
-    sendJson(res, 409, { ok: false, message: "Create or select a workspace before sending a message." });
-    return;
-  }
-  if (requestedWorkspaceId && !workspaceStore.get(requestedWorkspaceId)) {
-    sendJson(res, 404, { ok: false, message: "Workspace not found." });
-    return;
-  }
-  if (requestedConversationId && !conversationStore.get(workspaceId, requestedConversationId)) {
-    sendJson(res, 404, { ok: false, message: "Conversation not found." });
+  const target = resolveMessageTarget(
+    input,
+    { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
+    {
+      workspace: (workspaceId) => Boolean(workspaceStore.get(workspaceId)),
+      conversation: (workspaceId, conversationId) => Boolean(conversationStore.get(workspaceId, conversationId)),
+    },
+  );
+  if (!target.ok) {
+    sendJson(res, target.status, { ok: false, message: target.message });
     return;
   }
 
-  let conversation = requestedConversationId || activeConversationId
-    ? conversationStore.get(workspaceId, requestedConversationId || activeConversationId)
+  let conversation = target.conversationId
+    ? conversationStore.get(target.workspaceId, target.conversationId)
     : null;
-  let context = conversation ? (contextMap.get(contextKey(workspaceId, conversation.id)) ?? null) : null;
+  let context: ConversationContext | null;
 
-  if (!context) {
-    conversation = conversationStore.create(workspaceId, conversationTitle(content));
-    conversationStore.touchLastOpened(workspaceId, conversation.id);
-    context = getOrCreateContext(workspaceId, conversation.id);
-    // 新会话仅在发送时仍无 active 会话且未切换工作区时成为 active，
+  if (conversation) {
+    // 目标会话存在（显式指定或入口快照）：context 被 LRU 回收时恢复，
+    // 绝不为已存在的会话新建（PR #147 M1）。
+    context = getOrCreateContext(target.workspaceId, conversation.id);
+  } else {
+    // 无目标会话：合法的首条消息场景，仅在解析出的工作区内新建。
+    conversation = conversationStore.create(target.workspaceId, conversationTitle(content));
+    conversationStore.touchLastOpened(target.workspaceId, conversation.id);
+    context = getOrCreateContext(target.workspaceId, conversation.id);
+    // 新会话仅在入口快照就是「无 active 会话」且工作区未变时成为 active，
     // 避免把用户从发送期间切到的会话拽回（PR #147 M1）。
-    if (workspaceId === activeWorkspaceId && !activeConversationId) {
+    if (target.workspaceId === entryActiveWorkspaceId && !entryActiveConversationId) {
       activeConversationId = conversation.id;
       activeConversation = toActiveConversation(conversation);
-      saveLastActive(workspaceId, conversation.id);
+      saveLastActive(target.workspaceId, conversation.id);
     }
     publishContextSwitched();
-  } else if (conversation && conversation.name === UNTITLED_CONVERSATION_NAME && conversation.id === activeConversationId) {
-    conversation = conversationStore.update(workspaceId, conversation.id, { name: conversationTitle(content) });
-    activeConversation = toActiveConversation(conversation);
+  }
+
+  // 未命名会话收到首条消息时按内容命名；仅当目标会话即入口快照会话。
+  if (conversation.name === UNTITLED_CONVERSATION_NAME && conversation.id === entryActiveConversationId) {
+    conversation = conversationStore.update(target.workspaceId, conversation.id, { name: conversationTitle(content) });
+    if (conversation.id === activeConversationId) {
+      activeConversation = toActiveConversation(conversation);
+    }
     publishContextSwitched();
   }
 
@@ -1588,7 +1597,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     }
     try {
       attachments = await attachmentStore.commitDrafts({
-        workspaceId,
+        workspaceId: target.workspaceId,
         conversationId: conversation.id,
         draftAttachments,
       });

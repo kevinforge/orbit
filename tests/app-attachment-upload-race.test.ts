@@ -295,6 +295,10 @@ describe("App composer wiring for upload races", () => {
         sendMatch[0].includes("conversationId: sendContext.conversationId"),
       "the message request must carry the captured workspace/conversation ids",
     );
+    assert.ok(
+      sendMatch[0].includes("sendContext.conversationId ? { conversationId: sendContext.conversationId } : {}"),
+      "an empty conversation id must be omitted so the server treats it as first-message, not rejected",
+    );
 
     const removeMatch = appSource.match(/async function removePendingAttachment\([\s\S]*?\n  \}/)!;
     assert.ok(
@@ -304,6 +308,12 @@ describe("App composer wiring for upload races", () => {
     assert.ok(
       removeMatch[0].includes("lifecycle.removeSlot(removeContext)"),
       "slot release on delete must flow through the captured context",
+    );
+    const guardIndex = removeMatch[0].indexOf("lifecycle.isStale(removeContext)");
+    const filterIndex = removeMatch[0].indexOf("setPendingAttachments");
+    assert.ok(
+      guardIndex > 0 && filterIndex > guardIndex,
+      "the composer-state filter must only run for a non-stale delete context",
     );
   });
 });
