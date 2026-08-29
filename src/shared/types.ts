@@ -185,6 +185,20 @@ export type AgentConfigWithModelState = AgentConfig & {
   modelProbe?: AgentModelProbeState;
 };
 
+/**
+ * 设置页可以在保存员工配置前切换 runtime，因此模型探测结果不能只依附于
+ * 服务端已保存的 AgentConfig。target 单独描述本次实际探测的员工和 runtime。
+ */
+export type AgentModelProbeResponse = {
+  configs: AgentConfigWithModelState[];
+  target?: {
+    agentId: AgentId;
+    runtimeKind: AgentRuntimeKind;
+    modelState: AgentModelStateSnapshot | null;
+    modelProbe: AgentModelProbeState;
+  };
+};
+
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
 
 export type AgentState = {

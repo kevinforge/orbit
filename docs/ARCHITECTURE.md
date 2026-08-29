@@ -107,6 +107,11 @@ model selection through ACP session config options. The flow is:
    distinct runtime and reads `session/new` config options without sending a
    prompt. The temporary connection is destroyed after discovery and does not
    create an Orbit employee session or conversation record.
+- A manual refresh is scoped to the employee id and runtime currently selected
+   in the settings form, so it also works before a runtime change or a newly
+   added employee has been saved. The response carries this target snapshot
+   separately from the persisted agent configs; the UI merges only model state
+   and keeps all unsaved form edits.
 
 1. On connection initialization Orbit declares the `session.configOptions`
    client capability. New, resumed, and restored sessions return the runtime's

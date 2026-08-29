@@ -3,7 +3,7 @@ import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelProbeResponse, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
 import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
@@ -2853,21 +2853,22 @@ function AgentManagerPanel({
       .catch(() => setTeamTemplates([]));
   }, []);
 
-  async function probeModels(force = false, runtime?: AgentRuntimeKind) {
+  async function probeModels(force = false, runtime?: AgentRuntimeKind, agentId?: AgentId) {
     if (isProbingModels) return;
     setIsProbingModels(true);
     try {
       const params = new URLSearchParams();
       if (force) params.set("force", "1");
       if (runtime) params.set("runtime", runtime);
+      if (agentId) params.set("agentId", agentId);
       const query = params.toString();
       const response = await fetch(`/api/agents/probe-models${query ? `?${query}` : ""}`, { method: "POST" });
       if (!response.ok) {
         setError("获取模型列表失败，请稍后重试。");
         return;
       }
-      const probedConfigs = await response.json() as AgentConfigWithModelState[];
-      setConfigs((current) => mergeProbedConfigs(current, probedConfigs));
+      const probeResponse = await response.json() as AgentModelProbeResponse;
+      setConfigs((current) => mergeModelProbeResponse(current, probeResponse));
     } catch {
       setError("获取模型列表失败，请检查本地运行时是否可用。");
     } finally {
@@ -3135,7 +3136,7 @@ function AgentManagerPanel({
                           snapshot={modelSnapshot}
                           probe={modelProbe}
                           onChange={(patch) => updateConfig(i, patch)}
-                          onRefreshModels={() => void probeModels(true, config.runtime)}
+                          onRefreshModels={() => void probeModels(true, config.runtime, config.id)}
                           isRefreshing={isProbingModels}
                         />
                         <div className="fieldWithHint fieldFullWidth">
@@ -3248,6 +3249,24 @@ export function mergeProbedConfigs(
     }),
     ...current.filter((config) => !probedIds.has(config.id)),
   ];
+}
+
+export function mergeModelProbeResponse(
+  current: AgentConfigWithModelState[],
+  response: AgentModelProbeResponse,
+): AgentConfigWithModelState[] {
+  const merged = mergeProbedConfigs(current, response.configs);
+  const target = response.target;
+  if (!target) return merged;
+  return merged.map((config) => (
+    config.id === target.agentId && config.runtime === target.runtimeKind
+      ? {
+          ...config,
+          modelState: target.modelState ?? undefined,
+          modelProbe: target.modelProbe,
+        }
+      : config
+  ));
 }
 
 function MarkdownContent({ content }: { content: string }) {
