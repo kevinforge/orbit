@@ -69,6 +69,7 @@ export class ConversationContext {
   private _supervisionRuntime?: AgentRuntimeKind;
   private readonly eventBus: EventBus;
   private readonly unsubscribe: () => void;
+  private messageMutationTail: Promise<void> = Promise.resolve();
 
   constructor(private options: ConversationContextOptions) {
     const { workspaceId, conversationId, profiles, eventBus, sessionStore, workspaceStore } = options;
@@ -103,6 +104,7 @@ export class ConversationContext {
 
     this.unsubscribe = eventBus.subscribe((event) => {
       // Only process events belonging to this conversation
+      if ("workspaceId" in event && event.workspaceId !== undefined && event.workspaceId !== workspaceId) return;
       if ("conversationId" in event && event.conversationId !== conversationId) return;
       if ((event as { type: string }).type === "terminal.chunk") {
         const e = event as { agentId: string; text: string };
@@ -111,7 +113,7 @@ export class ConversationContext {
     });
 
     const activeProfiles = this.buildActiveProfiles(this._profiles);
-    this.agents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId, undefined, options.modelState);
+    this.agents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId, undefined, options.modelState, workspaceId);
     this.agents.startAll();
 
     const agentIds = this.agents.ids();
@@ -119,6 +121,7 @@ export class ConversationContext {
     const self = this;
     this.runManager = new RunManager({
       conversationId,
+      workspaceId,
       agents: this.agents,
       messages: this.messages,
       eventBus,
@@ -139,11 +142,25 @@ export class ConversationContext {
       this.messages,
       eventBus,
       this.channelProfiles(),
+      workspaceId,
     );
   }
 
   hasRunningAgent(): boolean {
     return this.agents.hasRunningAgent();
+  }
+
+  /** Serialize message intake for this conversation, including async attachment commits. */
+  async withMessageMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.messageMutationTail;
+    let release!: () => void;
+    this.messageMutationTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   hasRunningOrQueued(): boolean {
@@ -177,7 +194,7 @@ export class ConversationContext {
 
     const { workspaceId, conversationId, eventBus, sessionStore } = this.options;
     const activeProfiles = this.buildActiveProfiles(profiles);
-    const newAgents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId, undefined, this.options.modelState);
+    const newAgents = new AgentRegistry(activeProfiles, eventBus, sessionStore, conversationId, undefined, this.options.modelState, this.options.workspaceId);
     newAgents.startAll();
 
     this._profiles = profiles.filter((profile) => !profile.internal);
@@ -188,6 +205,7 @@ export class ConversationContext {
 
     const newRunManager = new RunManager({
       conversationId,
+      workspaceId: this.options.workspaceId,
       agents: newAgents,
       messages: this.messages,
       eventBus,
@@ -208,6 +226,7 @@ export class ConversationContext {
       this.messages,
       eventBus,
       this.channelProfiles(activeProfiles),
+      this.options.workspaceId,
     );
 
     // Replace mutable fields via Object.assign (intentional hot-swap)
@@ -324,6 +343,7 @@ export class ConversationContext {
       this.messages,
       this.eventBus,
       profiles,
+      this.options.workspaceId,
     );
   }
 

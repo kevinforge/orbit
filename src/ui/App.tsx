@@ -3,7 +3,7 @@ import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelProbeResponse, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
@@ -61,6 +61,30 @@ const initialState: AppState = {
 type ActiveView = "conversation" | "analysis";
 const ACTIVE_VIEW_STORAGE_KEY = "orbit.activeView";
 const APPROVAL_MODE_STORAGE_KEY = "orbit.approvalMode";
+
+export type PageContext = { workspaceId: string; conversationId: string };
+
+export function readPageContext(search: string): PageContext {
+  const params = new URLSearchParams(search);
+  return {
+    workspaceId: params.get("workspaceId") ?? "",
+    conversationId: params.get("conversationId") ?? "",
+  };
+}
+
+function pageContextQuery(context: PageContext): string {
+  const params = new URLSearchParams();
+  if (context.workspaceId) params.set("workspaceId", context.workspaceId);
+  if (context.conversationId) params.set("conversationId", context.conversationId);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function withPageContext(path: string, context: PageContext): string {
+  const separator = path.includes("?") ? "&" : "?";
+  const query = pageContextQuery(context).slice(1);
+  return query ? `${path}${separator}${query}` : path;
+}
 
 export function resolveActiveView(storedView: string | null): ActiveView {
   return storedView === "analysis" ? "analysis" : "conversation";
@@ -151,6 +175,18 @@ export function App() {
   const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
   const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
   const isNearBottomRef = useRef(true);
+  const stateRequestVersionRef = useRef(0);
+  const sseLastEventIdRef = useRef(0);
+  // 同一份草稿在失败重试时必须复用同一个 clientMessageId，
+  // 否则服务端按 id 去重的幂等保护失效，重试会重复落库。
+  // 但 id 必须与草稿内容绑定：内容改过之后要换新 id，否则服务端按旧 id 去重直接返回成功，
+  // 新内容其实从未送达，用户却以为发送成功了。
+  const draftMessageIdRef = useRef<{ id: string; content: string } | null>(null);
+
+  const currentPageContext = (): PageContext => ({
+    workspaceId: state.workspace.id,
+    conversationId: state.conversation.id,
+  });
 
   useEffect(() => {
     try {
@@ -203,10 +239,17 @@ export function App() {
       setConversationsByWorkspace((prev) => ({ ...prev, ...byWs }));
     });
   };
-  const refreshState = () => {
-    fetch("/api/state")
+  const refreshState = (requestedContext: PageContext = currentPageContext()) => {
+    const requestVersion = ++stateRequestVersionRef.current;
+    fetch(withPageContext("/api/state", requestedContext))
       .then((r) => r.json())
-      .then((nextState: AppState) => setState(normalizeState(nextState)))
+      .then((nextState: AppState) => {
+        const pageContext = typeof window === "undefined" ? requestedContext : readPageContext(window.location.search);
+        if (requestVersion !== stateRequestVersionRef.current
+          || pageContext.workspaceId !== requestedContext.workspaceId
+          || pageContext.conversationId !== requestedContext.conversationId) return;
+        setState(normalizeState(nextState));
+      })
       .catch(() => setConnectionState("offline"));
   };
 
@@ -230,38 +273,48 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/state")
+    const initialContext = typeof window === "undefined" ? { workspaceId: "", conversationId: "" } : readPageContext(window.location.search);
+    const requestVersion = ++stateRequestVersionRef.current;
+    fetch(withPageContext("/api/state", initialContext))
       .then((response) => {
-        if (!response.ok) {
-          throw new Error(`State request failed: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`State request failed: ${response.status}`);
         return response.json();
       })
       .then((nextState: AppState) => {
-        if (!cancelled) {
+        const pageContext = typeof window === "undefined" ? initialContext : readPageContext(window.location.search);
+        if (!cancelled && requestVersion === stateRequestVersionRef.current
+          && pageContext.workspaceId === initialContext.workspaceId
+          && pageContext.conversationId === initialContext.conversationId) {
           setState(normalizeState(nextState));
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          setConnectionState("offline");
-        }
+        if (!cancelled) setConnectionState("offline");
       });
 
-    const events = new EventSource("/events");
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Each browser tab subscribes only to its current page context. Switching
+  // pages changes the URL and this effect replaces the old subscription.
+  useEffect(() => {
+    if (!state.workspace.id) return;
+    sseLastEventIdRef.current = 0;
+    const events = new EventSource(withPageContext("/events", currentPageContext()));
     events.onopen = () => setConnectionState("live");
     events.onerror = () => setConnectionState("offline");
     events.onmessage = (message) => {
       try {
+        const sequence = Number(message.lastEventId);
+        if (Number.isFinite(sequence) && sequence > 0) {
+          if (sequence <= sseLastEventIdRef.current) return;
+          sseLastEventIdRef.current = sequence;
+        }
         const event = JSON.parse(message.data) as RuntimeEvent;
-        if (event.type === "context.switched") {
-          // Full state re-fetch on context switch
-          fetch("/api/state")
-            .then((r) => r.json())
-            .then((nextState: AppState) => {
-              if (!cancelled) setState(normalizeState(nextState));
-            })
-            .catch(() => {});
+        if (event.type === "events.gap") {
+          refreshState();
           return;
         }
         setState((current) => applyEvent(current, event));
@@ -269,11 +322,25 @@ export function App() {
         setConnectionState("offline");
       }
     };
+    return () => events.close();
+  }, [state.workspace.id, state.conversation.id]);
 
-    return () => {
-      cancelled = true;
-      events.close();
+  useEffect(() => {
+    if (!state.workspace.id) return;
+    const next = pageContextQuery(currentPageContext());
+    if (typeof window !== "undefined" && window.location.search !== next) {
+      window.history.replaceState(null, "", `${window.location.pathname}${next}${window.location.hash}`);
+    }
+  }, [state.workspace.id, state.conversation.id]);
+
+  // 浏览器前进/后退只改地址栏，state 不会自动跟随。必须按新的页面上下文重新拉状态，
+  // 否则 UI 与地址栏脱节，后续 refreshState 的上下文校验还会把新结果当成过期响应丢弃。
+  useEffect(() => {
+    const handlePopState = () => {
+      refreshState(readPageContext(window.location.search));
     };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   // Load workspace and conversation lists
@@ -501,10 +568,15 @@ export function App() {
     }
 
     setIsSending(true);
+    const requestedContext = currentPageContext();
+    if (!draftMessageIdRef.current || draftMessageIdRef.current.content !== trimmed) {
+      draftMessageIdRef.current = { id: crypto.randomUUID(), content: trimmed };
+    }
     try {
-      const body: { content: string; approvalMode: ApprovalMode; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
+      const body: { content: string; approvalMode: ApprovalMode; clientMessageId: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
         content: trimmed,
         approvalMode,
+        clientMessageId: draftMessageIdRef.current.id,
       };
       if (pendingAttachments.length > 0) {
         body.draftAttachments = pendingAttachments.map((a) => ({
@@ -514,7 +586,7 @@ export function App() {
           size: a.size,
         }));
       }
-      const response = await fetch("/api/messages", {
+      const response = await fetch(withPageContext("/api/messages", requestedContext), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -524,6 +596,26 @@ export function App() {
         throw new Error(`Message request failed: ${response.status}`);
       }
 
+      const sent = await response.json() as { conversationId?: string };
+      const sentConversationId = typeof sent.conversationId === "string" ? sent.conversationId : "";
+      const pageContext = readPageContext(window.location.search);
+      const stillOnSamePage = pageContext.workspaceId === requestedContext.workspaceId
+        && (!pageContext.conversationId || pageContext.conversationId === requestedContext.conversationId);
+      // 无会话页面发送时服务端会顺带建会话，客户端必须采用这个 id：
+      // 否则事件 conversationId 与 state.conversation.id 不匹配而被 applyEvent 丢弃，
+      // 首条消息及其回复都不可见，且之后每条消息都会再新建一个会话。
+      if (sentConversationId && sentConversationId !== requestedContext.conversationId && stillOnSamePage) {
+        const nextContext = { workspaceId: requestedContext.workspaceId, conversationId: sentConversationId };
+        // 先同步地址栏：refreshState 校验地址栏与请求上下文是否一致，
+        // 请求晚于 URL 更新会被当成过期响应丢弃。
+        window.history.replaceState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
+        setState((current) => ({ ...current, conversation: { ...current.conversation, id: sentConversationId } }));
+        refreshConversations();
+        // 首条消息的 created 事件可能在会话 id 落地前送达并被丢弃，补一次全量拉取兜底。
+        refreshState(nextContext);
+      }
+
+      draftMessageIdRef.current = null;
       setContent("");
       setPendingAttachments([]);
       isNearBottomRef.current = true;
@@ -545,6 +637,7 @@ export function App() {
     if (isSwitchingInteractionMode || mode === interactionMode) return;
     setIsSwitchingInteractionMode(true);
     const label = interactionModeLabel(mode);
+    const targetWorkspaceId = state.workspace.id;
     try {
       // 复杂协作需要监工运行时：优先沿用会话已记录的运行时，否则按可用性选择
       const runtime = mode === "supervised"
@@ -554,25 +647,33 @@ export function App() {
       // 首次对话还没有会话：先创建一个会话，再切换模式，保证菜单在首条消息前即可使用
       let conversationId = state.conversation.id;
       if (!conversationId) {
-        if (!state.workspace.id) throw new Error("请先选择或创建工作区。");
-        const createResponse = await fetch(`/api/conversations?workspaceId=${encodeURIComponent(state.workspace.id)}`, {
+        if (!targetWorkspaceId) throw new Error("请先选择或创建工作区。");
+        const createResponse = await fetch(withPageContext("/api/conversations", { workspaceId: targetWorkspaceId, conversationId: "" }), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
         });
         const created = await createResponse.json() as { id?: string; message?: string };
         if (!createResponse.ok || !created.id) throw new Error(created.message ?? "创建会话失败。");
+        if (readPageContext(window.location.search).workspaceId !== targetWorkspaceId) return;
         conversationId = created.id;
+        window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery({ workspaceId: targetWorkspaceId, conversationId })}${window.location.hash}`);
         refreshConversations();
       }
 
-      const response = await fetch(`/api/conversations/${conversationId}/interaction-mode`, {
+      const targetContext = { workspaceId: targetWorkspaceId, conversationId };
+      const currentPage = readPageContext(window.location.search);
+      if (currentPage.workspaceId !== targetContext.workspaceId
+        || (currentPage.conversationId && currentPage.conversationId !== targetContext.conversationId)) return;
+      const response = await fetch(withPageContext(`/api/conversations/${conversationId}/interaction-mode`, targetContext), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(runtime ? { mode, runtime } : { mode }),
       });
       const body = await response.json() as { conversation?: ConversationInfo; message?: string };
       if (!response.ok || !body.conversation) throw new Error(body.message ?? `${label}切换失败`);
+      const pageContext = readPageContext(window.location.search);
+      if (pageContext.workspaceId !== targetContext.workspaceId || pageContext.conversationId !== targetContext.conversationId) return;
       setState((current) => ({ ...current, conversation: body.conversation! }));
     } catch (error) {
       setState((current) => ({ ...current, messages: [...current.messages, createLocalSystemMessage(error instanceof Error ? error.message : `${label}切换失败`)] }));
@@ -585,10 +686,10 @@ export function App() {
     if (resolvingPermissionIds.includes(requestId)) return;
     setResolvingPermissionIds((current) => [...current, requestId]);
     try {
-      const response = await fetch("/api/permissions/resolve", {
+      const response = await fetch(withPageContext("/api/permissions/resolve", currentPageContext()), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId, decision }),
+        body: JSON.stringify({ requestId, decision, ...currentPageContext() }),
       });
       if (!response.ok && response.status !== 404) {
         throw new Error(`Permission request failed: ${response.status}`);
@@ -613,10 +714,10 @@ export function App() {
     if (resolvingElicitationIds.includes(requestId)) return;
     setResolvingElicitationIds((current) => [...current, requestId]);
     try {
-      const httpResponse = await fetch("/api/elicitations/resolve", {
+      const httpResponse = await fetch(withPageContext("/api/elicitations/resolve", currentPageContext()), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId, ...response }),
+        body: JSON.stringify({ requestId, ...response, ...currentPageContext() }),
       });
       if (!httpResponse.ok && httpResponse.status !== 404) {
         throw new Error(`Elicitation request failed: ${httpResponse.status}`);
@@ -661,6 +762,7 @@ export function App() {
       return;
     }
 
+    const uploadContext = currentPageContext();
     for (const file of imageFiles.slice(0, maxFiles - pendingAttachments.length)) {
       const reader = new FileReader();
       reader.onload = async () => {
@@ -668,7 +770,7 @@ export function App() {
         if (!base64) return;
 
         try {
-          const response = await fetch("/api/attachments/drafts", {
+          const response = await fetch(withPageContext("/api/attachments/drafts", uploadContext), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -685,7 +787,17 @@ export function App() {
           }
           const result = await response.json();
           if (result.ok && result.attachment) {
-            setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
+            const currentContext = readPageContext(window.location.search);
+            const isCurrentPage = currentContext.workspaceId === uploadContext.workspaceId
+              && currentContext.conversationId === uploadContext.conversationId;
+            if (isCurrentPage) {
+              setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
+            } else {
+              // Do not let an upload that started on another page become a
+              // draft for the newly selected conversation.
+              const attachment = result.attachment as DraftAttachmentInfo;
+              void fetch(`/api/attachments/drafts/${uploadContext.workspaceId}/${uploadContext.conversationId}/${attachment.id}?workspaceId=${encodeURIComponent(uploadContext.workspaceId)}&conversationId=${encodeURIComponent(uploadContext.conversationId)}`, { method: "DELETE" });
+            }
           }
         } catch {
           setAttachmentToast("图片上传失败");
@@ -698,7 +810,7 @@ export function App() {
 
   async function removePendingAttachment(id: string) {
     try {
-      await fetch(`/api/attachments/drafts/${state.workspace.id}/${state.conversation.id}/${id}`, {
+      await fetch(`/api/attachments/drafts/${state.workspace.id}/${state.conversation.id}/${id}?workspaceId=${encodeURIComponent(state.workspace.id)}&conversationId=${encodeURIComponent(state.conversation.id)}`, {
         method: "DELETE",
       });
     } catch { /* best effort */ }
@@ -709,7 +821,7 @@ export function App() {
     if (isInterrupting) return;
     setIsInterrupting(true);
     try {
-      const response = await fetch("/api/conversation/interrupt", { method: "POST" });
+      const response = await fetch(withPageContext("/api/conversation/interrupt", currentPageContext()), { method: "POST" });
       if (!response.ok) {
         throw new Error(`Interrupt request failed: ${response.status}`);
       }
@@ -738,7 +850,7 @@ export function App() {
 
     setIsLoadingOlderMessages(true);
     try {
-      const response = await fetch(`/api/messages?before=${encodeURIComponent(cursor)}&limit=50`);
+      const response = await fetch(withPageContext(`/api/messages?before=${encodeURIComponent(cursor)}&limit=50`, requestContext));
       if (!response.ok) {
         throw new Error(`Messages request failed: ${response.status}`);
       }
@@ -770,11 +882,19 @@ export function App() {
 
   async function switchWorkspace(workspaceId: string) {
     if (workspaceId === state.workspace.id) return;
-    const response = await fetch(`/api/workspaces/${workspaceId}/switch`, { method: "POST" });
+    const nextContext = { workspaceId, conversationId: "" };
+    window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
+    const requestVersion = ++stateRequestVersionRef.current;
+    const response = await fetch(withPageContext("/api/state", nextContext));
     if (!response.ok) return;
     refreshWorkspaces();
     refreshConversations();
-    refreshState();
+    const nextState = await response.json() as AppState;
+    const pageContext = readPageContext(window.location.search);
+    if (requestVersion !== stateRequestVersionRef.current
+      || pageContext.workspaceId !== nextContext.workspaceId
+      || pageContext.conversationId !== nextContext.conversationId) return;
+    setState(normalizeState(nextState));
   }
 
   function handleWorkspaceClick(workspaceId: string) {
@@ -873,35 +993,59 @@ export function App() {
   async function deleteWorkspace(workspace: Workspace) {
     if (!confirm(`Delete workspace "${workspace.name}"?`)) return;
     const response = await fetch(`/api/workspaces/${workspace.id}`, { method: "DELETE" });
-      if (response.ok) {
-        setOpenWorkspaceMenuId(null);
-        setExpandedWorkspaceIds((ids) => {
-          const next = new Set(ids);
-          next.delete(workspace.id);
-          return next;
-        });
-        refreshWorkspaces();
-        refreshConversations();
-        refreshState();
-      }
+    if (!response.ok) return;
+    setOpenWorkspaceMenuId(null);
+    setExpandedWorkspaceIds((ids) => {
+      const next = new Set(ids);
+      next.delete(workspace.id);
+      return next;
+    });
+    const isCurrentPage = readPageContext(window.location.search).workspaceId === workspace.id;
+    refreshWorkspaces();
+    if (!isCurrentPage) {
+      refreshConversations();
+      return;
     }
+
+    // The deleted page context is no longer valid. Let the server choose the
+    // next available workspace, then publish that choice in this tab's URL.
+    window.history.pushState(null, "", `${window.location.pathname}${window.location.hash}`);
+    const requestVersion = ++stateRequestVersionRef.current;
+    const nextStateResponse = await fetch("/api/state");
+    if (!nextStateResponse.ok || requestVersion !== stateRequestVersionRef.current) return;
+    const nextState = normalizeState(await nextStateResponse.json() as AppState);
+    if (nextState.workspace.id) {
+      window.history.replaceState(null, "", `${window.location.pathname}${pageContextQuery({ workspaceId: nextState.workspace.id, conversationId: nextState.conversation.id })}${window.location.hash}`);
+    }
+    setState(nextState);
+    refreshConversations();
+  }
 
   async function switchConversation(conversationId: string, targetWorkspaceId?: string) {
     // Always return to the conversation view when a conversation is clicked,
     // even if it is already the active one (e.g. returning from 协作洞察).
     // The guard below only skips the redundant /switch request.
     setActiveView("conversation");
-    if (conversationId === state.conversation.id) return;
-    const wsParam = targetWorkspaceId && targetWorkspaceId !== state.workspace.id ? `?workspaceId=${targetWorkspaceId}` : "";
-    const response = await fetch(`/api/conversations/${conversationId}/switch${wsParam}`, { method: "POST" });
+    const workspaceId = targetWorkspaceId || state.workspace.id;
+    if (conversationId === state.conversation.id) {
+      if (workspaceId === state.workspace.id) return;
+    }
+    const nextContext = { workspaceId, conversationId };
+    window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
+    const requestVersion = ++stateRequestVersionRef.current;
+    const response = await fetch(withPageContext("/api/state", nextContext));
     if (!response.ok) return;
     refreshConversations();
-    refreshState();
+    const nextState = await response.json() as AppState;
+    const pageContext = readPageContext(window.location.search);
+    if (requestVersion !== stateRequestVersionRef.current
+      || pageContext.workspaceId !== nextContext.workspaceId
+      || pageContext.conversationId !== nextContext.conversationId) return;
+    setState(normalizeState(nextState));
   }
 
   async function createConversation(workspaceId: string) {
-    const wsParam = workspaceId !== state.workspace.id ? `?workspaceId=${workspaceId}` : "";
-    const response = await fetch(`/api/conversations${wsParam}`, {
+    const response = await fetch(withPageContext("/api/conversations", { workspaceId, conversationId: "" }), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -914,8 +1058,16 @@ export function App() {
       next.add(workspaceId);
       return next;
     });
+    const conversation = await response.json() as Conversation;
+    const nextContext = { workspaceId, conversationId: conversation.id };
+    window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
     refreshConversations();
-    refreshState();
+    const requestVersion = ++stateRequestVersionRef.current;
+    const stateResponse = await fetch(withPageContext("/api/state", nextContext));
+    if (!stateResponse.ok || requestVersion !== stateRequestVersionRef.current) return;
+    const pageContext = readPageContext(window.location.search);
+    if (pageContext.workspaceId !== nextContext.workspaceId || pageContext.conversationId !== nextContext.conversationId) return;
+    setState(normalizeState(await stateResponse.json() as AppState));
   }
 
   async function renameConversation(conversationId: string, name: string, workspaceId?: string) {
@@ -925,8 +1077,7 @@ export function App() {
       setEditingConversationName("");
       return;
     }
-    const wsParam = workspaceId && workspaceId !== state.workspace.id ? `?workspaceId=${workspaceId}` : "";
-    const response = await fetch(`/api/conversations/${conversationId}${wsParam}`, {
+    const response = await fetch(withPageContext(`/api/conversations/${conversationId}`, { workspaceId: workspaceId || state.workspace.id, conversationId }), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: trimmed }),
@@ -935,7 +1086,7 @@ export function App() {
     setEditingConversationId(null);
     setEditingConversationName("");
     refreshConversations();
-    refreshState();
+    if ((workspaceId || state.workspace.id) === state.workspace.id && conversationId === state.conversation.id) refreshState();
   }
 
   async function deleteConversation(conversation: Conversation) {
@@ -944,7 +1095,24 @@ export function App() {
     if (response.ok) {
       setOpenConversationMenuId(null);
       refreshConversations();
-      refreshState();
+      if (conversation.workspaceId === state.workspace.id && conversation.id === state.conversation.id) {
+        const response = await fetch(`/api/workspaces/${conversation.workspaceId}/conversations`);
+        const conversations = response.ok ? await response.json() as Conversation[] : [];
+        const nextConversation = conversations[0];
+        const nextContext = {
+          workspaceId: conversation.workspaceId,
+          conversationId: nextConversation?.id ?? "",
+        };
+        window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
+        const requestVersion = ++stateRequestVersionRef.current;
+        const stateResponse = await fetch(withPageContext("/api/state", nextContext));
+        if (stateResponse.ok && requestVersion === stateRequestVersionRef.current) {
+          const pageContext = readPageContext(window.location.search);
+          if (pageContext.workspaceId === nextContext.workspaceId && pageContext.conversationId === nextContext.conversationId) {
+            setState(normalizeState(await stateResponse.json() as AppState));
+          }
+        }
+      }
     }
   }
 
@@ -1561,6 +1729,7 @@ export function App() {
         <WorkspaceConfigPanel
           onClose={() => setShowWorkspaceConfig(false)}
           hasWorkspace={hasWorkspace}
+          workspaceId={state.workspace.id}
           presets={workspacePresets}
         />
       ) : null}
@@ -1588,6 +1757,7 @@ export function App() {
       ) : null}
       {showAgentManager ? (
         <AgentManagerPanel
+          workspaceId={state.workspace.id}
           focusedAgentId={focusedAgentId}
           onClose={() => { setShowAgentManager(false); setFocusedAgentId(null); }}
           onSaved={() => { setShowAgentManager(false); setFocusedAgentId(null); window.location.reload(); }}
@@ -2477,7 +2647,7 @@ function PresetCard({ preset, selected, onClick }: { preset: WorkspacePreset; se
 }
 
 // Workspace-level config - prompt and rules
-function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () => void; hasWorkspace: boolean; presets: WorkspacePreset[] }) {
+function WorkspaceConfigPanel({ onClose, hasWorkspace, workspaceId, presets }: { onClose: () => void; hasWorkspace: boolean; workspaceId: string; presets: WorkspacePreset[] }) {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [rules, setRules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2489,7 +2659,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
       setLoading(false);
       return;
     }
-    fetch("/api/workspace-config")
+    fetch(`/api/workspace-config?workspaceId=${encodeURIComponent(workspaceId)}`)
       .then((r) => r.json())
       .then((cfg: { systemPrompt?: string; rules?: string[] }) => {
         setSystemPrompt(cfg.systemPrompt ?? "");
@@ -2497,7 +2667,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [hasWorkspace]);
+  }, [hasWorkspace, workspaceId]);
 
   function applyPreset(presetId: string) {
     const preset = presets.find((p) => p.id === presetId);
@@ -2530,7 +2700,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
     if (!hasWorkspace) return;
     setSaving(true);
     setSavedMsg("");
-    fetch("/api/workspace-config", {
+    fetch(`/api/workspace-config?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2646,6 +2816,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
 
 function AgentManagerPanel({
   onClose,
+  workspaceId,
   onSaved,
   runtimeAvailability,
   focusedAgentId,
@@ -2654,6 +2825,7 @@ function AgentManagerPanel({
   modelStates,
 }: {
   onClose: () => void;
+  workspaceId: string;
   onSaved: () => void;
   runtimeAvailability: AppState["runtimeAvailability"];
   focusedAgentId?: string | null;
@@ -2692,7 +2864,7 @@ function AgentManagerPanel({
   }, [availByRuntime]);
 
   useEffect(() => {
-    fetch("/api/agents")
+    fetch(`/api/agents?workspaceId=${encodeURIComponent(workspaceId)}`)
       .then((r) => r.json())
       .then((data) => { setConfigs(data as AgentConfigWithModelState[]); setLoading(false); })
       .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
@@ -2702,21 +2874,24 @@ function AgentManagerPanel({
       .catch(() => setTeamTemplates([]));
   }, []);
 
-  async function probeModels(force = false, runtime?: AgentRuntimeKind) {
+  async function probeModels(force = false, runtime?: AgentRuntimeKind, agentId?: AgentId) {
     if (isProbingModels) return;
     setIsProbingModels(true);
     try {
       const params = new URLSearchParams();
       if (force) params.set("force", "1");
       if (runtime) params.set("runtime", runtime);
+      if (agentId) params.set("agentId", agentId);
       const query = params.toString();
-      const response = await fetch(`/api/agents/probe-models${query ? `?${query}` : ""}`, { method: "POST" });
+      const paramsWithWorkspace = new URLSearchParams(query);
+      paramsWithWorkspace.set("workspaceId", workspaceId);
+      const response = await fetch(`/api/agents/probe-models?${paramsWithWorkspace.toString()}`, { method: "POST" });
       if (!response.ok) {
         setError("获取模型列表失败，请稍后重试。");
         return;
       }
-      const probedConfigs = await response.json() as AgentConfigWithModelState[];
-      setConfigs((current) => mergeProbedConfigs(current, probedConfigs));
+      const probeResponse = await response.json() as AgentModelProbeResponse;
+      setConfigs((current) => mergeModelProbeResponse(current, probeResponse));
     } catch {
       setError("获取模型列表失败，请检查本地运行时是否可用。");
     } finally {
@@ -2804,7 +2979,7 @@ function AgentManagerPanel({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/agents", {
+      const res = await fetch(`/api/agents?workspaceId=${encodeURIComponent(workspaceId)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(configs),
@@ -2826,7 +3001,7 @@ function AgentManagerPanel({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/agents/reset", { method: "POST" });
+      const res = await fetch(`/api/agents/reset?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "POST" });
       if (!res.ok) {
         setError("重置失败。");
         return;
@@ -2845,7 +3020,7 @@ function AgentManagerPanel({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/agents/apply-team", {
+      const res = await fetch(`/api/agents/apply-team?workspaceId=${encodeURIComponent(workspaceId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teamId }),
@@ -2984,7 +3159,7 @@ function AgentManagerPanel({
                           snapshot={modelSnapshot}
                           probe={modelProbe}
                           onChange={(patch) => updateConfig(i, patch)}
-                          onRefreshModels={() => void probeModels(true, config.runtime)}
+                          onRefreshModels={() => void probeModels(true, config.runtime, config.id)}
                           isRefreshing={isProbingModels}
                         />
                         <div className="fieldWithHint fieldFullWidth">
@@ -3099,6 +3274,24 @@ export function mergeProbedConfigs(
   ];
 }
 
+export function mergeModelProbeResponse(
+  current: AgentConfigWithModelState[],
+  response: AgentModelProbeResponse,
+): AgentConfigWithModelState[] {
+  const merged = mergeProbedConfigs(current, response.configs);
+  const target = response.target;
+  if (!target) return merged;
+  return merged.map((config) => (
+    config.id === target.agentId && config.runtime === target.runtimeKind
+      ? {
+          ...config,
+          modelState: target.modelState ?? undefined,
+          modelProbe: target.modelProbe,
+        }
+      : config
+  ));
+}
+
 function MarkdownContent({ content }: { content: string }) {
   const html = renderMarkdown(content);
   return <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />;
@@ -3114,6 +3307,7 @@ function preferredSupervisionRuntime(availability: AppState["runtimeAvailability
 }
 
 export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
+  if (event.type === "events.gap") return state;
   if (event.type === "running.updated") {
     return { ...state, runningSummaries: event.summaries };
   }
@@ -3142,6 +3336,10 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
       ...state,
       agentModelStates: { ...state.agentModelStates, [event.agentId]: event.modelState },
     };
+  }
+
+  if ("workspaceId" in event && event.workspaceId !== undefined && event.workspaceId !== state.workspace.id) {
+    return state;
   }
 
   // For conversation-scoped events, only process if they match the active conversation

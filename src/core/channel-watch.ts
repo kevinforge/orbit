@@ -30,6 +30,7 @@ export class ChannelWatchService {
     private readonly messages: MessageStore,
     eventBus: EventBus,
     profiles: readonly AgentProfile[],
+    private readonly workspaceId?: string,
   ) {
     this.knownNames = new Set(profiles.map((p) => p.name.toLocaleLowerCase()));
     this.knownNames.add("user"); // @user: is the task-closure signal
@@ -54,6 +55,7 @@ export class ChannelWatchService {
 
     this.unsubscribe = eventBus.subscribe((event) => {
       if (this.disposed) return;
+      if (this.workspaceId && "workspaceId" in event && event.workspaceId !== undefined && event.workspaceId !== this.workspaceId) return;
       if ("conversationId" in event && event.conversationId !== this.conversationId) return;
 
       if (event.type === "message.created") {

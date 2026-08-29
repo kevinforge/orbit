@@ -185,6 +185,20 @@ export type AgentConfigWithModelState = AgentConfig & {
   modelProbe?: AgentModelProbeState;
 };
 
+/**
+ * 设置页可以在保存员工配置前切换 runtime，因此模型探测结果不能只依附于
+ * 服务端已保存的 AgentConfig。target 单独描述本次实际探测的员工和 runtime。
+ */
+export type AgentModelProbeResponse = {
+  configs: AgentConfigWithModelState[];
+  target?: {
+    agentId: AgentId;
+    runtimeKind: AgentRuntimeKind;
+    modelState: AgentModelStateSnapshot | null;
+    modelProbe: AgentModelProbeState;
+  };
+};
+
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
 
 export type AgentState = {
@@ -279,6 +293,8 @@ export type AgentActivityEvent =
 
 export type ChatMessage = {
   id: string;
+  /** Client-generated id used to make message retries idempotent per conversation. */
+  clientMessageId?: string;
   kind: ChatMessageKind;
   agentId?: AgentId;
   content: string;
@@ -395,9 +411,10 @@ export type MessagePage = MessageHistoryState & {
 };
 
 export type RuntimeEvent =
-  | { type: "message.created"; conversationId: string; message: ChatMessage }
+  | { type: "message.created"; workspaceId?: string; conversationId: string; message: ChatMessage }
   | {
       type: "message.updated";
+      workspaceId?: string;
       conversationId: string;
       message: ChatMessage;
       settleTransientActivity?: boolean;
@@ -408,22 +425,22 @@ export type RuntimeEvent =
        */
       excludedAnswerGroup?: string;
     }
-  | { type: "agent.status"; conversationId: string; agentId: AgentId; status: AgentStatus }
-  | { type: "runtime.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
-  | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
-  | { type: "terminal.chunk"; conversationId: string; agentId: AgentId; runId?: string; text: string }
-  | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string; suppressFollowupRouting?: boolean }
-  | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string; interactionMode?: InteractionMode }
-  | { type: "run.cancelled"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
-  | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
-  | { type: "permission.requested"; conversationId: string; permission: PendingPermission }
-  | { type: "permission.resolved"; conversationId: string; requestId: string }
-  | { type: "elicitation.requested"; conversationId: string; elicitation: PendingElicitation }
-  | { type: "elicitation.resolved"; conversationId: string; requestId: string }
+  | { type: "agent.status"; workspaceId?: string; conversationId: string; agentId: AgentId; status: AgentStatus }
+  | { type: "runtime.activity"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
+  | { type: "run.activity"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
+  | { type: "terminal.chunk"; workspaceId?: string; conversationId: string; agentId: AgentId; runId?: string; text: string }
+  | { type: "run.completed"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string; suppressFollowupRouting?: boolean }
+  | { type: "run.failed"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; error: string; interactionMode?: InteractionMode }
+  | { type: "run.cancelled"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
+  | { type: "run.sessionId"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
+  | { type: "permission.requested"; workspaceId?: string; conversationId: string; permission: PendingPermission }
+  | { type: "permission.resolved"; workspaceId?: string; conversationId: string; requestId: string }
+  | { type: "elicitation.requested"; workspaceId?: string; conversationId: string; elicitation: PendingElicitation }
+  | { type: "elicitation.resolved"; workspaceId?: string; conversationId: string; requestId: string }
   | { type: "running.updated"; summaries: RunningSummary[] }
   | { type: "runtime.availability.updated"; availability: RuntimeAvailability[] }
   | { type: "agent.model_state"; workspaceId: string; agentId: AgentId; modelState: AgentModelStateSnapshot }
-  | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
+  | { type: "events.gap"; workspaceId?: string; conversationId?: string };
 
 export type TerminalState = Record<string, string>;
 

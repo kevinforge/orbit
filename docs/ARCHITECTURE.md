@@ -107,6 +107,11 @@ model selection through ACP session config options. The flow is:
    distinct runtime and reads `session/new` config options without sending a
    prompt. The temporary connection is destroyed after discovery and does not
    create an Orbit employee session or conversation record.
+- A manual refresh is scoped to the employee id and runtime currently selected
+   in the settings form, so it also works before a runtime change or a newly
+   added employee has been saved. The response carries this target snapshot
+   separately from the persisted agent configs; the UI merges only model state
+   and keeps all unsaved form edits.
 
 1. On connection initialization Orbit declares the `session.configOptions`
    client capability. New, resumed, and restored sessions return the runtime's
@@ -220,10 +225,10 @@ Each project directory gets its own isolated workspace via `src/core/workspace-s
 
 ## Workspace & Conversation Management
 
-The server keeps one active UI pointer while retaining multiple live conversation contexts through `src/server/conversation-context.ts`:
+The server retains multiple live conversation contexts through `src/server/conversation-context.ts`. Each browser page owns its workspace and conversation through URL query parameters; the server's active pointer is retained only as a compatibility fallback for older clients and restart recovery:
 
 - **ConversationContext**: bundles per-conversation runtime state (MessageStore, TerminalTranscriptStore, AgentRegistry, RunManager, MessageRouter).
-- **Context map**: contexts are keyed by workspace and conversation, created lazily, and retained while users switch elsewhere so work can continue in the background.
+- **Context map**: contexts are keyed by workspace and conversation, created lazily, and retained while pages switch elsewhere so work can continue in the background. Core runtime events carry both identifiers, and SSE subscriptions filter by the page scope.
 - **LRU bound**: up to 10 inactive contexts are retained; idle contexts may be evicted, but contexts with running agents are never evicted.
 - **WorkspaceStore CRUD**: list, create, update, delete workspaces. Deleting a workspace removes its live contexts and persisted data.
 - **ConversationStore**: manages conversation metadata per workspace at `conversations/<workspaceId>/conversations.json`.

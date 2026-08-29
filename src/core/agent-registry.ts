@@ -16,6 +16,7 @@ export class AgentRegistry {
     private readonly conversationId: string,
     private readonly runtimes: ReadonlyMap<AgentRuntime["kind"], AgentRuntime> = DEFAULT_AGENT_RUNTIMES,
     private readonly modelState?: AgentModelStateBridge,
+    private readonly workspaceId?: string,
   ) {
     this.profilesById = [...profiles];
     for (const profile of profiles) {
@@ -34,6 +35,7 @@ export class AgentRegistry {
       eventBus: this.eventBus,
       sessionStore: this.sessionStore,
       conversationId: this.conversationId,
+      workspaceId: this.workspaceId,
       ...(profile.preferredModelId ? { preferredModelId: profile.preferredModelId } : {}),
       ...(this.modelState ? { modelState: this.modelState } : {}),
     }));
