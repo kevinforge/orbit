@@ -140,10 +140,10 @@ test("cancelAgentRuns clears a supervisor queue and active run", async () => {
   assert.equal(active.status, "cancelled");
 });
 
-test("mixed attachments: only image paths reach the runtime, all attachments reach the prompt", async () => {
+test("mixed attachments: the full metadata list reaches the runtime and the prompt intact", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
-  let sentImagePaths: (string[] | undefined) | undefined;
+  let sentAttachments: (readonly MessageAttachment[] | undefined) | undefined;
   let promptedAttachments: unknown;
   const manager = new RunManager({
     conversationId: "test-conv",
@@ -152,8 +152,8 @@ test("mixed attachments: only image paths reach the runtime, all attachments rea
     agents: {
       get() {
         return {
-          send(_runId: string, _prompt: string, imagePaths?: string[]) {
-            sentImagePaths = imagePaths;
+          send(_runId: string, _prompt: string, attachments?: readonly MessageAttachment[]) {
+            sentAttachments = attachments;
             return Promise.resolve({ content: "done" });
           },
           interrupt() { return true; },
@@ -186,7 +186,13 @@ test("mixed attachments: only image paths reach the runtime, all attachments rea
   ];
   manager.enqueue("developer", "work", { ...createSourceMessage(), attachments });
 
-  assert.deepEqual(sentImagePaths, ["/data/shot.png"], "runtime must receive image paths only");
+  // RunManager 不再把附件压扁成 imagePaths：完整元数据（含类型、MIME、
+  // 大小与路径）无损传给 runtime，由 ACP 层决定 image / resource_link。
+  assert.deepEqual(
+    sentAttachments,
+    attachments,
+    "runtime must receive the full attachment metadata list, images and files alike",
+  );
   assert.equal((promptedAttachments as MessageAttachment[]).length, 3, "prompt builder must receive every attachment");
 });
 
@@ -201,7 +207,7 @@ test("propagates the source approval mode to the agent run and result message", 
     agents: {
       get() {
         return {
-          send(_runId, _prompt, _imagePaths, approvalMode) {
+          send(_runId, _prompt, _attachments, approvalMode) {
             receivedMode = approvalMode;
             return Promise.resolve({ content: "done" });
           },

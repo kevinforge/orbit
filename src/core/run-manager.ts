@@ -23,7 +23,7 @@ const MAX_TERMINAL_RUN_INDEX_SIZE = 1024;
 
 type AgentRunner = {
   get(agentId: AgentId): {
-    send(runId: string, prompt: string, imagePaths?: string[], approvalMode?: ApprovalMode): Promise<RunResult>;
+    send(runId: string, prompt: string, attachments?: readonly MessageAttachment[], approvalMode?: ApprovalMode): Promise<RunResult>;
     /** Request runtime cancellation; the runtime may fall back to process termination. */
     interrupt(runId: string): boolean;
   };
@@ -429,11 +429,8 @@ export class RunManager {
 
     this.appendActivity(run, "运行已开始。");
 
-    // Only images go to the runtime as native ACP image blocks; file
-    // attachments (PDF/text/code) travel inside the prompt as local paths.
-    const imagePaths = run.sourceAttachments
-      ?.filter((attachment) => attachment.kind === "image")
-      .map((attachment) => attachment.path);
+    // 完整附件元数据直达 runtime：由 ACP 层按能力决定 image / resource_link，
+    // 不在 RunManager 压扁成图片路径列表（PR #147 M2/M3）。
     // Supervisor prompts describe coordination intent, not the triggering message itself.
     // Keep that source message in conversation history so the supervisor can see the
     // employee result or user request it is expected to coordinate.
@@ -444,7 +441,7 @@ export class RunManager {
       result = this.options.agents.get(run.agentId).send(
         run.id,
         runtimePrompt,
-        imagePaths,
+        run.sourceAttachments,
         run.sourceMessage.approvalMode ?? "ask",
       );
     } catch (error: unknown) {

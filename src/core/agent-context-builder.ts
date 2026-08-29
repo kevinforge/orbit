@@ -219,10 +219,10 @@ function renderHistorySection(history: AgentHistoryEntry[]): string {
   if (history.length === 0) return "";
   const entries = history.map((entry) => {
     let text = `[${entry.sender}]: ${escapeDynamicContent(entry.content)}`;
-    // Add attachment metadata if present (Agent needs the full path to read files)
+    // 历史附件仅标注名称与类型；内容在原消息发出时已通过 ACP 内容块传递。
     if (entry.attachments?.length) {
       const attachLines = entry.attachments.map((a) =>
-        `  [attachment ${a.kind}: ${escapeDynamicContent(a.filename)} -> ${escapeDynamicContent(a.path)}]`);
+        `  [attachment ${a.kind}: ${escapeDynamicContent(a.filename)}]`);
       text += `\n${attachLines.join("\n")}`;
     }
     return text;
@@ -251,9 +251,9 @@ function formatAttachmentSize(size: number): string {
 }
 
 function describeFileAttachment(attachment: Extract<MessageAttachment, { kind: "file" }>): string {
-  const ext = knownAttachmentExtension(attachment.path);
+  const ext = knownAttachmentExtension(attachment.filename);
   const label = (ext ? attachmentExtensionSpec(ext)?.label : undefined) ?? "File";
-  return `${escapeDynamicContent(attachment.filename)} (${label}, ${formatAttachmentSize(attachment.size)}): ${escapeDynamicContent(attachment.path)}`;
+  return `${escapeDynamicContent(attachment.filename)} (${label}, ${formatAttachmentSize(attachment.size)})`;
 }
 
 function renderCurrentAttachmentsSection(attachments: MessageAttachment[], isSupervisor: boolean): string {
@@ -265,7 +265,7 @@ function renderCurrentAttachmentsSection(attachments: MessageAttachment[], isSup
   if (images.length > 0) {
     lines.push("Images:");
     for (const image of images) {
-      lines.push(`- ${escapeDynamicContent(image.filename)}: ${escapeDynamicContent(image.path)}`);
+      lines.push(`- ${escapeDynamicContent(image.filename)} (${image.mimeType}, ${formatAttachmentSize(image.size)})`);
     }
   }
   if (files.length > 0) {
@@ -275,6 +275,8 @@ function renderCurrentAttachmentsSection(attachments: MessageAttachment[], isSup
     }
   }
 
+  // 附件经结构化 ACP 内容块（image / resource_link）随消息传递；提示词只
+  // 保留名称/类型/大小的展示信息，不再注入本地绝对路径（PR #147 M3）。
   const usage = isSupervisor
     ? [
         "Images must be viewed, and file content must be read, before responding to tasks that need it.",
@@ -282,7 +284,7 @@ function renderCurrentAttachmentsSection(attachments: MessageAttachment[], isSup
       ]
     : [
         "You MUST view the images FIRST before responding to tasks that involve them.",
-        "Files are provided as local absolute paths: read them with your file tools when the task needs their content.",
+        "Files are attached to the message as structured content links; open them when the task needs their content.",
       ];
 
   return [

@@ -6,6 +6,7 @@ import type {
   AgentStatus,
   ApprovalMode,
   ElicitationResponse,
+  MessageAttachment,
   PendingElicitation,
   PendingPermission,
   PermissionDecision,
@@ -92,7 +93,7 @@ export class AgentSession {
     }
   }
 
-  send(runId: string, prompt: string, imagePaths?: string[], approvalMode: ApprovalMode = "ask"): Promise<RunResult> {
+  send(runId: string, prompt: string, attachments?: readonly MessageAttachment[], approvalMode: ApprovalMode = "ask"): Promise<RunResult> {
     if (this.activeRun) {
       return Promise.reject(new Error(`${this.id} is already running`));
     }
@@ -105,13 +106,13 @@ export class AgentSession {
       this.options.runtime.kind, this.options.conversationId, this.id,
     );
 
-    return this.executeRun(runId, prompt, runIndex, existingSession?.sessionId ?? undefined, imagePaths, approvalMode)
+    return this.executeRun(runId, prompt, runIndex, existingSession?.sessionId ?? undefined, attachments, approvalMode)
       .catch((error: unknown) => {
         if (this.isResumeFailure(error, existingSession)) {
           this.options.sessionStore.clear(
             this.options.runtime.kind, this.options.conversationId, this.id,
           );
-          return this.executeRun(runId, prompt, runIndex, undefined, imagePaths, approvalMode);
+          return this.executeRun(runId, prompt, runIndex, undefined, attachments, approvalMode);
         }
 
         throw error;
@@ -203,7 +204,7 @@ export class AgentSession {
     prompt: string,
     runIndex: number,
     resumeSessionId?: string,
-    imagePaths?: string[],
+    attachments?: readonly MessageAttachment[],
     approvalMode: ApprovalMode = "ask",
   ): Promise<RunResult> {
     this.setStatus("running");
@@ -215,7 +216,7 @@ export class AgentSession {
       prompt,
       approvalMode,
       resumeSessionId,
-      imagePaths,
+      attachments,
       // 模型偏好（issue #142）：每次运行开始时读最近快照并惰性应用。
       preferredModelId: this.options.preferredModelId,
       lastSessionConfig: this.options.modelState?.load(this.id),

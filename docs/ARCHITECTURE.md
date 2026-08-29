@@ -208,13 +208,20 @@ drafts under `tmp/attachments`; sending a message commits drafts into
 failing the whole message (with drafts preserved and partial copies rolled
 back) when one is missing or a copy fails.
 
-Delivery to runtimes is split by kind in `run-manager.ts`: only images are
-passed to the ACP runtime, which sends them as native `image` content blocks
-when the runtime advertises `promptCapabilities.image` and otherwise falls
-back to a text path list. Files never enter image blocks; all attachments are
-listed with kind, name, and absolute path in the `<current-attachments>`
-section of the agent prompt, marked as untrusted user data that must not be
-executed. The HTTP layer serves images inline and every other kind as a
+Delivery to runtimes keeps the full server-validated attachment metadata
+intact along `run-manager.ts` → `agent-session.ts` → `AgentRuntimeRunOptions.attachments`.
+The shared ACP runtime (`src/core/acp-runtime.ts`) maps it to content blocks:
+images become native `image` blocks when the runtime advertises
+`promptCapabilities.image`; everything else — including images on runtimes
+without that capability, plus PDF/text/code files — travels as `resource_link`
+blocks (an ACP v1 baseline content type, no capability negotiation needed)
+whose URI, name, MIME type, and size come from the committed
+`MessageAttachment` metadata, never from client-supplied values. URIs are
+generated with Node's `pathToFileURL()` so spaces and non-ASCII path segments
+survive on every platform. The `<current-attachments>` section of the agent
+prompt lists attachments with kind, name, and size only — marked as untrusted
+user data that must not be executed — while structured content blocks are the
+primary transport. The HTTP layer serves images inline and every other kind as a
 generic `application/octet-stream` download with `nosniff` (see
 `src/server/attachment-response.ts`).
 

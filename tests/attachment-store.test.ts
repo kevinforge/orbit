@@ -284,6 +284,44 @@ test("commitDrafts returns empty array for empty input", async () => {
   assert.deepEqual(result, []);
 });
 
+// PR #147 M3④：resource_link 的 URI/MIME/文件名/大小必须取自服务端已校验
+// 的永久附件元数据。即使提交请求被篡改（伪造 MIME、谎报大小、携带路径
+// 遍历文件名），进入消息与 ACP 链路的仍是服务端固化的值。
+test("commitDrafts ignores forged client metadata and uses server-validated values", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+  const data = makePdfBuffer(200);
+
+  const draft = await store.saveDraft({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    data,
+    ext: "pdf",
+    filename: "innocent.pdf",
+  });
+
+  const attachments = await store.commitDrafts({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    draftAttachments: [{
+      id: draft.id,
+      // 伪造字段：声明的 MIME、大小与文件名都试图篡改最终元数据。
+      mimeType: "text/html",
+      filename: "../../evil.pdf",
+      size: 1,
+    }],
+  });
+
+  assert.equal(attachments.length, 1);
+  const attachment = attachments[0];
+  assert.equal(attachment.mimeType, "application/pdf", "MIME must come from the stored extension, not the request");
+  assert.equal(attachment.size, data.length, "size must come from the stored file, not the request");
+  assert.equal(attachment.filename, "evil.pdf", "filename must be sanitized: no path segments survive");
+  assert.ok(!attachment.filename.includes("/"));
+  assert.ok(!attachment.filename.includes("\\"), "backslash traversal must not survive either");
+  assert.ok(attachment.path.startsWith(path.join(baseDir, "conversations")), "path must stay inside the server-side store");
+});
+
 test("commitDrafts fails the whole message when a draft is missing", async () => {
   const baseDir = makeTmpDir();
   const store = new AttachmentStore(baseDir);

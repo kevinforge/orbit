@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
+import { pathToFileURL } from "node:url";
 
 import {
   PROTOCOL_VERSION,
@@ -42,6 +43,7 @@ import type {
   AgentModelChoice,
   AgentModelStateSnapshot,
   AgentRuntimeKind,
+  MessageAttachment,
 } from "../shared/types.ts";
 import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunHandle, type AgentRuntimeRunOptions } from "./agent-runtime.ts";
 import { interruptProcessTree } from "./process-tree.ts";
@@ -305,7 +307,7 @@ export function runAcp(
       acceptingUpdates = !forcedCancelled;
       const response = await connection.prompt({
         sessionId: activeSessionId,
-        prompt: buildPromptContent(options.prompt, options.imagePaths, initialized.agentCapabilities),
+        prompt: buildPromptContent(options.prompt, options.attachments, initialized.agentCapabilities),
       });
       acceptingUpdates = false;
 
@@ -661,48 +663,44 @@ function createAcpInitializeRequest(): InitializeRequest {
   } satisfies InitializeRequest;
 }
 
-function buildPromptContent(
+/**
+ * 组装 ACP Prompt 内容块（PR #147 M2/M3）。类型矩阵：
+ * - 图片且 Agent 声明 `promptCapabilities.image`：原生 `image` 块，数据从
+ *   永久附件路径读取，MIME 取服务端固化元数据。
+ * - 其余一切（图片能力关闭时的图片、PDF/文本/代码）：`resource_link`，
+ *   URI、MIME、文件名、大小全部来自服务端已校验的 MessageAttachment，
+ *   本地优先场景用 `file://` URI 指向 `~/.orbit` 下的永久附件。
+ *   `resource_link` 属于 ACP v1 Prompt 基础内容类型，无需能力协商。
+ * 按输入顺序输出，附件元数据绝不信前端原始值。
+ */
+export function buildPromptContent(
   prompt: string,
-  imagePaths: string[] | undefined,
+  attachments: readonly MessageAttachment[] | undefined,
   capabilities: AgentCapabilities | undefined,
 ): ContentBlock[] {
   const blocks: ContentBlock[] = [{ type: "text", text: prompt }];
-  if (!imagePaths?.length) return blocks;
+  if (!attachments?.length) return blocks;
 
-  if (!capabilities?.promptCapabilities?.image) {
+  const imageEnabled = capabilities?.promptCapabilities?.image === true;
+  for (const attachment of attachments) {
+    if (attachment.kind === "image" && imageEnabled) {
+      blocks.push({
+        type: "image",
+        data: fs.readFileSync(attachment.path).toString("base64"),
+        mimeType: attachment.mimeType,
+        uri: pathToFileURL(attachment.path).href,
+      });
+      continue;
+    }
     blocks.push({
-      type: "text",
-      text: `\nAttached image paths:\n${imagePaths.map((imagePath) => `- ${imagePath}`).join("\n")}`,
-    });
-    return blocks;
-  }
-
-  for (const imagePath of imagePaths) {
-    blocks.push({
-      type: "image",
-      data: fs.readFileSync(imagePath).toString("base64"),
-      mimeType: imageMimeType(imagePath),
-      uri: pathToFileUri(imagePath),
+      type: "resource_link",
+      uri: pathToFileURL(attachment.path).href,
+      name: attachment.filename,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
     });
   }
   return blocks;
-}
-
-function imageMimeType(imagePath: string): string {
-  switch (path.extname(imagePath).toLowerCase()) {
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".webp":
-      return "image/webp";
-    default:
-      return "image/png";
-  }
-}
-
-function pathToFileUri(filePath: string): string {
-  const normalized = path.resolve(filePath).replaceAll("\\", "/");
-  return `file://${normalized.startsWith("/") ? "" : "/"}${encodeURI(normalized)}`;
 }
 
 function handleSessionUpdate(
