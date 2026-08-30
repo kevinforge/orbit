@@ -30,7 +30,7 @@ import { isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { buildAttachmentHeaders } from "./attachment-response.ts";
-import { resolveMessageTarget } from "./message-target.ts";
+import { resolveMessageTarget, shouldPromoteNewConversation } from "./message-target.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { serveStatic } from "./static-server.ts";
@@ -1244,19 +1244,28 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/conversations") {
-      const wsId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      // 入口快照先于 readJson 取得；创建会话是显式操作，但读取请求体期间
+      // 用户可能又切换了会话/工作区，写回 active 前必须 compare-and-set。
+      const entryActiveWorkspaceId = activeWorkspaceId;
+      const entryActiveConversationId = activeConversationId;
+      const wsId = url.searchParams.get("workspaceId") || entryActiveWorkspaceId;
       if (!wsId) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before creating a conversation." });
         return;
       }
       const input = (await readJson(req)) as { name?: unknown };
       const name = conversationTitle(typeof input.name === "string" ? input.name : "");
-      // Switch workspace if creating in a different one
-      if (wsId !== activeWorkspaceId) {
-        switchWorkspace(wsId);
+      const conv = conversationStore.create(wsId, name);
+      if (shouldPromoteNewConversation(
+        { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
+        { workspaceId: activeWorkspaceId, conversationId: activeConversationId },
+      )) {
+        // Switch workspace if creating in a different one
+        if (wsId !== activeWorkspaceId) {
+          switchWorkspace(wsId);
+        }
+        activateConversation(conv);
       }
-      const conv = conversationStore.create(activeWorkspaceId, name);
-      activateConversation(conv);
       publishContextSwitched();
       sendJson(res, 200, conv);
       return;
@@ -1556,9 +1565,13 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     conversation = conversationStore.create(target.workspaceId, conversationTitle(content));
     conversationStore.touchLastOpened(target.workspaceId, conversation.id);
     context = getOrCreateContext(target.workspaceId, conversation.id);
-    // 新会话仅在入口快照就是「无 active 会话」且工作区未变时成为 active，
-    // 避免把用户从发送期间切到的会话拽回（PR #147 M1）。
-    if (target.workspaceId === entryActiveWorkspaceId && !entryActiveConversationId) {
+    // Compare-and-set（PR #147 M1）：仅当实时 active 指针仍等于入口快照
+    // （读取请求体期间用户未切换）且新会话建在入口工作区时才写回，
+    // 否则不打断用户已切换到的会话。判定与写回之间无 await 穿插。
+    if (target.workspaceId === entryActiveWorkspaceId && shouldPromoteNewConversation(
+      { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
+      { workspaceId: activeWorkspaceId, conversationId: activeConversationId },
+    )) {
       activeConversationId = conversation.id;
       activeConversation = toActiveConversation(conversation);
       saveLastActive(target.workspaceId, conversation.id);

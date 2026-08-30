@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveMessageTarget } from "../src/server/message-target.ts";
+import { resolveMessageTarget, shouldPromoteNewConversation } from "../src/server/message-target.ts";
 
 /**
  * PR #147 M1 服务端收尾：消息发送目标的解析规则。
@@ -95,6 +95,67 @@ describe("resolveMessageTarget", () => {
   });
 });
 
+describe("shouldPromoteNewConversation (active write-back compare-and-set)", () => {
+  test("promotes the new conversation when the live pointers still match the entry snapshot", () => {
+    // 正向用例：请求处理期间用户未做任何切换（首条消息场景，入口无会话）。
+    assert.equal(
+      shouldPromoteNewConversation(
+        { workspaceId: "ws-a", conversationId: "" },
+        { workspaceId: "ws-a", conversationId: "" },
+      ),
+      true,
+    );
+    // 入口已有会话的场景（创建会话端点）：无切换同样写回。
+    assert.equal(
+      shouldPromoteNewConversation(
+        { workspaceId: "ws-a", conversationId: "conv-old" },
+        { workspaceId: "ws-a", conversationId: "conv-old" },
+      ),
+      true,
+    );
+  });
+
+  test("a conversation switch during the request blocks the write-back", () => {
+    // 复现序列：入口 ws-a 无会话 → readJson 等待期间切到 B → 不写回，
+    // B 保持 active，用户不被拽回新会话。
+    assert.equal(
+      shouldPromoteNewConversation(
+        { workspaceId: "ws-a", conversationId: "" },
+        { workspaceId: "ws-a", conversationId: "conv-b" },
+      ),
+      false,
+    );
+  });
+
+  test("a workspace switch during the request blocks the write-back", () => {
+    assert.equal(
+      shouldPromoteNewConversation(
+        { workspaceId: "ws-a", conversationId: "" },
+        { workspaceId: "ws-c", conversationId: "" },
+      ),
+      false,
+    );
+    assert.equal(
+      shouldPromoteNewConversation(
+        { workspaceId: "ws-a", conversationId: "conv-old" },
+        { workspaceId: "ws-c", conversationId: "conv-x" },
+      ),
+      false,
+    );
+  });
+
+  test("switching away and back still differs from a plain unchanged pointer only via ids", () => {
+    // 快照与实时逐字段相等才写回；会话 id 相同但工作区不同同样拒绝。
+    assert.equal(
+      shouldPromoteNewConversation(
+        { workspaceId: "ws-a", conversationId: "conv-1" },
+        { workspaceId: "ws-c", conversationId: "conv-1" },
+      ),
+      false,
+    );
+  });
+});
+
 describe("handlePostMessage context recovery wiring", () => {
   const serverSource = fs.readFileSync(
     path.resolve(import.meta.dirname, "../src/server/index.ts"),
@@ -124,5 +185,33 @@ describe("handlePostMessage context recovery wiring", () => {
       readBodyIndex > snapshotIndex,
       "the entry snapshot must be taken before awaiting the request body",
     );
+  });
+
+  test("new-conversation write-back is guarded by compare-and-set with no await in between", () => {
+    const handler = serverSource.match(/async function handlePostMessage\([\s\S]*?\n\}/)?.[0] ?? "";
+    const promoteIndex = handler.indexOf("shouldPromoteNewConversation(");
+    const writeBackIndex = handler.indexOf("activeConversationId = conversation.id;");
+    assert.ok(promoteIndex > 0, "handlePostMessage must guard the write-back with shouldPromoteNewConversation");
+    assert.ok(writeBackIndex > promoteIndex, "the write-back must follow the guard");
+    // 判定与写回之间不允许再穿插 await（否则判定结果可能已过期）。
+    assert.ok(
+      !handler.slice(promoteIndex, writeBackIndex).includes("await "),
+      "no await may sit between the compare-and-set check and the write-back",
+    );
+  });
+
+  test("conversation creation guards its active write-back the same way", () => {
+    const createRoute = serverSource.match(/req\.method === "POST" && url\.pathname === "\/api\/conversations"[\s\S]*?\n    \}/)?.[0] ?? "";
+    assert.ok(createRoute, "the conversation creation route must exist");
+    assert.ok(
+      createRoute.includes("shouldPromoteNewConversation("),
+      "creating a conversation must guard switch/activate with compare-and-set",
+    );
+    // 快照先于 readJson，创建与写回之间无其他 await。
+    const snapshotIndex = createRoute.indexOf("const entryActiveWorkspaceId = activeWorkspaceId;");
+    const readBodyIndex = createRoute.indexOf("await readJson(req)");
+    const promoteIndex = createRoute.indexOf("shouldPromoteNewConversation(");
+    assert.ok(snapshotIndex > 0 && readBodyIndex > snapshotIndex, "the entry snapshot must precede readJson");
+    assert.ok(promoteIndex > readBodyIndex, "the guard runs after the body is read");
   });
 });
