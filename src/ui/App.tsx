@@ -2,8 +2,9 @@ import { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, useEffect, useLayo
 import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
+import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelProbeResponse, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
@@ -61,6 +62,30 @@ const initialState: AppState = {
 type ActiveView = "conversation" | "analysis";
 const ACTIVE_VIEW_STORAGE_KEY = "orbit.activeView";
 const APPROVAL_MODE_STORAGE_KEY = "orbit.approvalMode";
+
+export type PageContext = { workspaceId: string; conversationId: string };
+
+export function readPageContext(search: string): PageContext {
+  const params = new URLSearchParams(search);
+  return {
+    workspaceId: params.get("workspaceId") ?? "",
+    conversationId: params.get("conversationId") ?? "",
+  };
+}
+
+function pageContextQuery(context: PageContext): string {
+  const params = new URLSearchParams();
+  if (context.workspaceId) params.set("workspaceId", context.workspaceId);
+  if (context.conversationId) params.set("conversationId", context.conversationId);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function withPageContext(path: string, context: PageContext): string {
+  const separator = path.includes("?") ? "&" : "?";
+  const query = pageContextQuery(context).slice(1);
+  return query ? `${path}${separator}${query}` : path;
+}
 
 export function resolveActiveView(storedView: string | null): ActiveView {
   return storedView === "analysis" ? "analysis" : "conversation";
@@ -150,7 +175,20 @@ export function App() {
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
   const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
+  const [showSupervisorSettings, setShowSupervisorSettings] = useState(false);
   const isNearBottomRef = useRef(true);
+  const stateRequestVersionRef = useRef(0);
+  const sseLastEventIdRef = useRef(0);
+  // 同一份草稿在失败重试时必须复用同一个 clientMessageId，
+  // 否则服务端按 id 去重的幂等保护失效，重试会重复落库。
+  // 但 id 必须与草稿内容绑定：内容改过之后要换新 id，否则服务端按旧 id 去重直接返回成功，
+  // 新内容其实从未送达，用户却以为发送成功了。
+  const draftMessageIdRef = useRef<{ id: string; content: string } | null>(null);
+
+  const currentPageContext = (): PageContext => ({
+    workspaceId: state.workspace.id,
+    conversationId: state.conversation.id,
+  });
 
   useEffect(() => {
     try {
@@ -203,12 +241,58 @@ export function App() {
       setConversationsByWorkspace((prev) => ({ ...prev, ...byWs }));
     });
   };
-  const refreshState = () => {
-    fetch("/api/state")
+  const refreshState = (requestedContext: PageContext = currentPageContext()) => {
+    const requestVersion = ++stateRequestVersionRef.current;
+    fetch(withPageContext("/api/state", requestedContext))
       .then((r) => r.json())
-      .then((nextState: AppState) => setState(normalizeState(nextState)))
+      .then((nextState: AppState) => {
+        const pageContext = typeof window === "undefined" ? requestedContext : readPageContext(window.location.search);
+        if (requestVersion !== stateRequestVersionRef.current
+          || pageContext.workspaceId !== requestedContext.workspaceId
+          || pageContext.conversationId !== requestedContext.conversationId) return;
+        setState(normalizeState(nextState));
+      })
       .catch(() => setConnectionState("offline"));
   };
+
+  /**
+   * 保存监工配置（issue #153）。无会话时先创建会话并采用返回的会话 ID，
+   * 再通过显式页面上下文保存，避免依赖全局 active 指针。
+   */
+  async function saveSupervisorConfig(config: SupervisorConfig): Promise<void> {
+    const targetWorkspaceId = state.workspace.id;
+    if (!targetWorkspaceId) throw new Error("请先选择或创建工作区。");
+    let conversationId = state.conversation.id;
+    if (!conversationId) {
+      const createResponse = await fetch(withPageContext("/api/conversations", { workspaceId: targetWorkspaceId, conversationId: "" }), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const created = await createResponse.json() as { id?: string; message?: string };
+      if (!createResponse.ok || !created.id) throw new Error(created.message ?? "创建会话失败。");
+      if (readPageContext(window.location.search).workspaceId !== targetWorkspaceId) return;
+      conversationId = created.id;
+      // 先同步地址栏，后续请求与状态刷新都以页面上下文为准。
+      window.history.replaceState(null, "", `${window.location.pathname}${pageContextQuery({ workspaceId: targetWorkspaceId, conversationId })}${window.location.hash}`);
+      setState((current) => ({ ...current, conversation: { ...current.conversation, id: conversationId } }));
+      refreshConversations();
+    }
+    const targetContext = { workspaceId: targetWorkspaceId, conversationId };
+    const response = await fetch(withPageContext(`/api/conversations/${conversationId}/supervisor-config`, targetContext), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    const body = await response.json() as { message?: string; conversation?: ConversationInfo };
+    if (!response.ok) throw new Error(body.message ?? "保存监工设置失败。");
+    const pageContext = readPageContext(window.location.search);
+    if (pageContext.workspaceId !== targetContext.workspaceId
+      || pageContext.conversationId !== targetContext.conversationId) return;
+    if (body.conversation) {
+      setState((current) => ({ ...current, conversation: { ...current.conversation, ...body.conversation! } }));
+    }
+  }
 
   async function refreshRuntimeAvailability() {
     if (isRefreshingRuntimes) return;
@@ -230,38 +314,48 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/state")
+    const initialContext = typeof window === "undefined" ? { workspaceId: "", conversationId: "" } : readPageContext(window.location.search);
+    const requestVersion = ++stateRequestVersionRef.current;
+    fetch(withPageContext("/api/state", initialContext))
       .then((response) => {
-        if (!response.ok) {
-          throw new Error(`State request failed: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`State request failed: ${response.status}`);
         return response.json();
       })
       .then((nextState: AppState) => {
-        if (!cancelled) {
+        const pageContext = typeof window === "undefined" ? initialContext : readPageContext(window.location.search);
+        if (!cancelled && requestVersion === stateRequestVersionRef.current
+          && pageContext.workspaceId === initialContext.workspaceId
+          && pageContext.conversationId === initialContext.conversationId) {
           setState(normalizeState(nextState));
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          setConnectionState("offline");
-        }
+        if (!cancelled) setConnectionState("offline");
       });
 
-    const events = new EventSource("/events");
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Each browser tab subscribes only to its current page context. Switching
+  // pages changes the URL and this effect replaces the old subscription.
+  useEffect(() => {
+    if (!state.workspace.id) return;
+    sseLastEventIdRef.current = 0;
+    const events = new EventSource(withPageContext("/events", currentPageContext()));
     events.onopen = () => setConnectionState("live");
     events.onerror = () => setConnectionState("offline");
     events.onmessage = (message) => {
       try {
+        const sequence = Number(message.lastEventId);
+        if (Number.isFinite(sequence) && sequence > 0) {
+          if (sequence <= sseLastEventIdRef.current) return;
+          sseLastEventIdRef.current = sequence;
+        }
         const event = JSON.parse(message.data) as RuntimeEvent;
-        if (event.type === "context.switched") {
-          // Full state re-fetch on context switch
-          fetch("/api/state")
-            .then((r) => r.json())
-            .then((nextState: AppState) => {
-              if (!cancelled) setState(normalizeState(nextState));
-            })
-            .catch(() => {});
+        if (event.type === "events.gap") {
+          refreshState();
           return;
         }
         setState((current) => applyEvent(current, event));
@@ -269,11 +363,25 @@ export function App() {
         setConnectionState("offline");
       }
     };
+    return () => events.close();
+  }, [state.workspace.id, state.conversation.id]);
 
-    return () => {
-      cancelled = true;
-      events.close();
+  useEffect(() => {
+    if (!state.workspace.id) return;
+    const next = pageContextQuery(currentPageContext());
+    if (typeof window !== "undefined" && window.location.search !== next) {
+      window.history.replaceState(null, "", `${window.location.pathname}${next}${window.location.hash}`);
+    }
+  }, [state.workspace.id, state.conversation.id]);
+
+  // 浏览器前进/后退只改地址栏，state 不会自动跟随。必须按新的页面上下文重新拉状态，
+  // 否则 UI 与地址栏脱节，后续 refreshState 的上下文校验还会把新结果当成过期响应丢弃。
+  useEffect(() => {
+    const handlePopState = () => {
+      refreshState(readPageContext(window.location.search));
     };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   // Load workspace and conversation lists
@@ -304,16 +412,23 @@ export function App() {
     refreshConversations();
   }, [workspaces, state.workspace.id]);
 
+  // 监工的运行时与模型偏好来自会话级配置（issue #153）。
+  const supervisorConfig: SupervisorConfig = state.conversation.supervisorConfig
+    ?? { runtime: preferredSupervisionRuntime(state.runtimeAvailability) ?? "codebuddy" };
   const agentsById = useMemo(() => {
     const agents = new Map(state.agents.map((agent) => [agent.id, agent]));
-    agents.set("supervisor", {
-      id: "supervisor",
-      label: "监工",
-      runtime: state.conversation.supervisionRuntime ?? "codebuddy",
-      status: "idle",
-    });
+    // 监工是内部员工，通常不在服务端员工列表里；若服务端返回了就保留其真实状态，
+    // 不要强制覆盖成 idle。
+    if (!agents.has(INTERNAL_SUPERVISOR_ID)) {
+      agents.set(INTERNAL_SUPERVISOR_ID, {
+        id: INTERNAL_SUPERVISOR_ID,
+        label: "监工",
+        runtime: supervisorConfig.runtime,
+        status: "idle",
+      });
+    }
     return agents;
-  }, [state.agents, state.conversation.supervisionRuntime]);
+  }, [state.agents, supervisorConfig.runtime]);
   const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
   const visibleMessages = useMemo(() => state.messages.filter((message) => !message.discarded), [state.messages]);
   const agentIds = useMemo(() => state.agents.map((agent) => agent.id), [state.agents]);
@@ -501,10 +616,15 @@ export function App() {
     }
 
     setIsSending(true);
+    const requestedContext = currentPageContext();
+    if (!draftMessageIdRef.current || draftMessageIdRef.current.content !== trimmed) {
+      draftMessageIdRef.current = { id: crypto.randomUUID(), content: trimmed };
+    }
     try {
-      const body: { content: string; approvalMode: ApprovalMode; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
+      const body: { content: string; approvalMode: ApprovalMode; clientMessageId: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
         content: trimmed,
         approvalMode,
+        clientMessageId: draftMessageIdRef.current.id,
       };
       if (pendingAttachments.length > 0) {
         body.draftAttachments = pendingAttachments.map((a) => ({
@@ -514,7 +634,7 @@ export function App() {
           size: a.size,
         }));
       }
-      const response = await fetch("/api/messages", {
+      const response = await fetch(withPageContext("/api/messages", requestedContext), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -524,6 +644,26 @@ export function App() {
         throw new Error(`Message request failed: ${response.status}`);
       }
 
+      const sent = await response.json() as { conversationId?: string };
+      const sentConversationId = typeof sent.conversationId === "string" ? sent.conversationId : "";
+      const pageContext = readPageContext(window.location.search);
+      const stillOnSamePage = pageContext.workspaceId === requestedContext.workspaceId
+        && (!pageContext.conversationId || pageContext.conversationId === requestedContext.conversationId);
+      // 无会话页面发送时服务端会顺带建会话，客户端必须采用这个 id：
+      // 否则事件 conversationId 与 state.conversation.id 不匹配而被 applyEvent 丢弃，
+      // 首条消息及其回复都不可见，且之后每条消息都会再新建一个会话。
+      if (sentConversationId && sentConversationId !== requestedContext.conversationId && stillOnSamePage) {
+        const nextContext = { workspaceId: requestedContext.workspaceId, conversationId: sentConversationId };
+        // 先同步地址栏：refreshState 校验地址栏与请求上下文是否一致，
+        // 请求晚于 URL 更新会被当成过期响应丢弃。
+        window.history.replaceState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
+        setState((current) => ({ ...current, conversation: { ...current.conversation, id: sentConversationId } }));
+        refreshConversations();
+        // 首条消息的 created 事件可能在会话 id 落地前送达并被丢弃，补一次全量拉取兜底。
+        refreshState(nextContext);
+      }
+
+      draftMessageIdRef.current = null;
       setContent("");
       setPendingAttachments([]);
       isNearBottomRef.current = true;
@@ -545,34 +685,43 @@ export function App() {
     if (isSwitchingInteractionMode || mode === interactionMode) return;
     setIsSwitchingInteractionMode(true);
     const label = interactionModeLabel(mode);
+    const targetWorkspaceId = state.workspace.id;
     try {
-      // 复杂协作需要监工运行时：优先沿用会话已记录的运行时，否则按可用性选择
+      // 复杂协作需要监工运行时：优先沿用会话已配置的运行时，否则按可用性选择
       const runtime = mode === "supervised"
-        ? state.conversation.supervisionRuntime ?? preferredSupervisionRuntime(state.runtimeAvailability)
+        ? state.conversation.supervisorConfig?.runtime ?? preferredSupervisionRuntime(state.runtimeAvailability)
         : undefined;
 
       // 首次对话还没有会话：先创建一个会话，再切换模式，保证菜单在首条消息前即可使用
       let conversationId = state.conversation.id;
       if (!conversationId) {
-        if (!state.workspace.id) throw new Error("请先选择或创建工作区。");
-        const createResponse = await fetch(`/api/conversations?workspaceId=${encodeURIComponent(state.workspace.id)}`, {
+        if (!targetWorkspaceId) throw new Error("请先选择或创建工作区。");
+        const createResponse = await fetch(withPageContext("/api/conversations", { workspaceId: targetWorkspaceId, conversationId: "" }), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
         });
         const created = await createResponse.json() as { id?: string; message?: string };
         if (!createResponse.ok || !created.id) throw new Error(created.message ?? "创建会话失败。");
+        if (readPageContext(window.location.search).workspaceId !== targetWorkspaceId) return;
         conversationId = created.id;
+        window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery({ workspaceId: targetWorkspaceId, conversationId })}${window.location.hash}`);
         refreshConversations();
       }
 
-      const response = await fetch(`/api/conversations/${conversationId}/interaction-mode`, {
+      const targetContext = { workspaceId: targetWorkspaceId, conversationId };
+      const currentPage = readPageContext(window.location.search);
+      if (currentPage.workspaceId !== targetContext.workspaceId
+        || (currentPage.conversationId && currentPage.conversationId !== targetContext.conversationId)) return;
+      const response = await fetch(withPageContext(`/api/conversations/${conversationId}/interaction-mode`, targetContext), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(runtime ? { mode, runtime } : { mode }),
       });
       const body = await response.json() as { conversation?: ConversationInfo; message?: string };
       if (!response.ok || !body.conversation) throw new Error(body.message ?? `${label}切换失败`);
+      const pageContext = readPageContext(window.location.search);
+      if (pageContext.workspaceId !== targetContext.workspaceId || pageContext.conversationId !== targetContext.conversationId) return;
       setState((current) => ({ ...current, conversation: body.conversation! }));
     } catch (error) {
       setState((current) => ({ ...current, messages: [...current.messages, createLocalSystemMessage(error instanceof Error ? error.message : `${label}切换失败`)] }));
@@ -585,10 +734,10 @@ export function App() {
     if (resolvingPermissionIds.includes(requestId)) return;
     setResolvingPermissionIds((current) => [...current, requestId]);
     try {
-      const response = await fetch("/api/permissions/resolve", {
+      const response = await fetch(withPageContext("/api/permissions/resolve", currentPageContext()), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId, decision }),
+        body: JSON.stringify({ requestId, decision, ...currentPageContext() }),
       });
       if (!response.ok && response.status !== 404) {
         throw new Error(`Permission request failed: ${response.status}`);
@@ -613,10 +762,10 @@ export function App() {
     if (resolvingElicitationIds.includes(requestId)) return;
     setResolvingElicitationIds((current) => [...current, requestId]);
     try {
-      const httpResponse = await fetch("/api/elicitations/resolve", {
+      const httpResponse = await fetch(withPageContext("/api/elicitations/resolve", currentPageContext()), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId, ...response }),
+        body: JSON.stringify({ requestId, ...response, ...currentPageContext() }),
       });
       if (!httpResponse.ok && httpResponse.status !== 404) {
         throw new Error(`Elicitation request failed: ${httpResponse.status}`);
@@ -661,6 +810,7 @@ export function App() {
       return;
     }
 
+    const uploadContext = currentPageContext();
     for (const file of imageFiles.slice(0, maxFiles - pendingAttachments.length)) {
       const reader = new FileReader();
       reader.onload = async () => {
@@ -668,7 +818,7 @@ export function App() {
         if (!base64) return;
 
         try {
-          const response = await fetch("/api/attachments/drafts", {
+          const response = await fetch(withPageContext("/api/attachments/drafts", uploadContext), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -685,7 +835,17 @@ export function App() {
           }
           const result = await response.json();
           if (result.ok && result.attachment) {
-            setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
+            const currentContext = readPageContext(window.location.search);
+            const isCurrentPage = currentContext.workspaceId === uploadContext.workspaceId
+              && currentContext.conversationId === uploadContext.conversationId;
+            if (isCurrentPage) {
+              setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
+            } else {
+              // Do not let an upload that started on another page become a
+              // draft for the newly selected conversation.
+              const attachment = result.attachment as DraftAttachmentInfo;
+              void fetch(`/api/attachments/drafts/${uploadContext.workspaceId}/${uploadContext.conversationId}/${attachment.id}?workspaceId=${encodeURIComponent(uploadContext.workspaceId)}&conversationId=${encodeURIComponent(uploadContext.conversationId)}`, { method: "DELETE" });
+            }
           }
         } catch {
           setAttachmentToast("图片上传失败");
@@ -698,7 +858,7 @@ export function App() {
 
   async function removePendingAttachment(id: string) {
     try {
-      await fetch(`/api/attachments/drafts/${state.workspace.id}/${state.conversation.id}/${id}`, {
+      await fetch(`/api/attachments/drafts/${state.workspace.id}/${state.conversation.id}/${id}?workspaceId=${encodeURIComponent(state.workspace.id)}&conversationId=${encodeURIComponent(state.conversation.id)}`, {
         method: "DELETE",
       });
     } catch { /* best effort */ }
@@ -709,7 +869,7 @@ export function App() {
     if (isInterrupting) return;
     setIsInterrupting(true);
     try {
-      const response = await fetch("/api/conversation/interrupt", { method: "POST" });
+      const response = await fetch(withPageContext("/api/conversation/interrupt", currentPageContext()), { method: "POST" });
       if (!response.ok) {
         throw new Error(`Interrupt request failed: ${response.status}`);
       }
@@ -738,7 +898,7 @@ export function App() {
 
     setIsLoadingOlderMessages(true);
     try {
-      const response = await fetch(`/api/messages?before=${encodeURIComponent(cursor)}&limit=50`);
+      const response = await fetch(withPageContext(`/api/messages?before=${encodeURIComponent(cursor)}&limit=50`, requestContext));
       if (!response.ok) {
         throw new Error(`Messages request failed: ${response.status}`);
       }
@@ -770,11 +930,19 @@ export function App() {
 
   async function switchWorkspace(workspaceId: string) {
     if (workspaceId === state.workspace.id) return;
-    const response = await fetch(`/api/workspaces/${workspaceId}/switch`, { method: "POST" });
+    const nextContext = { workspaceId, conversationId: "" };
+    window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
+    const requestVersion = ++stateRequestVersionRef.current;
+    const response = await fetch(withPageContext("/api/state", nextContext));
     if (!response.ok) return;
     refreshWorkspaces();
     refreshConversations();
-    refreshState();
+    const nextState = await response.json() as AppState;
+    const pageContext = readPageContext(window.location.search);
+    if (requestVersion !== stateRequestVersionRef.current
+      || pageContext.workspaceId !== nextContext.workspaceId
+      || pageContext.conversationId !== nextContext.conversationId) return;
+    setState(normalizeState(nextState));
   }
 
   function handleWorkspaceClick(workspaceId: string) {
@@ -873,35 +1041,59 @@ export function App() {
   async function deleteWorkspace(workspace: Workspace) {
     if (!confirm(`Delete workspace "${workspace.name}"?`)) return;
     const response = await fetch(`/api/workspaces/${workspace.id}`, { method: "DELETE" });
-      if (response.ok) {
-        setOpenWorkspaceMenuId(null);
-        setExpandedWorkspaceIds((ids) => {
-          const next = new Set(ids);
-          next.delete(workspace.id);
-          return next;
-        });
-        refreshWorkspaces();
-        refreshConversations();
-        refreshState();
-      }
+    if (!response.ok) return;
+    setOpenWorkspaceMenuId(null);
+    setExpandedWorkspaceIds((ids) => {
+      const next = new Set(ids);
+      next.delete(workspace.id);
+      return next;
+    });
+    const isCurrentPage = readPageContext(window.location.search).workspaceId === workspace.id;
+    refreshWorkspaces();
+    if (!isCurrentPage) {
+      refreshConversations();
+      return;
     }
+
+    // The deleted page context is no longer valid. Let the server choose the
+    // next available workspace, then publish that choice in this tab's URL.
+    window.history.pushState(null, "", `${window.location.pathname}${window.location.hash}`);
+    const requestVersion = ++stateRequestVersionRef.current;
+    const nextStateResponse = await fetch("/api/state");
+    if (!nextStateResponse.ok || requestVersion !== stateRequestVersionRef.current) return;
+    const nextState = normalizeState(await nextStateResponse.json() as AppState);
+    if (nextState.workspace.id) {
+      window.history.replaceState(null, "", `${window.location.pathname}${pageContextQuery({ workspaceId: nextState.workspace.id, conversationId: nextState.conversation.id })}${window.location.hash}`);
+    }
+    setState(nextState);
+    refreshConversations();
+  }
 
   async function switchConversation(conversationId: string, targetWorkspaceId?: string) {
     // Always return to the conversation view when a conversation is clicked,
     // even if it is already the active one (e.g. returning from 协作洞察).
     // The guard below only skips the redundant /switch request.
     setActiveView("conversation");
-    if (conversationId === state.conversation.id) return;
-    const wsParam = targetWorkspaceId && targetWorkspaceId !== state.workspace.id ? `?workspaceId=${targetWorkspaceId}` : "";
-    const response = await fetch(`/api/conversations/${conversationId}/switch${wsParam}`, { method: "POST" });
+    const workspaceId = targetWorkspaceId || state.workspace.id;
+    if (conversationId === state.conversation.id) {
+      if (workspaceId === state.workspace.id) return;
+    }
+    const nextContext = { workspaceId, conversationId };
+    window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
+    const requestVersion = ++stateRequestVersionRef.current;
+    const response = await fetch(withPageContext("/api/state", nextContext));
     if (!response.ok) return;
     refreshConversations();
-    refreshState();
+    const nextState = await response.json() as AppState;
+    const pageContext = readPageContext(window.location.search);
+    if (requestVersion !== stateRequestVersionRef.current
+      || pageContext.workspaceId !== nextContext.workspaceId
+      || pageContext.conversationId !== nextContext.conversationId) return;
+    setState(normalizeState(nextState));
   }
 
   async function createConversation(workspaceId: string) {
-    const wsParam = workspaceId !== state.workspace.id ? `?workspaceId=${workspaceId}` : "";
-    const response = await fetch(`/api/conversations${wsParam}`, {
+    const response = await fetch(withPageContext("/api/conversations", { workspaceId, conversationId: "" }), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -914,8 +1106,16 @@ export function App() {
       next.add(workspaceId);
       return next;
     });
+    const conversation = await response.json() as Conversation;
+    const nextContext = { workspaceId, conversationId: conversation.id };
+    window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
     refreshConversations();
-    refreshState();
+    const requestVersion = ++stateRequestVersionRef.current;
+    const stateResponse = await fetch(withPageContext("/api/state", nextContext));
+    if (!stateResponse.ok || requestVersion !== stateRequestVersionRef.current) return;
+    const pageContext = readPageContext(window.location.search);
+    if (pageContext.workspaceId !== nextContext.workspaceId || pageContext.conversationId !== nextContext.conversationId) return;
+    setState(normalizeState(await stateResponse.json() as AppState));
   }
 
   async function renameConversation(conversationId: string, name: string, workspaceId?: string) {
@@ -925,8 +1125,7 @@ export function App() {
       setEditingConversationName("");
       return;
     }
-    const wsParam = workspaceId && workspaceId !== state.workspace.id ? `?workspaceId=${workspaceId}` : "";
-    const response = await fetch(`/api/conversations/${conversationId}${wsParam}`, {
+    const response = await fetch(withPageContext(`/api/conversations/${conversationId}`, { workspaceId: workspaceId || state.workspace.id, conversationId }), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: trimmed }),
@@ -935,7 +1134,7 @@ export function App() {
     setEditingConversationId(null);
     setEditingConversationName("");
     refreshConversations();
-    refreshState();
+    if ((workspaceId || state.workspace.id) === state.workspace.id && conversationId === state.conversation.id) refreshState();
   }
 
   async function deleteConversation(conversation: Conversation) {
@@ -944,7 +1143,24 @@ export function App() {
     if (response.ok) {
       setOpenConversationMenuId(null);
       refreshConversations();
-      refreshState();
+      if (conversation.workspaceId === state.workspace.id && conversation.id === state.conversation.id) {
+        const response = await fetch(`/api/workspaces/${conversation.workspaceId}/conversations`);
+        const conversations = response.ok ? await response.json() as Conversation[] : [];
+        const nextConversation = conversations[0];
+        const nextContext = {
+          workspaceId: conversation.workspaceId,
+          conversationId: nextConversation?.id ?? "",
+        };
+        window.history.pushState(null, "", `${window.location.pathname}${pageContextQuery(nextContext)}${window.location.hash}`);
+        const requestVersion = ++stateRequestVersionRef.current;
+        const stateResponse = await fetch(withPageContext("/api/state", nextContext));
+        if (stateResponse.ok && requestVersion === stateRequestVersionRef.current) {
+          const pageContext = readPageContext(window.location.search);
+          if (pageContext.workspaceId === nextContext.workspaceId && pageContext.conversationId === nextContext.conversationId) {
+            setState(normalizeState(await stateResponse.json() as AppState));
+          }
+        }
+      }
     }
   }
 
@@ -1474,18 +1690,33 @@ export function App() {
                 {showInteractionModeMenu ? (
                   <div className="interactionModeMenu" role="menu" aria-label="会话协作模式">
                     {INTERACTION_MODE_META.map((meta) => (
-                      <button
-                        key={meta.mode}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={interactionMode === meta.mode}
-                        title={meta.tooltip}
-                        onClick={() => { void selectInteractionMode(meta.mode); }}
-                      >
-                        <InteractionModeIcon mode={meta.mode} />
-                        <span><strong>{meta.label}</strong><small>{meta.tooltip}</small></span>
-                        {interactionMode === meta.mode ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
-                      </button>
+                      <div className="interactionModeRow" key={meta.mode}>
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={interactionMode === meta.mode}
+                          title={meta.tooltip}
+                          onClick={() => { void selectInteractionMode(meta.mode); }}
+                        >
+                          <InteractionModeIcon mode={meta.mode} />
+                          <span><strong>{meta.label}</strong><small>{meta.tooltip}</small></span>
+                          {interactionMode === meta.mode ? <span className="approvalModeCheck" aria-hidden="true">✓</span> : null}
+                        </button>
+                        {/* 监工设置是独立入口而非嵌套按钮：复杂协作开启前后都能改。 */}
+                        {meta.mode === "supervised" ? (
+                          <button
+                            type="button"
+                            className="supervisorSettingsTrigger"
+                            title="设置监工使用的运行时与模型"
+                            onClick={() => {
+                              setShowInteractionModeMenu(false);
+                              setShowSupervisorSettings(true);
+                            }}
+                          >
+                            监工设置
+                          </button>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
                 ) : null}
@@ -1561,6 +1792,7 @@ export function App() {
         <WorkspaceConfigPanel
           onClose={() => setShowWorkspaceConfig(false)}
           hasWorkspace={hasWorkspace}
+          workspaceId={state.workspace.id}
           presets={workspacePresets}
         />
       ) : null}
@@ -1588,6 +1820,7 @@ export function App() {
       ) : null}
       {showAgentManager ? (
         <AgentManagerPanel
+          workspaceId={state.workspace.id}
           focusedAgentId={focusedAgentId}
           onClose={() => { setShowAgentManager(false); setFocusedAgentId(null); }}
           onSaved={() => { setShowAgentManager(false); setFocusedAgentId(null); window.location.reload(); }}
@@ -1595,6 +1828,16 @@ export function App() {
           isRefreshingRuntimes={isRefreshingRuntimes}
           onRefreshRuntimes={refreshRuntimeAvailability}
           modelStates={state.agentModelStates}
+        />
+      ) : null}
+      {showSupervisorSettings ? (
+        <SupervisorSettingsPanel
+          workspaceId={state.workspace.id}
+          conversationId={state.conversation.id}
+          config={supervisorConfig}
+          availability={state.runtimeAvailability}
+          onClose={() => setShowSupervisorSettings(false)}
+          onSave={saveSupervisorConfig}
         />
       ) : null}
       {previewAttachment ? (
@@ -2477,7 +2720,7 @@ function PresetCard({ preset, selected, onClick }: { preset: WorkspacePreset; se
 }
 
 // Workspace-level config - prompt and rules
-function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () => void; hasWorkspace: boolean; presets: WorkspacePreset[] }) {
+function WorkspaceConfigPanel({ onClose, hasWorkspace, workspaceId, presets }: { onClose: () => void; hasWorkspace: boolean; workspaceId: string; presets: WorkspacePreset[] }) {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [rules, setRules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2489,7 +2732,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
       setLoading(false);
       return;
     }
-    fetch("/api/workspace-config")
+    fetch(`/api/workspace-config?workspaceId=${encodeURIComponent(workspaceId)}`)
       .then((r) => r.json())
       .then((cfg: { systemPrompt?: string; rules?: string[] }) => {
         setSystemPrompt(cfg.systemPrompt ?? "");
@@ -2497,7 +2740,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [hasWorkspace]);
+  }, [hasWorkspace, workspaceId]);
 
   function applyPreset(presetId: string) {
     const preset = presets.find((p) => p.id === presetId);
@@ -2530,7 +2773,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
     if (!hasWorkspace) return;
     setSaving(true);
     setSavedMsg("");
-    fetch("/api/workspace-config", {
+    fetch(`/api/workspace-config?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2646,6 +2889,7 @@ function WorkspaceConfigPanel({ onClose, hasWorkspace, presets }: { onClose: () 
 
 function AgentManagerPanel({
   onClose,
+  workspaceId,
   onSaved,
   runtimeAvailability,
   focusedAgentId,
@@ -2654,6 +2898,7 @@ function AgentManagerPanel({
   modelStates,
 }: {
   onClose: () => void;
+  workspaceId: string;
   onSaved: () => void;
   runtimeAvailability: AppState["runtimeAvailability"];
   focusedAgentId?: string | null;
@@ -2692,7 +2937,7 @@ function AgentManagerPanel({
   }, [availByRuntime]);
 
   useEffect(() => {
-    fetch("/api/agents")
+    fetch(`/api/agents?workspaceId=${encodeURIComponent(workspaceId)}`)
       .then((r) => r.json())
       .then((data) => { setConfigs(data as AgentConfigWithModelState[]); setLoading(false); })
       .catch(() => { setError("加载数字员工配置失败。"); setLoading(false); });
@@ -2711,7 +2956,9 @@ function AgentManagerPanel({
       if (runtime) params.set("runtime", runtime);
       if (agentId) params.set("agentId", agentId);
       const query = params.toString();
-      const response = await fetch(`/api/agents/probe-models${query ? `?${query}` : ""}`, { method: "POST" });
+      const paramsWithWorkspace = new URLSearchParams(query);
+      paramsWithWorkspace.set("workspaceId", workspaceId);
+      const response = await fetch(`/api/agents/probe-models?${paramsWithWorkspace.toString()}`, { method: "POST" });
       if (!response.ok) {
         setError("获取模型列表失败，请稍后重试。");
         return;
@@ -2805,7 +3052,7 @@ function AgentManagerPanel({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/agents", {
+      const res = await fetch(`/api/agents?workspaceId=${encodeURIComponent(workspaceId)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(configs),
@@ -2827,7 +3074,7 @@ function AgentManagerPanel({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/agents/reset", { method: "POST" });
+      const res = await fetch(`/api/agents/reset?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "POST" });
       if (!res.ok) {
         setError("重置失败。");
         return;
@@ -2846,7 +3093,7 @@ function AgentManagerPanel({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/agents/apply-team", {
+      const res = await fetch(`/api/agents/apply-team?workspaceId=${encodeURIComponent(workspaceId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teamId }),
@@ -3127,12 +3374,200 @@ function PlainText({ content }: { content: string }) {
   return <div className="plainText">{content}</div>;
 }
 
+/**
+ * 监工设置（issue #153）：运行时与模型偏好按会话保存。
+ *
+ * - 运行时与模型都可在开启复杂协作前后修改，入口在协作模式菜单里独立存在。
+ * - 模型列表由所选运行时提供，按会话隔离探测（监工是所有会话共用的内部 ID）。
+ * - 偏好按 runtime 归属门控：换运行时后旧偏好既不生效也不展示。
+ */
+function SupervisorSettingsPanel({
+  workspaceId,
+  conversationId,
+  config,
+  availability,
+  onClose,
+  onSave,
+}: {
+  workspaceId: string;
+  conversationId: string;
+  config: SupervisorConfig;
+  availability: AppState["runtimeAvailability"];
+  onClose: () => void;
+  onSave: (config: SupervisorConfig) => Promise<void>;
+}) {
+  const [runtime, setRuntime] = useState<AgentRuntimeKind>(config.runtime);
+  const [model, setModel] = useState<AgentModelPreference | undefined>(config.model);
+  const [snapshot, setSnapshot] = useState<AgentModelStateSnapshot | undefined>(undefined);
+  const [probe, setProbe] = useState<AgentModelProbeState | undefined>(undefined);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const probedRuntimeRef = useRef<AgentRuntimeKind | undefined>(undefined);
+
+  async function refreshModels(targetRuntime: AgentRuntimeKind, force = false): Promise<void> {
+    if (!workspaceId) return;
+    setIsRefreshing(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ workspaceId, runtime: targetRuntime, agentId: INTERNAL_SUPERVISOR_ID });
+      // 监工是所有会话共用的内部 ID，模型快照按会话隔离，必须带会话维度。
+      if (conversationId) params.set("conversationId", conversationId);
+      if (force) params.set("force", "1");
+      const response = await fetch(`/api/agents/probe-models?${params.toString()}`, { method: "POST" });
+      const body = await response.json() as AgentModelProbeResponse;
+      const target = body.target;
+      if (target && target.runtimeKind === targetRuntime) {
+        setSnapshot(target.modelState ?? undefined);
+        setProbe(target.modelProbe);
+      }
+    } catch {
+      setError("模型列表获取失败，请重试。");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  // 首次打开按需探测当前监工的运行时；切换运行时后再探测一次新的。
+  useEffect(() => {
+    if (probedRuntimeRef.current === runtime) return;
+    probedRuntimeRef.current = runtime;
+    void refreshModels(runtime);
+  }, [runtime, workspaceId, conversationId]);
+
+  function chooseRuntime(next: AgentRuntimeKind): void {
+    if (next === runtime) return;
+    setRuntime(next);
+    // 切换运行时后旧偏好不再生效，也不展示。
+    setModel(undefined);
+    setSnapshot(undefined);
+    setProbe(undefined);
+  }
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(model ? { runtime, model } : { runtime });
+      onClose();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "保存监工设置失败。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const probeStatus = probe?.status ?? (snapshot ? (snapshot.choices.length > 0 ? "ready" : "unsupported") : "idle");
+  const choices = probeStatus === "ready" ? snapshot?.choices ?? [] : [];
+  const nameOf = (value: string) => choices.find((choice) => choice.value === value)?.name ?? value;
+  // 偏好按 runtime 归属：与当前 runtime 不一致即不应用、不展示。
+  const preferred = model?.runtimeKind === runtime ? model.preferredModelId?.trim() || undefined : undefined;
+  const unavailable = new Set(
+    availability.filter((item) => !item.available).map((item) => runtimeKindToCliKey(item.runtime)),
+  );
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader">
+          <h2>监工设置</h2>
+          <button type="button" onClick={onClose}>&times;</button>
+        </div>
+        <div className="settingsBody">
+          <p className="modelHint">
+            选择监工使用的运行时与模型。修改从监工的下一次运行开始生效；更换运行时会重建监工会话，普通员工和历史消息不受影响。
+          </p>
+          <div className="modelField fieldFullWidth">
+            <span className="pillLabel">运行时</span>
+            <div className="modelChoiceList">
+              {AGENT_RUNTIME_PRIORITY.map((kind) => (
+                <label key={kind} className={`modelChoice ${runtime === kind ? "modelChoiceActive" : ""}`}>
+                  <input
+                    type="radio"
+                    name="supervisor-runtime"
+                    checked={runtime === kind}
+                    onChange={() => chooseRuntime(kind)}
+                  />
+                  <span>
+                    {runtimeMeta(kind).label}
+                    {unavailable.has(runtimeKindToCliKey(kind)) ? "（当前不可用）" : ""}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="modelField fieldFullWidth">
+            <div className="modelFieldHeader">
+              <span className="pillLabel">模型 <span className="fieldHint" title="监工使用的模型。可选列表由所选运行时提供，每次运行开始时应用。">?</span></span>
+              <button
+                type="button"
+                className="modelRefreshBtn"
+                onClick={() => { void refreshModels(runtime, true); }}
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? "获取中..." : "刷新模型列表"}
+              </button>
+            </div>
+            <div className="modelChoiceList">
+              <label className={`modelChoice ${preferred === undefined ? "modelChoiceActive" : ""}`}>
+                <input
+                  type="radio"
+                  name="supervisor-model"
+                  checked={preferred === undefined}
+                  onChange={() => setModel(undefined)}
+                />
+                <span>
+                  跟随运行时默认
+                  {probeStatus === "ready" && snapshot?.currentValueSource === "session" && snapshot.currentValue
+                    ? `（当前：${nameOf(snapshot.currentValue)}）`
+                    : ""}
+                </span>
+              </label>
+              {choices.map((choice) => (
+                <label key={choice.value} className={`modelChoice ${preferred === choice.value ? "modelChoiceActive" : ""}`}>
+                  <input
+                    type="radio"
+                    name="supervisor-model"
+                    checked={preferred === choice.value}
+                    onChange={() => setModel({ preferredModelId: choice.value, runtimeKind: runtime })}
+                  />
+                  <span>
+                    {choice.name}
+                    {probeStatus === "ready" && snapshot?.currentValueSource === "session"
+                      && snapshot.currentValue === choice.value && preferred !== choice.value ? "（当前）" : ""}
+                  </span>
+                </label>
+              ))}
+            </div>
+            {probeStatus === "error" ? (
+              <div className="modelHint modelHintWarn">{probe?.message ?? "模型列表获取失败，请重试。"}</div>
+            ) : probeStatus === "unsupported" ? (
+              <div className="modelHint">该运行时未提供可选模型列表。</div>
+            ) : probeStatus === "loading" ? (
+              <div className="modelHint">正在获取模型列表...</div>
+            ) : null}
+            <div className="modelHint">模型选择在监工下次运行时生效。</div>
+          </div>
+          {error ? <div className="modelHint modelHintWarn">{error}</div> : null}
+          <div className="modalFooter">
+            <button type="button" onClick={onClose} disabled={saving}>关闭</button>
+            <button type="button" className="primaryBtn" onClick={() => { void save(); }} disabled={saving}>
+              {saving ? "保存中..." : "保存"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function preferredSupervisionRuntime(availability: AppState["runtimeAvailability"]): AgentRuntimeKind | undefined {
   const available = new Set(availability.filter((item) => item.available).map((item) => item.runtime));
   return AGENT_RUNTIME_PRIORITY.find((runtime) => available.has(runtimeKindToCliKey(runtime)));
 }
 
 export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
+  if (event.type === "events.gap") return state;
   if (event.type === "running.updated") {
     return { ...state, runningSummaries: event.summaries };
   }
@@ -3153,14 +3588,21 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
-  // agent.model_state 是 workspace 级事件（无 conversationId），在会话过滤前处理，
+  // agent.model_state 通常是 workspace 级事件（无 conversationId），在会话过滤前处理，
   // 但不能让后台工作区的同名员工覆盖当前工作区的模型状态。
   if (event.type === "agent.model_state") {
     if (event.workspaceId !== state.workspace.id) return state;
+    // 监工是所有会话共用的内部 ID，其快照带会话维度（issue #153）：
+    // 其他会话的监工状态不能覆盖本页。
+    if (event.conversationId !== undefined && event.conversationId !== state.conversation.id) return state;
     return {
       ...state,
       agentModelStates: { ...state.agentModelStates, [event.agentId]: event.modelState },
     };
+  }
+
+  if ("workspaceId" in event && event.workspaceId !== undefined && event.workspaceId !== state.workspace.id) {
+    return state;
   }
 
   // For conversation-scoped events, only process if they match the active conversation

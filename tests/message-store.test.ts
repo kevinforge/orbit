@@ -48,6 +48,20 @@ test("get returns message by id or null", () => {
   assert.equal(store.get("nonexistent"), null);
 });
 
+test("findByClientMessageId searches older persisted shards", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-client-message-test-"));
+  const filePath = path.join(dir, "messages.json");
+  let now = new Date("2025-01-01T12:00:00.000Z");
+  const store = new MessageStore(filePath, { recentShardCount: 1, now: () => now });
+  const original = store.append({ kind: "user", clientMessageId: "client-1", content: "old" });
+  now = new Date("2025-01-03T12:00:00.000Z");
+  store.append({ kind: "system", content: "new" });
+
+  assert.equal(new MessageStore(filePath, { recentShardCount: 1 }).findByClientMessageId("client-1")?.id, original.id);
+  assert.equal(store.findByClientMessageId("missing"), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("markRouteState updates route state and returns the message", () => {
   const store = new MessageStore();
   const msg = store.append({ kind: "user", content: "@agent1 hello" });

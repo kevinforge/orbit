@@ -38,7 +38,7 @@ test("employee instructions replace the old role section", () => {
 });
 
 test("supervisor constraints are limited to the internal supervisor", () => {
-  const profiles = [...createDefaultAgentProfiles("D:/project"), createSupervisorProfile("D:/project", "codebuddy")];
+  const profiles = [...createDefaultAgentProfiles("D:/project"), createSupervisorProfile("D:/project", { runtime: "codebuddy" })];
   const output = buildAgentContext({
     agentId: "supervisor",
     profiles,
@@ -121,7 +121,7 @@ test("direct mode omits the available employees section for regular employees", 
 });
 
 test("supervised supervisor prompt keeps coordinator duties while employees must not impersonate it", () => {
-  const profiles = [...createDefaultAgentProfiles("D:/project"), createSupervisorProfile("D:/project", "codebuddy")];
+  const profiles = [...createDefaultAgentProfiles("D:/project"), createSupervisorProfile("D:/project", { runtime: "codebuddy" })];
   const supervisor = buildAgentContext({
     agentId: "supervisor",
     profiles,
@@ -178,7 +178,7 @@ test("custom teams receive all built-in mode rules without workspace instruction
 
   const supervised = buildAgentContext({
     agentId: "supervisor",
-    profiles: [...customProfiles, createSupervisorProfile("D:/project", "codebuddy")],
+    profiles: [...customProfiles, createSupervisorProfile("D:/project", { runtime: "codebuddy" })],
     agentMessage: "Coordinate.",
     interactionMode: "supervised",
     workspaceConfig: emptyWorkspace,

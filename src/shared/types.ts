@@ -82,6 +82,12 @@ export type PendingPermission = AgentPermissionRequest & {
 
 export type AgentRuntimeKind = "claude-code" | "codex" | "codebuddy";
 
+export const AGENT_RUNTIME_KINDS: readonly AgentRuntimeKind[] = ["claude-code", "codex", "codebuddy"];
+
+export function isAgentRuntimeKind(value: unknown): value is AgentRuntimeKind {
+  return value === "claude-code" || value === "codex" || value === "codebuddy";
+}
+
 export type ChannelWatchTriggers = {
   onUnassignedMessage?: boolean;
   onAgentBlocked?: boolean;
@@ -109,6 +115,15 @@ export function hasActiveChannelWatchTriggers(triggers?: ChannelWatchTriggers): 
 export type AgentModelPreference = {
   preferredModelId?: string;
   runtimeKind: AgentRuntimeKind;
+};
+
+/**
+ * 监工配置（issue #153）：会话级保存，用户可在协作模式菜单里修改。
+ * model 沿用普通员工的 runtime 归属门控——偏好所属 runtime 与 runtime 不一致时不应用、不显示。
+ */
+export type SupervisorConfig = {
+  runtime: AgentRuntimeKind;
+  model?: AgentModelPreference;
 };
 
 export type AgentConfig = {
@@ -293,6 +308,8 @@ export type AgentActivityEvent =
 
 export type ChatMessage = {
   id: string;
+  /** Client-generated id used to make message retries idempotent per conversation. */
+  clientMessageId?: string;
   kind: ChatMessageKind;
   agentId?: AgentId;
   content: string;
@@ -409,9 +426,10 @@ export type MessagePage = MessageHistoryState & {
 };
 
 export type RuntimeEvent =
-  | { type: "message.created"; conversationId: string; message: ChatMessage }
+  | { type: "message.created"; workspaceId?: string; conversationId: string; message: ChatMessage }
   | {
       type: "message.updated";
+      workspaceId?: string;
       conversationId: string;
       message: ChatMessage;
       settleTransientActivity?: boolean;
@@ -422,22 +440,25 @@ export type RuntimeEvent =
        */
       excludedAnswerGroup?: string;
     }
-  | { type: "agent.status"; conversationId: string; agentId: AgentId; status: AgentStatus }
-  | { type: "runtime.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
-  | { type: "run.activity"; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
-  | { type: "terminal.chunk"; conversationId: string; agentId: AgentId; runId?: string; text: string }
-  | { type: "run.completed"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string; suppressFollowupRouting?: boolean }
-  | { type: "run.failed"; conversationId: string; agentId: AgentId; runId: string; error: string; interactionMode?: InteractionMode }
-  | { type: "run.cancelled"; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
-  | { type: "run.sessionId"; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
-  | { type: "permission.requested"; conversationId: string; permission: PendingPermission }
-  | { type: "permission.resolved"; conversationId: string; requestId: string }
-  | { type: "elicitation.requested"; conversationId: string; elicitation: PendingElicitation }
-  | { type: "elicitation.resolved"; conversationId: string; requestId: string }
+  | { type: "agent.status"; workspaceId?: string; conversationId: string; agentId: AgentId; status: AgentStatus }
+  | { type: "runtime.activity"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
+  | { type: "run.activity"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; activity: AgentActivityEvent }
+  | { type: "terminal.chunk"; workspaceId?: string; conversationId: string; agentId: AgentId; runId?: string; text: string }
+  | { type: "run.completed"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string; suppressFollowupRouting?: boolean }
+  | { type: "run.failed"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; error: string; interactionMode?: InteractionMode }
+  | { type: "run.cancelled"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; resultMessageId: string }
+  | { type: "run.sessionId"; workspaceId?: string; conversationId: string; agentId: AgentId; runId: string; sessionId: string }
+  | { type: "permission.requested"; workspaceId?: string; conversationId: string; permission: PendingPermission }
+  | { type: "permission.resolved"; workspaceId?: string; conversationId: string; requestId: string }
+  | { type: "elicitation.requested"; workspaceId?: string; conversationId: string; elicitation: PendingElicitation }
+  | { type: "elicitation.resolved"; workspaceId?: string; conversationId: string; requestId: string }
   | { type: "running.updated"; summaries: RunningSummary[] }
   | { type: "runtime.availability.updated"; availability: RuntimeAvailability[] }
-  | { type: "agent.model_state"; workspaceId: string; agentId: AgentId; modelState: AgentModelStateSnapshot }
-  | { type: "context.switched"; workspace: WorkspaceInfo; conversation: ConversationInfo };
+  // conversationId 用于按页面隔离监工的模型快照（issue #153）：
+  // 监工是内部保留 ID，多个会话共享 agentId "supervisor"，不带会话维度会把
+  // 一个会话的监工状态广播给同工作区的其他页面。
+  | { type: "agent.model_state"; workspaceId: string; agentId: AgentId; modelState: AgentModelStateSnapshot; conversationId?: string }
+  | { type: "events.gap"; workspaceId?: string; conversationId?: string };
 
 export type TerminalState = Record<string, string>;
 
@@ -458,7 +479,13 @@ export type ConversationInfo = {
   interactionMode?: InteractionMode;
   /** 普通对话模式下最近一位直接对话员工；切换到其他模式不清除，切回后继续。 */
   lastDirectAgentId?: AgentId;
-  /** 内部字段：复杂协作（监工）使用的运行时，不对用户展示、不可由用户直接配置。 */
+  /**
+   * 复杂协作（监工）的运行时与模型偏好（issue #153）。
+   * 旧记录只有 supervisionRuntime，读取时由 ConversationStore 映射为
+   * `{ runtime: supervisionRuntime }`；新写入只用本字段。
+   */
+  supervisorConfig?: SupervisorConfig;
+  /** 已废弃（issue #153）：仅用于读取旧记录的监工运行时，新代码请用 supervisorConfig。 */
   supervisionRuntime?: AgentRuntimeKind;
 };
 

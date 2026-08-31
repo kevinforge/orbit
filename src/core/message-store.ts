@@ -130,6 +130,23 @@ export class MessageStore {
     return [...this.messages];
   }
 
+  /** Find a client-created user message across the whole durable history. */
+  findByClientMessageId(clientMessageId: string): ChatMessage | null {
+    const loaded = this.messages.find(
+      (message) => message.kind === "user" && message.clientMessageId === clientMessageId,
+    );
+    if (loaded) return loaded;
+    if (!this.filePath) return null;
+
+    for (const shard of this.manifest.shards) {
+      const message = this.readShard(shard.name).find(
+        (candidate) => candidate.kind === "user" && candidate.clientMessageId === clientMessageId,
+      );
+      if (message) return message;
+    }
+    return null;
+  }
+
   get(id: string): ChatMessage | null {
     const loaded = this.messages.find((message) => message.id === id);
     if (loaded) return loaded;

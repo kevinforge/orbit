@@ -25,7 +25,7 @@ export function WorkAnalysisPanel(props: {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    fetch(`/api/work-analysis?days=${days}`, { signal: controller.signal })
+    fetch(`/api/work-analysis?workspaceId=${encodeURIComponent(props.workspaceId)}&days=${days}`, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("协作洞察暂时无法加载");
         return response.json() as Promise<WorkAnalysis>;

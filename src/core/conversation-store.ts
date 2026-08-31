@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
-import type { AgentId, AgentRuntimeKind, Conversation, InteractionMode } from "../shared/types.ts";
+import type { AgentId, AgentRuntimeKind, Conversation, InteractionMode, SupervisorConfig } from "../shared/types.ts";
 import { isInteractionMode } from "../shared/types.ts";
 
 type ConversationData = {
@@ -48,7 +48,7 @@ export class ConversationStore {
   update(workspaceId: string, conversationId: string, patch: {
     name?: string;
     interactionMode?: InteractionMode;
-    supervisionRuntime?: AgentRuntimeKind | null;
+    supervisorConfig?: SupervisorConfig | null;
     lastDirectAgentId?: AgentId;
   }): Conversation {
     const data = this.loadData(workspaceId);
@@ -60,8 +60,10 @@ export class ConversationStore {
       ...data.conversations[index]!,
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.interactionMode !== undefined ? { interactionMode: patch.interactionMode } : {}),
-      ...(patch.supervisionRuntime !== undefined
-        ? patch.supervisionRuntime === null ? { supervisionRuntime: undefined } : { supervisionRuntime: patch.supervisionRuntime }
+      ...(patch.supervisorConfig !== undefined
+        ? patch.supervisorConfig === null
+          ? { supervisorConfig: undefined, supervisionRuntime: undefined }
+          : { supervisorConfig: patch.supervisorConfig }
         : {}),
       ...(patch.lastDirectAgentId !== undefined ? { lastDirectAgentId: patch.lastDirectAgentId } : {}),
     };
@@ -130,13 +132,7 @@ export class ConversationStore {
       const parsed = JSON.parse(content) as ConversationData;
       return {
         conversations: Array.isArray(parsed.conversations)
-          ? parsed.conversations.map((conversation) => ({
-              ...conversation,
-              // 无旧格式兼容：非法/缺失的 interactionMode 一律回到默认 direct
-              interactionMode: isInteractionMode(conversation.interactionMode)
-                ? conversation.interactionMode
-                : "direct",
-            }))
+          ? parsed.conversations.map(withNormalizedFields)
           : [],
       };
     } catch {
@@ -152,4 +148,24 @@ export class ConversationStore {
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2) + os.EOL);
     fs.renameSync(tmpFile, filePath);
   }
+}
+
+/**
+ * 读取时规范化会话记录：
+ * - 非法/缺失的 interactionMode 一律回到默认 direct（无旧格式兼容）。
+ * - issue #153 之前只保存 supervisionRuntime，读取时映射为
+ *   `supervisorConfig = { runtime: supervisionRuntime }`。不批量迁移数据，
+ *   旧字段原样保留，新写入只使用 supervisorConfig。
+ */
+function withNormalizedFields(conversation: Conversation): Conversation {
+  const legacyRuntime = conversation.supervisionRuntime;
+  return {
+    ...conversation,
+    interactionMode: isInteractionMode(conversation.interactionMode)
+      ? conversation.interactionMode
+      : "direct",
+    ...(conversation.supervisorConfig || !legacyRuntime
+      ? {}
+      : { supervisorConfig: { runtime: legacyRuntime } }),
+  };
 }

@@ -3,6 +3,24 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AgentId, AgentModelStateSnapshot } from "../shared/types.ts";
+import { INTERNAL_SUPERVISOR_ID } from "./agent-profiles.ts";
+
+/**
+ * 监工是内部保留 ID，所有会话共用 agentId "supervisor"。若沿用固定键，一个会话
+ * 探测到的模型列表会覆盖同工作区其他会话的监工快照（issue #153）。
+ * 因此存储层用 `supervisor:<conversationId>` 作为内部组合键，对外仍暴露
+ * agentId "supervisor"，由读写两侧的键转换屏蔽这个差异。
+ */
+const SUPERVISOR_STORAGE_PREFIX = `${INTERNAL_SUPERVISOR_ID}:`;
+
+export function supervisorStorageKey(conversationId: string): string {
+  return `${SUPERVISOR_STORAGE_PREFIX}${conversationId}`;
+}
+
+/** 存储键 → 对外暴露的 agentId。 */
+export function storageKeyAgentId(storageKey: string): AgentId {
+  return storageKey.startsWith(SUPERVISOR_STORAGE_PREFIX) ? INTERNAL_SUPERVISOR_ID : storageKey;
+}
 
 /**
  * 员工模型快照的 workspace 级存储（issue #142）。runtime 每次新建/恢复会话
@@ -42,10 +60,11 @@ export class AgentModelStateStore {
     return this.load(workspaceId)[agentId];
   }
 
-  /** 单员工键级更新：读取现有表、替换该键后整体原子写回。 */
-  update(workspaceId: string, snapshot: AgentModelStateSnapshot): void {
+  /** 单员工键级更新：读取现有表、替换该键后整体原子写回。
+   *  storageKey 用于监工的会话维度隔离（默认即 snapshot.agentId）。 */
+  update(workspaceId: string, snapshot: AgentModelStateSnapshot, storageKey: string = snapshot.agentId): void {
     const states = this.load(workspaceId);
-    states[snapshot.agentId] = snapshot;
+    states[storageKey] = snapshot;
     const filePath = this.statePath(workspaceId);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const tmpFile = `${filePath}.tmp`;
@@ -58,10 +77,11 @@ export class AgentModelStateStore {
   }
 }
 
-function isAgentModelStateSnapshot(agentId: string, value: unknown): value is AgentModelStateSnapshot {
+function isAgentModelStateSnapshot(storageKey: string, value: unknown): value is AgentModelStateSnapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const snapshot = value as Record<string, unknown>;
-  if (snapshot.agentId !== agentId) return false;
+  // 监工快照的存储键带会话后缀，而快照内 agentId 仍是内部名 supervisor。
+  if (snapshot.agentId !== storageKeyAgentId(storageKey)) return false;
   if (!isAgentRuntimeKind(snapshot.runtimeKind)) return false;
   if (typeof snapshot.configId !== "string" || typeof snapshot.updatedAt !== "string") return false;
   if (!Array.isArray(snapshot.choices)) return false;

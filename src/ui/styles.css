@@ -1832,6 +1832,36 @@ button:active:not(:disabled) {
   box-shadow: var(--shadow-lg);
 }
 
+/* 监工设置入口与模式项同一行，避免在模式按钮内嵌套按钮（issue #153） */
+.interactionModeRow {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.interactionModeRow > button:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.interactionModeMenu .supervisorSettingsTrigger {
+  display: block;
+  flex: 0 0 auto;
+  align-self: center;
+  width: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.interactionModeMenu .supervisorSettingsTrigger:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+}
+
 .approvalModeMenu button,
 .interactionModeMenu button {
   display: grid;

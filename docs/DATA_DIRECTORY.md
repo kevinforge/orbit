@@ -55,6 +55,11 @@ runtime-derived state, not user configuration: model preferences chosen in the
 settings UI are stored in `agents.json`, and this cache is rewritten by Orbit
 whenever discovery or a real run reports a fresh snapshot.
 
+The built-in supervisor shares one internal id across every conversation, so
+its entry is keyed `supervisor:<conversation-id>` instead of a bare employee id.
+Events still report `agentId: "supervisor"`, so no conversation can overwrite
+another conversation's supervisor snapshot.
+
 These files can contain project paths, conversation content, uploaded
 attachments, digital employee configuration, ACP session records, runtime
 activity, and terminal output. Treat `~/.orbit` as private user data.
