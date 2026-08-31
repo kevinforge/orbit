@@ -320,7 +320,9 @@ export function runAcp(
         throw cancellationError();
       }
       if (response.stopReason === "refusal") {
-        throw new Error(`${definition.displayName} 拒绝了本次请求，请切换到其他可用模型后重试。`);
+        throw new Error(
+          `${definition.displayName} ACP refused the request. 建议：请切换到其他可用模型后重试。`,
+        );
       }
 
       const selection = selectFinalAnswer(answerState);
@@ -720,7 +722,9 @@ function normalizePromptError(
   const mentionsImageInput = /image|vision|multimodal|content block|图片|图像/i.test(original);
   const indicatesRejection = /unsupported|not support|invalid|reject|denied|cannot|can't|不支持|无效|拒绝|无法/i.test(original);
   if (hasImage && mentionsImageInput && indicatesRejection) {
-    return new Error(`${displayName} 当前模型不支持图片输入，请切换支持图片的模型，或移除图片附件后重试。`);
+    return new Error(
+      `${displayName} 原始报错：${original}\n建议：当前模型不支持图片输入，请切换支持图片的模型，或移除图片附件后重试。`,
+    );
   }
   return error instanceof Error ? error : new Error(original);
 }
@@ -729,7 +733,9 @@ function normalizeProviderAnswer(answer: string, displayName: string): Error | n
   if (/^selected model is at capacity\.?$/i.test(answer.trim())
     || /^model capacity has been reached\.?$/i.test(answer.trim())
     || /^模型容量已满[。.]?$/.test(answer.trim())) {
-    return new Error(`${displayName} 当前模型容量已满，请切换到其他可用模型后重试。`);
+    return new Error(
+      `${displayName} 原始报错：${answer.trim()}\n建议：当前模型容量已满，请切换到其他可用模型后重试。`,
+    );
   }
   return null;
 }
