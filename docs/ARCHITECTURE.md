@@ -179,6 +179,7 @@ The final agent prompt is assembled in this order:
 5. **Employee instruction** (`AgentConfig.systemPrompt`)
 6. **Channel history** (scoped messages since agent's last completed run)
 7. **Current task** (the routed message content)
+8. **Current attachments** (typed list of the source message's image/file attachments, if any)
 
 Workspace prompts inject optional shared user context across all employees, while each employee retains its own task-specific instruction. They do not define or replace Orbit's three interaction modes. Complex collaboration uses a separate internal supervisor profile, and its persisted runtime session is retained when the conversation switches to another mode.
 
@@ -232,6 +233,35 @@ Each agent run receives a scoped history of channel messages since that agent's 
 - Returns entries in chronological order
 
 The history is injected between `[Orbit Context]` and `[Full channel message]` in the prompt built by `agent-context-builder.ts`.
+
+## Attachments
+
+Messages can carry attachments (images plus PDF/text/code files) managed by
+`src/core/attachment-store.ts` under `~/.orbit`. Uploads are validated against
+the shared extension registry (`src/shared/attachment-registry.ts`): images
+are verified by magic numbers, PDF must start with `%PDF-`, and text/code
+types rely on the extension whitelist plus size limits. Composer uploads are
+drafts under `tmp/attachments`; sending a message commits drafts into
+`conversations/<ws>/<conv>/attachments`, re-validating the stored bytes and
+failing the whole message (with drafts preserved and partial copies rolled
+back) when one is missing or a copy fails.
+
+Delivery to runtimes keeps the full server-validated attachment metadata
+intact along `run-manager.ts` → `agent-session.ts` → `AgentRuntimeRunOptions.attachments`.
+The shared ACP runtime (`src/core/acp-runtime.ts`) maps it to content blocks:
+images become native `image` blocks when the runtime advertises
+`promptCapabilities.image`; everything else — including images on runtimes
+without that capability, plus PDF/text/code files — travels as `resource_link`
+blocks (an ACP v1 baseline content type, no capability negotiation needed)
+whose URI, name, MIME type, and size come from the committed
+`MessageAttachment` metadata, never from client-supplied values. URIs are
+generated with Node's `pathToFileURL()` so spaces and non-ASCII path segments
+survive on every platform. The `<current-attachments>` section of the agent
+prompt lists attachments with kind, name, and size only — marked as untrusted
+user data that must not be executed — while structured content blocks are the
+primary transport. The HTTP layer serves images inline and every other kind as a
+generic `application/octet-stream` download with `nosniff` (see
+`src/server/attachment-response.ts`).
 
 ## Session Persistence
 

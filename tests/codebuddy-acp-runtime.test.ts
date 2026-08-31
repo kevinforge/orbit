@@ -13,7 +13,7 @@ import {
   type CodeBuddyAcpConnector,
 } from "../src/core/codebuddy-acp-runtime.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
-import type { AgentActivityEvent } from "../src/shared/types.ts";
+import type { AgentActivityEvent, MessageAttachment } from "../src/shared/types.ts";
 
 type FakeOptions = {
   capabilities?: Awaited<ReturnType<CodeBuddyAcpConnection["initialize"]>>["agentCapabilities"];
@@ -704,4 +704,52 @@ test("full access auto-approves all ACP permission requests", async () => {
   }));
   assert.equal(asked, false);
   assert.deepEqual(allowed, { outcome: { outcome: "selected", optionId: "allow" } });
+});
+
+test("sends PDF, text and code attachments as resource_link content", async () => {
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "files received" },
+        },
+      });
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  const attachments: MessageAttachment[] = [
+    {
+      id: "pdf-1", kind: "file", mimeType: "application/pdf", filename: "spec.pdf",
+      path: "/data/spec.pdf", url: "/api/attachments/ws/conv/pdf-1", size: 4096,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "txt-1", kind: "file", mimeType: "text/plain", filename: "notes.md",
+      path: "/data/notes.md", url: "/api/attachments/ws/conv/txt-1", size: 512,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "code-1", kind: "file", mimeType: "text/plain", filename: "example.ts",
+      path: "/data/example.ts", url: "/api/attachments/ws/conv/code-1", size: 1024,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  assert.equal(await runtime.run(runOptions({ attachments })).result, "files received");
+
+  const prompt = fake.calls.find((call) => call.method === "session/prompt")!.value as {
+    prompt: Array<{ type: string; uri?: string; name?: string; mimeType?: string; size?: number }>;
+  };
+  assert.equal(prompt.prompt.length, 4, "text + one resource_link per file, in input order");
+  const [pdf, text, code] = prompt.prompt.slice(1);
+  assert.equal(pdf?.type, "resource_link");
+  assert.equal(pdf?.name, "spec.pdf");
+  assert.equal(pdf?.mimeType, "application/pdf");
+  assert.equal(pdf?.size, 4096);
+  assert.match(pdf?.uri ?? "", /^file:\/\//);
+  assert.equal(text?.type, "resource_link");
+  assert.equal(text?.name, "notes.md");
+  assert.equal(code?.type, "resource_link");
+  assert.equal(code?.name, "example.ts");
 });

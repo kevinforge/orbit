@@ -9,6 +9,7 @@ import type {
   AgentElicitationRequest,
   ApprovalMode,
   ElicitationResponse,
+  MessageAttachment,
   PermissionDecision,
 } from "../shared/types.ts";
 
@@ -37,7 +38,11 @@ export type AgentRuntimeRunOptions = {
   env?: NodeJS.ProcessEnv;
   onOutput?: (text: string) => void;
   onActivity?: (activity: AgentActivityEvent) => void;
-  imagePaths?: string[];
+  /**
+   * 服务端已固化的完整附件元数据（MessageAttachment）。runtime 据此组装
+   * ACP 内容块：图片能力开启时图片走原生 image，其余一律 resource_link。
+   */
+  attachments?: readonly MessageAttachment[];
   /** Stable owner key used to prevent ACP process reuse across conversations. */
   poolKey?: string;
   /** 员工首选模型 ID（issue #142）：会话建立后、prompt 前尽力应用，失败只提示。 */

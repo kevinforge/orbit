@@ -45,10 +45,13 @@ type FakeConnectionControls = {
   setConfigOptionError?: Error;
   setConfigOptionPending?: boolean;
   setConfigOptionConfigOptions?: Array<SessionConfigOption>;
+  /** PR #147：initialize 返回的 Agent 能力（如 promptCapabilities.image）。 */
+  capabilities?: AgentCapabilities;
 };
 
 function fakeConnector(controls: FakeConnectionControls = {}) {
   const calls: string[] = [];
+  const prompts: unknown[] = [];
   let spawnCount = 0;
   let notifySessionUpdate: ((notification: SessionNotification) => void) | null = null;
   const connector: AcpConnector = (_options, notify) => {
@@ -67,6 +70,7 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
               agentCapabilities: {
                 loadSession: true,
                 ...(controls.resumeCapability ? { sessionCapabilities: { resume: {} } } : {}),
+                ...(controls.capabilities ? { promptCapabilities: controls.capabilities.promptCapabilities } : {}),
               },
             });
       },
@@ -97,8 +101,9 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
         const configOptions = controls.setConfigOptionConfigOptions ?? controls.sessionConfigOptions ?? [];
         return { configOptions } satisfies SetSessionConfigOptionResponse;
       },
-      prompt(request: { sessionId: string }) {
+      prompt(request: { sessionId: string; prompt?: unknown }) {
         calls.push(`session/prompt:${request.sessionId}`);
+        prompts.push(request.prompt);
         if (controls.answerText !== undefined) {
           notifySessionUpdate?.({
             sessionId: request.sessionId,
@@ -128,6 +133,7 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
   return {
     connector,
     calls,
+    prompts,
     get spawnCount() {
       return spawnCount;
     },
@@ -671,4 +677,146 @@ test("refreshes the snapshot on config_option_update notifications", async (t) =
   handle.process.interrupt();
   t.mock.timers.tick(CANCEL_GRACE_MS);
   await assert.rejects(handle.result, AgentRunCancelledError);
+});
+
+// ---------------------------------------------------------------------------
+// PR #147 M2/M3：附件内容块类型矩阵（image / resource_link）与 URI 编码。
+// ---------------------------------------------------------------------------
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { buildPromptContent } from "../src/core/acp-runtime.ts";
+import type { MessageAttachment } from "../src/shared/types.ts";
+import type { AgentCapabilities } from "@agentclientprotocol/sdk";
+
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function makeAttachment(overrides: Partial<MessageAttachment> & Pick<MessageAttachment, "id" | "kind" | "path">): MessageAttachment {
+  return {
+    mimeType: "application/octet-stream",
+    filename: `${overrides.id}.bin`,
+    url: `/api/attachments/ws/conv/${overrides.id}`,
+    size: 1024,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  } as MessageAttachment;
+}
+
+test("no attachments yield a single text block", () => {
+  const blocks = buildPromptContent("hello", undefined, undefined);
+  assert.deepEqual(blocks, [{ type: "text", text: "hello" }]);
+  assert.deepEqual(buildPromptContent("hello", [], undefined), [{ type: "text", text: "hello" }]);
+});
+
+test("image capability on: images become native image blocks, files stay resource_link", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-acp-matrix-"));
+  try {
+    const imagePath = path.join(tempDir, "photo.png");
+    fs.writeFileSync(imagePath, PNG_BYTES);
+    const capabilities = { promptCapabilities: { image: true } } as AgentCapabilities;
+    const attachments = [
+      makeAttachment({ id: "img-1", kind: "image", mimeType: "image/png", filename: "photo.png", path: imagePath, size: PNG_BYTES.length }),
+      makeAttachment({ id: "pdf-1", kind: "file", mimeType: "application/pdf", filename: "spec.pdf", path: path.join(tempDir, "spec.pdf"), size: 4096 }),
+      makeAttachment({ id: "txt-1", kind: "file", mimeType: "text/plain", filename: "notes.md", path: path.join(tempDir, "notes.md"), size: 256 }),
+    ];
+
+    const blocks = buildPromptContent("review these", attachments, capabilities);
+
+    assert.equal(blocks.length, 4, "text + one block per attachment, in input order");
+    assert.deepEqual(blocks[0], { type: "text", text: "review these" });
+    assert.equal(blocks[1]!.type, "image");
+    assert.equal((blocks[1] as { mimeType?: string }).mimeType, "image/png", "image MIME must come from the server-side attachment metadata");
+    assert.equal((blocks[1] as { data?: string }).data, PNG_BYTES.toString("base64"), "image bytes must be read from the permanent attachment path");
+    assert.match((blocks[1] as { uri?: string }).uri ?? "", /^file:\/\//, "image uri must be a file URL");
+    assert.equal(blocks[2]!.type, "resource_link");
+    assert.equal(blocks[3]!.type, "resource_link");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("image capability off: images degrade to resource_link instead of a text path dump", () => {
+  const attachments = [
+    makeAttachment({ id: "img-1", kind: "image", mimeType: "image/png", filename: "photo.png", path: "/data/photo.png", size: 2048 }),
+  ];
+
+  const noCapability = buildPromptContent("look", attachments, undefined);
+  const capabilityOff = buildPromptContent("look", attachments, {} as AgentCapabilities);
+
+  for (const blocks of [noCapability, capabilityOff]) {
+    assert.equal(blocks.length, 2);
+    assert.equal(blocks[1]!.type, "resource_link", "images must degrade to resource_link without the image capability");
+  }
+  const link = capabilityOff[1] as { uri: string; name: string; mimeType: string; size: number };
+  assert.equal(link.name, "photo.png", "resource_link name comes from attachment metadata");
+  assert.equal(link.mimeType, "image/png", "resource_link mimeType comes from attachment metadata");
+  assert.equal(link.size, 2048, "resource_link size comes from attachment metadata");
+});
+
+test("resource_link fields come exclusively from the validated attachment metadata", () => {
+  const attachment = makeAttachment({
+    id: "pdf-9",
+    kind: "file",
+    mimeType: "application/pdf",
+    filename: "季度报告.pdf",
+    path: "/data/quarterly.pdf",
+    size: 40960,
+  });
+
+  const blocks = buildPromptContent("read it", [attachment], {} as AgentCapabilities);
+  const link = blocks[1] as { uri: string; name: string; mimeType: string; size: number };
+  assert.equal(link.uri, `file://${"/data/quarterly.pdf"}`);
+  assert.equal(link.name, "季度报告.pdf");
+  assert.equal(link.mimeType, "application/pdf");
+  assert.equal(link.size, 40960);
+});
+
+test("file URIs percent-encode spaces, non-ASCII characters and fragments", () => {
+  const attachment = makeAttachment({
+    id: "win-1",
+    kind: "file",
+    mimeType: "application/pdf",
+    filename: "spec #1.pdf",
+    path: process.platform === "win32"
+      ? "C:\\Users\\张 三\\spec #1.pdf"
+      : "/tmp/张 三/spec #1.pdf",
+    size: 100,
+  });
+
+  const blocks = buildPromptContent("open", [attachment], {} as AgentCapabilities);
+  const link = blocks[1] as { uri: string };
+  // pathToFileURL 处理驱动器盘符、斜杠方向与百分号编码：空格 %20、
+  // 中文按 UTF-8 百分号编码、`#` 编码为 %23（否则会被当作 fragment 截断）。
+  const expected = process.platform === "win32"
+    ? "file:///C:/Users/%E5%BC%A0%20%E4%B8%89/spec%20%231.pdf"
+    : "file:///tmp/%E5%BC%A0%20%E4%B8%89/spec%20%231.pdf";
+  assert.equal(link.uri, expected);
+  assert.ok(!link.uri.includes(" "), "URI must not contain raw spaces");
+  assert.ok(!link.uri.includes("#"), "URI must not contain a raw fragment marker");
+});
+
+test("runAcp forwards the attachment list into the session prompt", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-acp-prompt-"));
+  try {
+    const imagePath = path.join(tempDir, "chart.png");
+    fs.writeFileSync(imagePath, PNG_BYTES);
+    const attachments = [
+      makeAttachment({ id: "img-1", kind: "image", mimeType: "image/png", filename: "chart.png", path: imagePath, size: PNG_BYTES.length }),
+    ];
+    const fake = fakeConnector({
+      capabilities: { promptCapabilities: { image: true } } as AgentCapabilities,
+      answerText: "ok",
+    });
+    const handle = runAcp(runOptions({ attachments }), definition, fake.connector);
+    await handle.result;
+
+    const blocks = fake.prompts[0] as Array<{ type: string; mimeType?: string }>;
+    assert.ok(blocks, "prompt request must have been issued");
+    assert.equal(blocks[0]!.type, "text");
+    assert.equal(blocks[1]!.type, "image", "attachment must reach session/prompt as a native image block");
+    assert.equal(blocks[1]!.mimeType, "image/png");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });

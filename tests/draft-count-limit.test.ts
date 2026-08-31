@@ -47,7 +47,7 @@ test("Issue #88: countDrafts returns correct count", async () => {
         workspaceId: "ws-1",
         conversationId: "conv-1",
         data: VALID_PNG,
-        mimeType: "image/png",
+        ext: "png",
         filename: `test-${i}.png`,
       });
     }
@@ -97,7 +97,7 @@ test("Issue #88: Cleanup removes expired drafts within 1 hour", async () => {
       workspaceId: "ws-1",
       conversationId: "conv-1",
       data: VALID_PNG,
-      mimeType: "image/png",
+      ext: "png",
       filename: "test.png",
     });
 

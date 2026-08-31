@@ -5,11 +5,14 @@ import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../cor
 import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
 import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
+import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
 import {
   AddIcon,
+  AttachIcon,
   ChartIcon,
   CheckIcon,
   ChatBubbleHistoryIcon,
@@ -172,6 +175,10 @@ export function App() {
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
   const [pathToast, setPathToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  /** 附件上传生命周期：上下文版本绑定的上传计数与附件槽位（PR #147 M1 竞态修复）。 */
+  const attachmentUploadLifecycleRef = useRef(createAttachmentUploadLifecycle());
+  const [uploadingAttachments, setUploadingAttachments] = useState(0);
   const [isRefreshingRuntimes, setIsRefreshingRuntimes] = useState(false);
   const [isSwitchingInteractionMode, setIsSwitchingInteractionMode] = useState(false);
   const [showInteractionModeMenu, setShowInteractionModeMenu] = useState(false);
@@ -389,9 +396,12 @@ export function App() {
     refreshWorkspaces();
   }, [state.workspace.id, state.conversation.id]);
 
-  // Clear pending attachments when workspace or conversation changes
-  // to avoid preview URL pointing to wrong workspace/conversation path
-  useEffect(() => {
+  // 切换工作区或会话时：作废进行中的上传（旧请求完成后不得回写新会话的
+  // 输入区或递减新会话的计数与槽位），并清空输入区附件，避免预览 URL 指
+  // 向错误的工作区/会话路径（PR #147 M1）。
+  useLayoutEffect(() => {
+    attachmentUploadLifecycleRef.current.resetContext();
+    setUploadingAttachments(0);
     setPendingAttachments([]);
   }, [state.workspace.id, state.conversation.id]);
 
@@ -610,12 +620,27 @@ export function App() {
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // 权威拦截：附件上传未完成时不允许发送（同步计数，不依赖渲染时序）。
+    if (attachmentUploadLifecycleRef.current.getUploadingCount() > 0) {
+      setAttachmentToast("附件还在上传中，请稍候再发送");
+      window.setTimeout(() => setAttachmentToast(null), 3000);
+      return;
+    }
     const trimmed = content.trim();
     if (!trimmed || isSending || isSwitchingInteractionMode) {
       return;
     }
 
     setIsSending(true);
+    // 发送链路绑定上下文快照（PR #147 M1）：目标经 query 参数随请求发送
+    // （#155 页面上下文契约），服务端全程使用它归属本条消息；请求在途
+    // 期间切换页面时，业务结算仍按发起时的会话完成，但响应到达后不得
+    // 清空或污染新页面的输入区、附件状态与槽位。
+    const lifecycle = attachmentUploadLifecycleRef.current;
+    const sendContext = lifecycle.captureContext({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversation.id,
+    });
     const requestedContext = currentPageContext();
     if (!draftMessageIdRef.current || draftMessageIdRef.current.content !== trimmed) {
       draftMessageIdRef.current = { id: crypto.randomUUID(), content: trimmed };
@@ -641,7 +666,8 @@ export function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`Message request failed: ${response.status}`);
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as { message?: string }).message ?? `Message request failed: ${response.status}`);
       }
 
       const sent = await response.json() as { conversationId?: string };
@@ -663,18 +689,29 @@ export function App() {
         refreshState(nextContext);
       }
 
-      draftMessageIdRef.current = null;
-      setContent("");
-      setPendingAttachments([]);
-      isNearBottomRef.current = true;
-      setIsNearBottom(true);
-      setShowNewMessageHint(false);
-      window.setTimeout(() => inputRef.current?.focus(), 0);
-    } catch {
-      setState((current) => ({
-        ...current,
-        messages: [...current.messages, createLocalSystemMessage("发送失败，请检查本地服务是否正在运行。")],
-      }));
+      // 仅当仍在发起发送的上下文中才清空输入区；过期响应跳过全部 UI 结算。
+      if (!lifecycle.isStale(sendContext)) {
+        draftMessageIdRef.current = null;
+        setContent("");
+        setPendingAttachments([]);
+        lifecycle.clearSlots(sendContext);
+        isNearBottomRef.current = true;
+        setIsNearBottom(true);
+        setShowNewMessageHint(false);
+        window.setTimeout(() => inputRef.current?.focus(), 0);
+      }
+    } catch (error) {
+      // 过期上下文的失败提示不再注入当前会话的消息列表。
+      if (!lifecycle.isStale(sendContext)) {
+        // 附件草稿保留在输入区，修正后可直接重发。
+        const detail = error instanceof Error && error.message && !error.message.startsWith("Message request failed")
+          ? error.message
+          : null;
+        setState((current) => ({
+          ...current,
+          messages: [...current.messages, createLocalSystemMessage(detail ? `发送失败：${detail}` : "发送失败，请检查本地服务是否正在运行。")],
+        }));
+      }
     } finally {
       setIsSending(false);
     }
@@ -786,83 +823,143 @@ export function App() {
     }
   }
 
-  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const items = event.clipboardData?.items;
-    if (!items) return;
-
-    const imageFiles: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item?.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) imageFiles.push(file);
-      }
-    }
-    if (imageFiles.length === 0) return;
-
-    // Prevent default to avoid the image being pasted as text; images are handled separately
-    event.preventDefault();
+  /** 统一附件上传入口：文件选择、文件粘贴、图片粘贴与文本转附件都走这里。 */
+  async function uploadAttachmentFiles(files: File[]) {
+    if (files.length === 0) return;
 
     const maxFiles = ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE;
-    if (pendingAttachments.length + imageFiles.length > maxFiles) {
-      setAttachmentToast(`最多只能添加 ${maxFiles} 张图片`);
+    const lifecycle = attachmentUploadLifecycleRef.current;
+    // 以同步计数的“已占用槽位（含上传中）”判断上限：并发批次合计不会超过 5 个。
+    if (lifecycle.getSlotCount() + files.length > maxFiles) {
+      setAttachmentToast(`最多只能添加 ${maxFiles} 个附件`);
       window.setTimeout(() => setAttachmentToast(null), 3000);
       return;
     }
+    // 每批上传绑定发起时的工作区/会话快照；请求显式携带目标 ID，服务端
+    // 不再依赖全局 active 指针（PR #147 M1：上传中切换会话不得错投）。
+    const uploadContext = lifecycle.beginUpload({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversation.id,
+    }, files.length);
+    setUploadingAttachments(lifecycle.getUploadingCount());
 
-    const uploadContext = currentPageContext();
-    for (const file of imageFiles.slice(0, maxFiles - pendingAttachments.length)) {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = (reader.result as string).split(",")[1];
-        if (!base64) return;
-
-        try {
-          const response = await fetch(withPageContext("/api/attachments/drafts", uploadContext), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              data: base64,
-              mimeType: file.type,
-              filename: file.name || "pasted-image.png",
-            }),
-          });
-          if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            setAttachmentToast((err as { message?: string }).message ?? "图片上传失败");
-            window.setTimeout(() => setAttachmentToast(null), 3000);
-            return;
-          }
-          const result = await response.json();
-          if (result.ok && result.attachment) {
-            const currentContext = readPageContext(window.location.search);
-            const isCurrentPage = currentContext.workspaceId === uploadContext.workspaceId
-              && currentContext.conversationId === uploadContext.conversationId;
-            if (isCurrentPage) {
-              setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
-            } else {
-              // Do not let an upload that started on another page become a
-              // draft for the newly selected conversation.
-              const attachment = result.attachment as DraftAttachmentInfo;
-              void fetch(`/api/attachments/drafts/${uploadContext.workspaceId}/${uploadContext.conversationId}/${attachment.id}?workspaceId=${encodeURIComponent(uploadContext.workspaceId)}&conversationId=${encodeURIComponent(uploadContext.conversationId)}`, { method: "DELETE" });
-            }
-          }
-        } catch {
-          setAttachmentToast("图片上传失败");
+    for (const file of files) {
+      // 上下文已过期（切换了工作区/会话）：停止上传剩余文件。其槽位随
+      // resetContext 清零消失，不再释放（释放会污染新会话的计数）。
+      if (lifecycle.isStale(uploadContext)) {
+        break;
+      }
+      const base64 = await readFileAsBase64(file);
+      if (!base64) {
+        lifecycle.releaseSlots(uploadContext);
+        continue;
+      }
+      try {
+        // 目标经 query 参数随请求发送（#155 页面上下文契约）：上传进行中
+        // 切换会话时，文件仍保存到发起上传的会话目录，不会错投到新会话。
+        const response = await fetch(withPageContext("/api/attachments/drafts", uploadContext), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            data: base64,
+            mimeType: file.type,
+            // 剪贴板图片可能没有文件名：回退到固定名，保证服务端可校验扩展名。
+            filename: file.name || (file.type.startsWith("image/") ? "pasted-image.png" : ""),
+          }),
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          setAttachmentToast((err as { message?: string }).message ?? "附件上传失败");
           window.setTimeout(() => setAttachmentToast(null), 3000);
+          lifecycle.releaseSlots(uploadContext);
+          continue;
         }
-      };
-      reader.readAsDataURL(file);
+        const result = await response.json();
+        if (!(result.ok && result.attachment)) {
+          lifecycle.releaseSlots(uploadContext);
+          continue;
+        }
+        if (lifecycle.isStale(uploadContext)) {
+          // 过期结果：尽力删除已生成的草稿，绝不回写当前输入区；槽位同样
+          // 不再释放（同上），避免递减新会话的占用。
+          void fetch(
+            `/api/attachments/drafts/${uploadContext.workspaceId}/${uploadContext.conversationId}/${result.attachment.id}`,
+            { method: "DELETE" },
+          ).catch(() => { /* best effort */ });
+          continue;
+        }
+        setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
+      } catch {
+        setAttachmentToast("附件上传失败");
+        window.setTimeout(() => setAttachmentToast(null), 3000);
+        lifecycle.releaseSlots(uploadContext);
+      }
+    }
+
+    // 批次结束释放上传计数；过期回调不触碰新会话的计数与渲染态。
+    if (lifecycle.finishUpload(uploadContext)) {
+      setUploadingAttachments(lifecycle.getUploadingCount());
+    }
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+
+    // 文件（含图片）：优先 files，其次 items 中的 file 条目。
+    const pastedFiles: File[] = [];
+    if (clipboard.files?.length) {
+      for (const file of Array.from(clipboard.files)) pastedFiles.push(file);
+    } else {
+      const items = clipboard.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item?.kind === "file") {
+            const file = item.getAsFile();
+            if (file) pastedFiles.push(file);
+          }
+        }
+      }
+    }
+
+    if (pastedFiles.length > 0) {
+      // 浏览器能否暴露 Finder/Explorer 复制的文件取决于平台；拿不到时用户仍可用“添加附件”。
+      event.preventDefault();
+      void uploadAttachmentFiles(pastedFiles);
+      return;
+    }
+
+    // 部分浏览器把复制的文件仅暴露为 file:// 文本：无法读取内容，引导改用文件选择。
+    if (looksLikeFileUrlPaste(clipboard.getData("text/plain"))) {
+      event.preventDefault();
+      setAttachmentToast("当前浏览器无法读取复制文件的内容，请使用“添加附件”按钮选择文件。");
+      window.setTimeout(() => setAttachmentToast(null), 3000);
+      return;
     }
   }
 
   async function removePendingAttachment(id: string) {
+    const lifecycle = attachmentUploadLifecycleRef.current;
+    // 删除请求绑定发起时的上下文快照：在途期间切换会话后，槽位释放
+    // 对过期上下文直接忽略，不递减新会话的占用（PR #147 M1）。
+    const removeContext = lifecycle.captureContext({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversation.id,
+    });
+    const hadAttachment = pendingAttachments.some((a) => a.id === id);
     try {
-      await fetch(`/api/attachments/drafts/${state.workspace.id}/${state.conversation.id}/${id}?workspaceId=${encodeURIComponent(state.workspace.id)}&conversationId=${encodeURIComponent(state.conversation.id)}`, {
+      await fetch(`/api/attachments/drafts/${removeContext.workspaceId}/${removeContext.conversationId}/${id}?workspaceId=${encodeURIComponent(removeContext.workspaceId)}&conversationId=${encodeURIComponent(removeContext.conversationId)}`, {
         method: "DELETE",
       });
     } catch { /* best effort */ }
-    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+    if (hadAttachment) {
+      lifecycle.removeSlot(removeContext);
+    }
+    // 过期回调不得触碰当前输入区 state（即使 UUID 过滤通常为 no-op）。
+    if (!lifecycle.isStale(removeContext)) {
+      setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+    }
   }
 
   async function interruptChain() {
@@ -1602,23 +1699,53 @@ export function App() {
               <div className="attachmentPreviewBar">
                 {pendingAttachments.map((att) => (
                   <div key={att.id} className="attachmentPreviewItem">
-                    <img
-                      src={att.previewUrl}
-                      alt={att.filename}
-                      className="attachmentPreviewThumb"
-                      onClick={() => setPreviewAttachment(att)}
-                      title="点击预览"
-                    />
-                    <button
-                      type="button"
-                      className="attachmentPreviewRemove"
-                      onClick={() => removePendingAttachment(att.id)}
-                      title="移除图片"
-                    >&times;</button>
+                    {att.kind === "image" && att.previewUrl ? (
+                      <>
+                        <img
+                          src={att.previewUrl}
+                          alt={att.filename}
+                          className="attachmentPreviewThumb"
+                          onClick={() => setPreviewAttachment(att)}
+                          title="点击预览"
+                        />
+                        <button
+                          type="button"
+                          className="attachmentPreviewRemove"
+                          onClick={() => removePendingAttachment(att.id)}
+                          title="移除图片"
+                        >&times;</button>
+                      </>
+                    ) : (
+                      <div className="attachmentFileChip" title={att.filename}>
+                        <span className="attachmentFileChipName">{att.filename}</span>
+                        <span className="attachmentFileChipMeta">{formatFileSize(att.size)}</span>
+                        <button
+                          type="button"
+                          className="attachmentPreviewRemove"
+                          onClick={() => removePendingAttachment(att.id)}
+                          title="移除附件"
+                          aria-label={`移除附件 ${att.filename}`}
+                        >&times;</button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              multiple
+              accept={attachmentAcceptAttribute()}
+              className="attachmentFileInput"
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                event.target.value = "";
+                void uploadAttachmentFiles(files);
+              }}
+            />
             <textarea
               ref={inputRef}
               value={content}
@@ -1674,6 +1801,18 @@ export function App() {
               />
             ) : null}
             <div className="composerModeRow">
+              <div className="attachmentControl">
+                <button
+                  type="button"
+                  className="attachmentControlTrigger"
+                  onClick={() => attachmentInputRef.current?.click()}
+                  disabled={!hasWorkspace || !hasEnabledAgent}
+                  title="添加附件（图片、PDF、文本或代码文件）"
+                  aria-label="添加附件"
+                >
+                  <AttachIcon className="attachmentControlIcon" />
+                </button>
+              </div>
               <div className="interactionModeControl">
                 <button
                   type="button"
@@ -1774,8 +1913,14 @@ export function App() {
                 {isInterrupting || hasCancellingRun ? <><span className="sendSpinner" aria-hidden="true" />正在停止…</> : "停止所有任务"}
               </Button>
             ) : null}
-            <Button type="submit" theme="primary" icon={<SendIcon />} disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode}>
-              {isSending ? <span className="sendSpinner" aria-hidden="true" /> : "发送"}
+            <Button
+              type="submit"
+              theme="primary"
+              icon={<SendIcon />}
+              disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode || uploadingAttachments > 0}
+              title={uploadingAttachments > 0 ? "附件上传中，完成后可发送" : undefined}
+            >
+              {isSending ? <span className="sendSpinner" aria-hidden="true" /> : uploadingAttachments > 0 ? "上传中…" : "发送"}
             </Button>
             </div>
           </div>
@@ -2278,20 +2423,34 @@ function MessageRow({
         {message.attachments?.length ? (
           <div className="messageAttachments">
             {message.attachments.map((att) => (
-              <a
-                key={att.id}
-                href={att.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="messageAttachmentLink"
-              >
-                <img
-                  src={att.url}
-                  alt={att.filename}
-                  className="messageAttachmentThumb"
-                  loading="lazy"
-                />
-              </a>
+              att.kind === "image" ? (
+                <a
+                  key={att.id}
+                  href={att.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="messageAttachmentLink"
+                >
+                  <img
+                    src={att.url}
+                    alt={att.filename}
+                    className="messageAttachmentThumb"
+                    loading="lazy"
+                  />
+                </a>
+              ) : (
+                <a
+                  key={att.id}
+                  href={att.url}
+                  download={att.filename}
+                  className="messageAttachmentFile"
+                  title={`下载 ${att.filename}`}
+                >
+                  <AttachIcon className="messageAttachmentFileIcon" />
+                  <span className="messageAttachmentFileName">{att.filename}</span>
+                  <span className="messageAttachmentFileSize">{formatFileSize(att.size)}</span>
+                </a>
+              )
             ))}
           </div>
         ) : null}
@@ -3955,6 +4114,31 @@ function scrollMessagesToBottom(element: HTMLDivElement | null): void {
   }
 
   element.scrollTop = element.scrollHeight;
+}
+
+function readFileAsBase64(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      resolve(base64 || null);
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
+/** 附件 chip 使用的友好大小（B/KB/MB）。 */
+function formatFileSize(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+/** 剪贴板文本整体是 file:// URI（单行或多行）时视为“复制的文件”，无法作为文本粘贴。 */
+function looksLikeFileUrlPaste(text: string): boolean {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  return lines.length > 0 && lines.every((line) => line.startsWith("file://"));
 }
 
 function createLocalSystemMessage(content: string): ChatMessage {

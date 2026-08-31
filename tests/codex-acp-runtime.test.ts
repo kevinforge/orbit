@@ -12,6 +12,7 @@ import {
 } from "../src/core/codex-acp-runtime.ts";
 import { createAcpRuntime, type AcpRuntimeDefinition } from "../src/core/acp-runtime.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
+import type { MessageAttachment } from "../src/shared/types.ts";
 
 type FakeOptions = {
   capabilities?: Awaited<ReturnType<CodexAcpConnection["initialize"]>>["agentCapabilities"];
@@ -325,6 +326,41 @@ test("resumes an existing Codex ACP session", async () => {
   assert.equal(await runtime.run(runOptions({ resumeSessionId: "existing-session" })).result, "resumed");
   assert.ok(fake.calls.some((call) => call.method === "session/resume"));
   assert.ok(!fake.calls.some((call) => call.method === "session/new"));
+});
+
+test("degrades attached images to resource_link when the image capability is off", async () => {
+  const fake = fakeConnector({
+    // Codex 未声明 promptCapabilities.image：图片必须降级为 resource_link，
+    // 不再回退为提示词里的本地路径文本（PR #147 M2）。
+    onPrompt(notify) {
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "link received" },
+        },
+      });
+    },
+  });
+  const runtime = createCodexAcpRuntime(fake.connector);
+  const attachments: MessageAttachment[] = [
+    {
+      id: "img-1", kind: "image", mimeType: "image/png", filename: "diagram.png",
+      path: "/data/diagram.png", url: "/api/attachments/ws/conv/img-1", size: 2048,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  assert.equal(await runtime.run(runOptions({ attachments })).result, "link received");
+
+  const prompt = fake.calls.find((call) => call.method === "session/prompt")!.value as {
+    prompt: Array<{ type: string; uri?: string; name?: string; mimeType?: string; size?: number }>;
+  };
+  assert.equal(prompt.prompt.length, 2, "text + degraded resource_link");
+  assert.equal(prompt.prompt[1]?.type, "resource_link");
+  assert.equal(prompt.prompt[1]?.name, "diagram.png");
+  assert.equal(prompt.prompt[1]?.mimeType, "image/png");
+  assert.equal(prompt.prompt[1]?.size, 2048);
+  assert.match(prompt.prompt[1]?.uri ?? "", /^file:\/\//);
 });
 
 test("Codex ACP cancelled turns expose a typed cancellation error", async () => {

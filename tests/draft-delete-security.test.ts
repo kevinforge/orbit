@@ -28,7 +28,7 @@ test("Issue #86: deleteDraft validates path isolation", async () => {
       workspaceId: "ws-1",
       conversationId: "conv-1",
       data: Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
-      mimeType: "image/png",
+      ext: "png",
       filename: "test.png",
     });
 
@@ -37,7 +37,7 @@ test("Issue #86: deleteDraft validates path isolation", async () => {
       workspaceId: "ws-2",
       conversationId: "conv-2",
       data: Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
-      mimeType: "image/png",
+      ext: "png",
       filename: "test.png",
     });
 
@@ -75,7 +75,7 @@ test("Issue #86: deleteDraft rejects path traversal attempts", async () => {
       workspaceId: "ws-1",
       conversationId: "conv-1",
       data: Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
-      mimeType: "image/png",
+      ext: "png",
       filename: "test.png",
     });
 

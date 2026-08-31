@@ -5,7 +5,7 @@ import { EventBus } from "../src/core/event-bus.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
 import { MessageStore } from "../src/core/message-store.ts";
 import { classifyTerminalActivities, classifyTerminalActivity, RunManager } from "../src/core/run-manager.ts";
-import type { AgentActivityEvent, AgentId, ChatMessage, RunResult, RuntimeEvent } from "../src/shared/types.ts";
+import type { AgentActivityEvent, AgentId, ChatMessage, MessageAttachment, RunResult, RuntimeEvent } from "../src/shared/types.ts";
 
 /** 捕获某个 run 的实时 run.activity 事件（工具/状态/过程文本都只走这条通道）。 */
 function captureRunActivity(eventBus: EventBus, runId: string): AgentActivityEvent[] {
@@ -140,6 +140,62 @@ test("cancelAgentRuns clears a supervisor queue and active run", async () => {
   assert.equal(active.status, "cancelled");
 });
 
+test("mixed attachments: the full metadata list reaches the runtime and the prompt intact", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  let sentAttachments: (readonly MessageAttachment[] | undefined) | undefined;
+  let promptedAttachments: unknown;
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(_runId: string, _prompt: string, attachments?: readonly MessageAttachment[]) {
+            sentAttachments = attachments;
+            return Promise.resolve({ content: "done" });
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId: AgentId, prompt: string, _sourceMessageId?: string, sourceAttachments?: MessageAttachment[]) {
+      promptedAttachments = sourceAttachments;
+      return prompt;
+    },
+    onRunCompleted() {},
+  });
+
+  const attachments: MessageAttachment[] = [
+    {
+      id: "a1", kind: "image", mimeType: "image/png", filename: "shot.png",
+      path: "/data/shot.png", url: "/api/attachments/ws/conv/a1", size: 2048,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "a2", kind: "file", mimeType: "application/pdf", filename: "spec.pdf",
+      path: "/data/spec.pdf", url: "/api/attachments/ws/conv/a2", size: 4096,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "a3", kind: "file", mimeType: "text/plain", filename: "example.ts",
+      path: "/data/example.ts", url: "/api/attachments/ws/conv/a3", size: 1024,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  manager.enqueue("developer", "work", { ...createSourceMessage(), attachments });
+
+  // RunManager 不再把附件压扁成 imagePaths：完整元数据（含类型、MIME、
+  // 大小与路径）无损传给 runtime，由 ACP 层决定 image / resource_link。
+  assert.deepEqual(
+    sentAttachments,
+    attachments,
+    "runtime must receive the full attachment metadata list, images and files alike",
+  );
+  assert.equal((promptedAttachments as MessageAttachment[]).length, 3, "prompt builder must receive every attachment");
+});
+
 test("propagates the source approval mode to the agent run and result message", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
@@ -151,7 +207,7 @@ test("propagates the source approval mode to the agent run and result message", 
     agents: {
       get() {
         return {
-          send(_runId, _prompt, _imagePaths, approvalMode) {
+          send(_runId, _prompt, _attachments, approvalMode) {
             receivedMode = approvalMode;
             return Promise.resolve({ content: "done" });
           },

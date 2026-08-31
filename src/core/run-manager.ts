@@ -23,7 +23,7 @@ const MAX_TERMINAL_RUN_INDEX_SIZE = 1024;
 
 type AgentRunner = {
   get(agentId: AgentId): {
-    send(runId: string, prompt: string, imagePaths?: string[], approvalMode?: ApprovalMode): Promise<RunResult>;
+    send(runId: string, prompt: string, attachments?: readonly MessageAttachment[], approvalMode?: ApprovalMode): Promise<RunResult>;
     /** Request runtime cancellation; the runtime may fall back to process termination. */
     interrupt(runId: string): boolean;
   };
@@ -58,7 +58,7 @@ export type ManagedRun = {
    * 终态 message.updated 据此让客户端显式剔除最终回答分片，无需推断。
    */
   excludedAnswerGroup?: string;
-  /** Image attachments from the source message, passed to the runtime. */
+  /** Attachments from the source message, passed to the runtime. */
   sourceAttachments?: MessageAttachment[];
 };
 
@@ -69,7 +69,7 @@ export type RunManagerOptions = {
   agents: AgentRunner;
   messages: MessageStore;
   eventBus: EventBus;
-  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, imagePaths?: string[], interactionMode?: InteractionMode) => string;
+  buildPrompt: (agentId: AgentId, prompt: string, sourceMessageId?: string, sourceAttachments?: MessageAttachment[], interactionMode?: InteractionMode) => string;
   onRunCompleted: (message: ChatMessage) => void;
   /** Resolves a user-facing display name for an agent id (defaults to the raw id). */
   getAgentLabel?: (agentId: AgentId) => string;
@@ -439,18 +439,19 @@ export class RunManager {
 
     this.appendActivity(run, "运行已开始。");
 
-    const imagePaths = run.sourceAttachments?.map((a) => a.path);
+    // 完整附件元数据直达 runtime：由 ACP 层按能力决定 image / resource_link，
+    // 不在 RunManager 压扁成图片路径列表（PR #147 M2/M3）。
     // Supervisor prompts describe coordination intent, not the triggering message itself.
     // Keep that source message in conversation history so the supervisor can see the
     // employee result or user request it is expected to coordinate.
     const excludedSourceMessageId = run.origin === "supervisor" ? undefined : run.sourceMessage.id;
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, imagePaths, run.interactionMode);
+    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, run.sourceAttachments, run.interactionMode);
     let result: Promise<RunResult>;
     try {
       result = this.options.agents.get(run.agentId).send(
         run.id,
         runtimePrompt,
-        imagePaths,
+        run.sourceAttachments,
         run.sourceMessage.approvalMode ?? "ask",
       );
     } catch (error: unknown) {

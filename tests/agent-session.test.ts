@@ -8,7 +8,7 @@ import { AgentSession } from "../src/core/agent-session.ts";
 import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
-import type { AgentModelStateSnapshot } from "../src/shared/types.ts";
+import type { AgentModelStateSnapshot, MessageAttachment } from "../src/shared/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-agent-session-test-"));
@@ -309,6 +309,101 @@ test("resume failure clears stale session and retries without resume", async () 
   assert.equal(calls[0]!.resumeSessionId, "bad-session");
   assert.equal(calls[1]!.resumeSessionId, undefined);
   assert.equal(store.load("codebuddy", "default", "developer")!.sessionId, "fresh-session");
+});
+
+test("send passes the full attachment metadata to the runtime", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const calls: AgentRuntimeRunOptions[] = [];
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      calls.push(options);
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: Promise.resolve("clean final"),
+        sessionId: Promise.resolve("sess-with-attachments"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  const attachments: MessageAttachment[] = [
+    {
+      id: "img-1", kind: "image", mimeType: "image/png", filename: "shot.png",
+      path: "/data/shot.png", url: "/api/attachments/ws/conv/img-1", size: 2048,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "pdf-1", kind: "file", mimeType: "application/pdf", filename: "spec.pdf",
+      path: "/data/spec.pdf", url: "/api/attachments/ws/conv/pdf-1", size: 4096,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  session.start();
+  await session.send("run-1", "hello", attachments);
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]!.attachments, attachments, "runtime options must carry the intact attachment list");
+});
+
+test("session restore retry carries the same attachment list", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  store.save("codebuddy", "default", "developer", {
+    agentId: "developer",
+    runtime: "codebuddy",
+    sessionId: "stale-session",
+    lastRunAt: new Date().toISOString(),
+    runCount: 1,
+  });
+  const calls: AgentRuntimeRunOptions[] = [];
+  const runtime: AgentRuntime = {
+    kind: "codebuddy",
+    run(options) {
+      calls.push(options);
+      return {
+        process: { kill() {}, pid: 12345, interrupt() {} },
+        result: calls.length === 1
+          ? Promise.reject(new Error("session not found: stale-session"))
+          : Promise.resolve("clean final"),
+        sessionId: Promise.resolve(calls.length === 1 ? null : "fresh-session"),
+      };
+    },
+  };
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: "D:/workspace",
+    runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "default",
+  });
+
+  const attachments: MessageAttachment[] = [
+    {
+      id: "pdf-1", kind: "file", mimeType: "application/pdf", filename: "spec.pdf",
+      path: "/data/spec.pdf", url: "/api/attachments/ws/conv/pdf-1", size: 4096,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  session.start();
+  await session.send("run-1", "hello", attachments);
+
+  assert.equal(calls.length, 2, "restore failure must retry once");
+  assert.deepEqual(calls[0]!.attachments, attachments, "first attempt carries the attachments");
+  assert.deepEqual(calls[1]!.attachments, attachments, "retry after restore failure must carry the same attachments");
 });
 
 test("Claude API deserialize failure clears stale resume session and retries without resume", async () => {

@@ -804,3 +804,40 @@ test("rewrite refuses to wipe a non-empty shard when all reads fail", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("attachmentFilename resolves the user's original filename from any shard", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-msg-attach-name-"));
+  try {
+    const messagesPath = path.join(dir, "channels", "conv-1", "messages.json");
+    // One message per dated shard: `now` advances a day on every add().
+    let day = 0;
+    const store = new MessageStore(messagesPath, { now: () => new Date(2026, 0, 1 + day++) });
+    for (let i = 0; i < 5; i += 1) {
+      store.add({
+        kind: "user",
+        content: `message ${i}`,
+        attachments: [{
+          id: `att-${i}`,
+          kind: "file",
+          mimeType: "text/plain",
+          filename: `用户说明-${i}.txt`,
+          path: `/tmp/att-${i}.txt`,
+          url: `/api/attachments/ws/conv/att-${i}`,
+          size: 10,
+          createdAt: new Date().toISOString(),
+        }],
+      });
+    }
+
+    // Reopen with the default recent-shard preload: the earliest shard is NOT preloaded…
+    const reloaded = new MessageStore(messagesPath);
+    assert.equal(reloaded.list().some((message) => message.content === "message 0"), false);
+
+    // …but attachmentFilename still resolves filenames from those older shards.
+    assert.equal(reloaded.attachmentFilename("att-0"), "用户说明-0.txt");
+    assert.equal(reloaded.attachmentFilename("att-4"), "用户说明-4.txt");
+    assert.equal(reloaded.attachmentFilename("missing"), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

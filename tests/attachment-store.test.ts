@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { ATTACHMENT_LIMITS } from "../src/shared/types.ts";
 import { AttachmentStore } from "../src/core/attachment-store.ts";
+import { knownAttachmentExtension } from "../src/shared/attachment-registry.ts";
 
 function makeTmpDir(): string {
   const dir = path.join(import.meta.dirname, "..", ".test-tmp", `attach-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -67,6 +68,112 @@ test("validateImageFile rejects empty file", () => {
   assert.ok(result.error?.includes("empty"));
 });
 
+// --- validateUpload (general files: PDF / text / code) ---
+
+function makePdfBuffer(size = 100): Buffer {
+  const header = Buffer.from("%PDF-1.7\n");
+  return Buffer.concat([header, Buffer.alloc(Math.max(0, size - header.length), 0x41)]);
+}
+
+test("validateUpload accepts a PDF with %PDF- header", () => {
+  const result = AttachmentStore.validateUpload(makePdfBuffer(), "application/pdf", "spec.pdf");
+  assert.equal(result.valid, true);
+  if (result.valid) {
+    assert.equal(result.attachment.kind, "file");
+    assert.equal(result.attachment.mimeType, "application/pdf");
+    assert.equal(result.attachment.ext, "pdf");
+    assert.equal(result.attachment.filename, "spec.pdf");
+  }
+});
+
+test("validateUpload rejects a renamed file that is not a real PDF", () => {
+  const result = AttachmentStore.validateUpload(Buffer.from("just text, not a pdf"), "application/pdf", "fake.pdf");
+  assert.equal(result.valid, false);
+  assert.ok(result.error?.includes("不符"));
+});
+
+test("validateUpload accepts text and code files by extension", () => {
+  for (const [name, mime] of [
+    ["notes.txt", "text/plain"],
+    ["README.md", "text/markdown"],
+    ["index.ts", "text/typescript"],
+    ["app.py", ""],
+    ["config.yaml", "text/yaml"],
+  ] as const) {
+    const result = AttachmentStore.validateUpload(Buffer.from("hello world"), mime, name);
+    assert.equal(result.valid, true, name);
+  }
+});
+
+test("validateUpload rejects dangerous and unknown extensions", () => {
+  for (const name of ["archive.zip", "tool.exe", "run.sh", "script.bat", "lib.dll", "noext", "emoji.😀"]) {
+    const result = AttachmentStore.validateUpload(Buffer.from("payload"), "", name);
+    assert.equal(result.valid, false, name);
+    assert.ok(result.error?.includes("不支持的附件类型"), name);
+  }
+});
+
+// --- Prototype-key extensions must not bypass the whitelist ---
+
+test("extension lookup ignores inherited object keys", () => {
+  assert.equal(knownAttachmentExtension("payload.constructor"), null);
+  assert.equal(knownAttachmentExtension("evil.__proto__"), null);
+  assert.equal(knownAttachmentExtension("data.toString"), null);
+  assert.equal(knownAttachmentExtension("x.hasOwnProperty"), null);
+  // Real whitelist entries keep working, including case normalization.
+  assert.equal(knownAttachmentExtension("photo.png"), "png");
+  assert.equal(knownAttachmentExtension("README.MD"), "md");
+});
+
+test("validateUpload rejects prototype-key extensions carrying arbitrary bytes", () => {
+  for (const name of ["payload.constructor", "evil.__proto__", "data.toString"]) {
+    const result = AttachmentStore.validateUpload(Buffer.from("malicious-bytes"), "text/plain", name);
+    assert.equal(result.valid, false, name);
+    assert.ok(result.error?.includes("不支持的附件类型"), name);
+  }
+});
+
+test("saveDraft rejects prototype-key extensions before writing anything", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+  await assert.rejects(
+    () => store.saveDraft({
+      workspaceId: "ws1",
+      conversationId: "conv1",
+      data: Buffer.from("malicious"),
+      ext: "constructor",
+      filename: "evil.constructor",
+    }),
+    /Unsupported attachment extension/,
+  );
+  assert.ok(!fs.existsSync(path.join(baseDir, "tmp", "attachments", "ws1", "conv1")));
+});
+
+test("validateUpload rejects empty and oversized files regardless of kind", () => {
+  assert.equal(AttachmentStore.validateUpload(Buffer.alloc(0), "text/plain", "empty.txt").valid, false);
+  const big = Buffer.alloc(ATTACHMENT_LIMITS.MAX_FILE_SIZE + 1, 0x42);
+  assert.equal(AttachmentStore.validateUpload(big, "text/plain", "big.txt").valid, false);
+});
+
+test("validateUpload keeps the whitelist extension even when the client MIME disagrees", () => {
+  const result = AttachmentStore.validateUpload(Buffer.from("print('hi')"), "application/octet-stream", "script.py");
+  assert.equal(result.valid, true);
+  if (result.valid) {
+    assert.equal(result.attachment.ext, "py");
+    assert.equal(result.attachment.mimeType, "text/plain");
+  }
+});
+
+// --- sanitizeFilename ---
+
+test("sanitizeFilename strips paths, control characters, and mismatched extensions", () => {
+  assert.equal(AttachmentStore.sanitizeFilename("/etc/passwd", "txt"), "passwd.txt");
+  assert.equal(AttachmentStore.sanitizeFilename("..\\..\\win\\evil.exe", "png"), "evil.png");
+  assert.equal(AttachmentStore.sanitizeFilename("bad\x07name.txt", "txt"), "badname.txt");
+  assert.equal(AttachmentStore.sanitizeFilename("   .hidden", "md"), "attachment.md");
+  assert.equal(AttachmentStore.sanitizeFilename("", "pdf"), "attachment.pdf");
+});
+
 // --- saveDraft / deleteDraft ---
 
 test("saveDraft saves file and returns metadata", async () => {
@@ -78,7 +185,7 @@ test("saveDraft saves file and returns metadata", async () => {
     workspaceId: "ws1",
     conversationId: "conv1",
     data,
-    mimeType: "image/png",
+    ext: "png",
     filename: "screenshot.png",
   });
 
@@ -98,7 +205,7 @@ test("deleteDraft removes draft file", async () => {
     workspaceId: "ws1",
     conversationId: "conv1",
     data,
-    mimeType: "image/png",
+    ext: "png",
     filename: "img.png",
   });
 
@@ -127,7 +234,7 @@ test("commitDrafts moves files to permanent directory without client path", asyn
     workspaceId: "ws1",
     conversationId: "conv1",
     data,
-    mimeType: "image/png",
+    ext: "png",
     filename: "draft.png",
   });
 
@@ -140,7 +247,6 @@ test("commitDrafts moves files to permanent directory without client path", asyn
     conversationId: "conv1",
     draftAttachments: [{
       id: draft.id,
-      mimeType: "image/png",
       filename: "draft.png",
       size: draft.size,
     }],
@@ -178,23 +284,138 @@ test("commitDrafts returns empty array for empty input", async () => {
   assert.deepEqual(result, []);
 });
 
-test("commitDrafts skips missing drafts with warning instead of creating empty records", async () => {
+// PR #147 M3④：resource_link 的 URI/MIME/文件名/大小必须取自服务端已校验
+// 的永久附件元数据。即使提交请求被篡改（伪造 MIME、谎报大小、携带路径
+// 遍历文件名），进入消息与 ACP 链路的仍是服务端固化的值。
+test("commitDrafts ignores forged client metadata and uses server-validated values", async () => {
   const baseDir = makeTmpDir();
   const store = new AttachmentStore(baseDir);
+  const data = makePdfBuffer(200);
 
-  // Commit a draft that was never saved
+  const draft = await store.saveDraft({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    data,
+    ext: "pdf",
+    filename: "innocent.pdf",
+  });
+
   const attachments = await store.commitDrafts({
     workspaceId: "ws1",
     conversationId: "conv1",
     draftAttachments: [{
-      id: "nonexistent-id",
-      mimeType: "image/png",
-      filename: "ghost.png",
-      size: 100,
+      id: draft.id,
+      // 伪造字段：声明的 MIME、大小与文件名都试图篡改最终元数据。
+      mimeType: "text/html",
+      filename: "../../evil.pdf",
+      size: 1,
     }],
   });
 
-  assert.equal(attachments.length, 0, "should not produce attachment for missing draft");
+  assert.equal(attachments.length, 1);
+  const attachment = attachments[0];
+  assert.equal(attachment.mimeType, "application/pdf", "MIME must come from the stored extension, not the request");
+  assert.equal(attachment.size, data.length, "size must come from the stored file, not the request");
+  assert.equal(attachment.filename, "evil.pdf", "filename must be sanitized: no path segments survive");
+  assert.ok(!attachment.filename.includes("/"));
+  assert.ok(!attachment.filename.includes("\\"), "backslash traversal must not survive either");
+  assert.ok(attachment.path.startsWith(path.join(baseDir, "conversations")), "path must stay inside the server-side store");
+});
+
+test("commitDrafts fails the whole message when a draft is missing", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  // Commit a draft that was never saved
+  await assert.rejects(
+    () => store.commitDrafts({
+      workspaceId: "ws1",
+      conversationId: "conv1",
+      draftAttachments: [{
+        id: "nonexistent-id",
+        filename: "ghost.png",
+      }],
+    }),
+    /缺失或过期/,
+  );
+});
+
+test("commitDrafts keeps earlier drafts in place when a later draft is missing", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+  const data = makePngBuffer(200);
+
+  const draft = await store.saveDraft({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    data,
+    ext: "png",
+    filename: "kept.png",
+  });
+
+  await assert.rejects(
+    store.commitDrafts({
+      workspaceId: "ws1",
+      conversationId: "conv1",
+      draftAttachments: [
+        { id: draft.id, filename: "kept.png" },
+        { id: "missing-id", filename: "gone.pdf" },
+      ],
+    }),
+    /缺失或过期/,
+  );
+
+  // The valid draft was not moved — the message can be retried after re-upload.
+  assert.ok(fs.existsSync(draft.path), "valid draft must survive a failed commit");
+});
+
+test("commitDrafts rolls back partial copies so a failed commit stays retryable", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  const draft1 = await store.saveDraft({
+    workspaceId: "ws1", conversationId: "conv1",
+    data: makePngBuffer(100), ext: "png", filename: "one.png",
+  });
+  const draft2 = await store.saveDraft({
+    workspaceId: "ws1", conversationId: "conv1",
+    data: makePngBuffer(120), ext: "png", filename: "two.png",
+  });
+
+  // Block the SECOND attachment's permanent target with a directory so its copy fails.
+  const permDir = path.join(baseDir, "conversations", "ws1", "conv1", "attachments");
+  const blockedTarget = path.join(permDir, `${draft2.id}.png`);
+  fs.mkdirSync(blockedTarget, { recursive: true });
+
+  await assert.rejects(store.commitDrafts({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    draftAttachments: [
+      { id: draft1.id, filename: "one.png" },
+      { id: draft2.id, filename: "two.png" },
+    ],
+  }));
+
+  // The first (already copied) target is rolled back and BOTH drafts survive.
+  assert.ok(!fs.existsSync(path.join(permDir, `${draft1.id}.png`)), "partial copy must be rolled back");
+  assert.ok(fs.existsSync(draft1.path), "first draft must survive the failed commit");
+  assert.ok(fs.existsSync(draft2.path), "second draft must survive the failed commit");
+
+  // Remove the block: retrying the SAME drafts now succeeds.
+  fs.rmSync(blockedTarget, { recursive: true, force: true });
+  const attachments = await store.commitDrafts({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    draftAttachments: [
+      { id: draft1.id, filename: "one.png" },
+      { id: draft2.id, filename: "two.png" },
+    ],
+  });
+  assert.equal(attachments.length, 2);
+  assert.ok(!fs.existsSync(draft1.path), "first draft moves on retry");
+  assert.ok(!fs.existsSync(draft2.path), "second draft moves on retry");
+  assert.ok(fs.existsSync(attachments[0].path));
+  assert.ok(fs.existsSync(attachments[1].path));
 });
 
 test("commitDrafts finds actual file regardless of client mimeType", async () => {
@@ -207,7 +428,7 @@ test("commitDrafts finds actual file regardless of client mimeType", async () =>
     workspaceId: "ws1",
     conversationId: "conv1",
     data,
-    mimeType: "image/png",
+    ext: "png",
     filename: "photo.png",
   });
 
@@ -240,7 +461,7 @@ test("getAttachment returns attachment data for committed file", async () => {
     workspaceId: "ws1",
     conversationId: "conv1",
     data,
-    mimeType: "image/jpeg",
+    ext: "jpg",
     filename: "photo.jpg",
   });
 
@@ -249,7 +470,6 @@ test("getAttachment returns attachment data for committed file", async () => {
     conversationId: "conv1",
     draftAttachments: [{
       id: draft.id,
-      mimeType: "image/jpeg",
       filename: "photo.jpg",
       size: draft.size,
     }],
@@ -278,7 +498,7 @@ test("getAttachment does not match by prefix (exact extension only)", async () =
     workspaceId: "ws1",
     conversationId: "conv1",
     data,
-    mimeType: "image/png",
+    ext: "png",
     filename: "test.png",
   });
 
@@ -287,7 +507,6 @@ test("getAttachment does not match by prefix (exact extension only)", async () =
     conversationId: "conv1",
     draftAttachments: [{
       id: draft.id,
-      mimeType: "image/png",
       filename: "test.png",
       size: draft.size,
     }],
@@ -309,11 +528,11 @@ test("deleteConversationAttachments removes all attachments for a conversation",
 
   const draft1 = await store.saveDraft({
     workspaceId: "ws1", conversationId: "conv1", data: data1,
-    mimeType: "image/png", filename: "img1.png",
+    ext: "png", filename: "img1.png",
   });
   const draft2 = await store.saveDraft({
     workspaceId: "ws1", conversationId: "conv1", data: data2,
-    mimeType: "image/jpeg", filename: "img2.jpg",
+    ext: "jpg", filename: "img2.jpg",
   });
 
   const attachments = await store.commitDrafts({
@@ -346,7 +565,7 @@ test("cleanupExpiredDrafts removes old drafts but keeps fresh ones", async () =>
     workspaceId: "ws1",
     conversationId: "conv1",
     data,
-    mimeType: "image/png",
+    ext: "png",
     filename: "fresh.png",
   });
 
@@ -383,7 +602,7 @@ test("saveDraft rejects path traversal in workspaceId", async () => {
       workspaceId: "../../../../etc",
       conversationId: "conv1",
       data: makePngBuffer(),
-      mimeType: "image/png",
+      ext: "png",
       filename: "evil.png",
     }),
     /directory traversal/,

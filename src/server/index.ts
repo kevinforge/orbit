@@ -18,6 +18,7 @@ import { GlobalConfigStore } from "../core/global-config-store.ts";
 import type { GlobalConfig } from "../core/global-config-store.ts";
 import { ConversationStore } from "../core/conversation-store.ts";
 import { EventBus } from "../core/event-bus.ts";
+import { MessageStore } from "../core/message-store.ts";
 import { SessionStore } from "../core/session-store.ts";
 import { WorkspaceStore } from "../core/workspace-store.ts";
 import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-presets.ts";
@@ -28,6 +29,8 @@ import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProb
 import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
+import { buildAttachmentHeaders } from "./attachment-response.ts";
+import { shouldPromoteNewConversation } from "./message-target.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { serveStatic } from "./static-server.ts";
@@ -613,6 +616,23 @@ function clearActiveConversation(): void {
   saveLastActive(activeWorkspaceId, activeConversationId);
 }
 
+/**
+ * 附件下载名：优先使用会话消息历史里记录的用户原始文件名；存储文件名是
+ * `<id>.<ext>`，直接下发会让"用户说明.txt"下载成 UUID 名。
+ */
+function resolveAttachmentFilename(workspaceId: string, conversationId: string, attachmentId: string): string | null {
+  const ctx = contextMap.get(contextKey(workspaceId, conversationId));
+  if (ctx) {
+    return ctx.messages.attachmentFilename(attachmentId);
+  }
+  // 该会话当前没有活动上下文：只读打开消息历史，不做任何写入。
+  const messages = new MessageStore(
+    path.join(workspaceStore.channelsDir(workspaceId, conversationId), "messages.json"),
+    { historyRead: true },
+  );
+  return messages.attachmentFilename(attachmentId);
+}
+
 function currentAgentStates() {
   const ctx = getActiveContext();
   if (ctx) {
@@ -804,6 +824,8 @@ const server = http.createServer(async (req, res) => {
     // --- Attachment endpoints ---
 
     if (req.method === "POST" && url.pathname === "/api/attachments/drafts") {
+      // 目标来自请求 query 快照（#155 页面上下文契约）：上传进行中切换
+      // 会话时，文件仍保存到发起上传的会话目录，不会错投到新会话。
       const target = resolveTarget(url);
       if (!target) {
         sendJson(res, 409, { ok: false, message: "No active conversation." });
@@ -816,26 +838,27 @@ const server = http.createServer(async (req, res) => {
       };
       const base64Data = typeof input.data === "string" ? input.data : "";
       const mimeType = typeof input.mimeType === "string" ? input.mimeType : "";
-      const filename = typeof input.filename === "string" ? input.filename : "image.png";
+      const filename = typeof input.filename === "string" ? input.filename : "";
 
       if (!base64Data) {
-        sendJson(res, 400, { ok: false, message: "Missing image data." });
+        sendJson(res, 400, { ok: false, message: "Missing attachment data." });
         return;
       }
 
       const buffer = Buffer.from(base64Data, "base64");
-      const validation = AttachmentStore.validateImageFile(buffer, mimeType, filename);
+      const validation = AttachmentStore.validateUpload(buffer, mimeType, filename);
       if (!validation.valid) {
         sendJson(res, 400, { ok: false, message: validation.error });
         return;
       }
+      const validated = validation.attachment;
 
       // Issue #88: Check draft count limit before saving
       const draftCount = await attachmentStore.countDrafts(target.workspaceId, target.conversationId);
       if (draftCount >= ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION) {
         sendJson(res, 400, {
           ok: false,
-          message: `Too many pending uploads. Please commit or delete existing drafts first. (Limit: ${ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION})`
+          message: `Too many pending attachments (limit ${ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION}). Please send or remove the existing attachments first.`
         });
         return;
       }
@@ -844,19 +867,21 @@ const server = http.createServer(async (req, res) => {
         workspaceId: target.workspaceId,
         conversationId: target.conversationId,
         data: buffer,
-        mimeType,
-        filename,
+        ext: validated.ext,
+        filename: validated.filename,
       });
 
       sendJson(res, 200, {
         ok: true,
         attachment: {
           id: saved.id,
-          kind: "image",
-          mimeType,
-          filename,
+          kind: validated.kind,
+          mimeType: validated.mimeType,
+          filename: validated.filename,
           size: saved.size,
-          previewUrl: `/api/attachments/drafts/${target.workspaceId}/${target.conversationId}/${saved.id}`,
+          ...(validated.kind === "image"
+            ? { previewUrl: `/api/attachments/drafts/${target.workspaceId}/${target.conversationId}/${saved.id}` }
+            : {}),
         },
       });
       return;
@@ -893,11 +918,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { ok: false, message: "Draft not found." });
         return;
       }
-      res.writeHead(200, {
-        "Content-Type": draft.mimeType,
-        "Content-Disposition": `inline; filename="${draft.filename}"`,
-        "Cache-Control": "private, max-age=86400",
-      });
+      res.writeHead(200, buildAttachmentHeaders(draft));
       res.end(draft.data);
       return;
     }
@@ -917,11 +938,8 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { ok: false, message: "Attachment not found." });
         return;
       }
-      res.writeHead(200, {
-        "Content-Type": attachment.mimeType,
-        "Content-Disposition": `inline; filename="${attachId}"`,
-        "Cache-Control": "private, max-age=86400",
-      });
+      const displayFilename = resolveAttachmentFilename(wsId, convId, attachId) ?? attachment.filename;
+      res.writeHead(200, buildAttachmentHeaders({ ...attachment, filename: displayFilename }));
       res.end(attachment.data);
       return;
     }
@@ -1319,7 +1337,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/conversations") {
-      const wsId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      // 入口快照先于 readJson 取得；创建会话是显式操作，但读取请求体期间
+      // 用户可能又切换了会话/工作区，写回 active 前必须 compare-and-set。
+      const entryActiveWorkspaceId = activeWorkspaceId;
+      const entryActiveConversationId = activeConversationId;
+      const wsId = url.searchParams.get("workspaceId") || entryActiveWorkspaceId;
       if (!wsId) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before creating a conversation." });
         return;
@@ -1621,6 +1643,12 @@ function wait(ms: number): Promise<void> {
 // --- Helpers ---
 
 async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  // 请求入口一次性快照 active 指针（PR #147 M1）：目标优先取 query 参数
+  // （#155 页面上下文契约，读取请求体前即固定），旧调用回退入口快照，
+  // 读取请求体、提交附件或任何后续 await 期间切换会话都不会改变本条
+  // 消息按入口时刻会话的归属。
+  const entryActiveWorkspaceId = activeWorkspaceId;
+  const entryActiveConversationId = activeConversationId;
   const input = (await readJson(req)) as {
     content?: unknown;
     draftAttachments?: unknown;
@@ -1635,7 +1663,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+  const workspaceId = url.searchParams.get("workspaceId") || entryActiveWorkspaceId;
   const requestedConversationId = url.searchParams.get("conversationId") || "";
   if (!workspaceId || !workspaceStore.get(workspaceId)) {
     sendJson(res, 409, { ok: false, message: "Create or select a workspace before sending a message." });
@@ -1652,10 +1680,17 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   let context = conversation ? getOrCreateContext(workspaceId, conversation.id) : null;
 
   if (!context) {
+    // 无目标会话：合法的首条消息场景，仅在目标工作区内新建（PR #147 M1）。
     conversation = conversationStoreFor(workspaceId).create(workspaceId, conversationTitle(content));
     conversationStoreFor(workspaceId).touchLastOpened(workspaceId, conversation.id);
     context = getOrCreateContext(workspaceId, conversation.id);
-    if (workspaceId === activeWorkspaceId) {
+    // Compare-and-set（PR #147 M1）：仅当实时 active 指针仍等于入口快照
+    // （读取请求体期间用户未切换）且新会话建在入口工作区时才写回，
+    // 否则不打断用户已切换到的会话。判定与写回之间无 await 穿插。
+    if (workspaceId === entryActiveWorkspaceId && shouldPromoteNewConversation(
+      { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
+      { workspaceId: activeWorkspaceId, conversationId: activeConversationId },
+    )) {
       activeConversationId = conversation.id;
       activeConversation = toActiveConversation(conversation);
       saveLastActive(workspaceId, conversation.id);
@@ -1665,7 +1700,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     if (workspaceId === activeWorkspaceId && conversation.id === activeConversationId) activeConversation = toActiveConversation(conversation);
   }
 
-  if (!context) {
+  if (!context || !conversation) {
     sendJson(res, 500, { ok: false, message: "Conversation context was not initialized." });
     return;
   }
@@ -1683,7 +1718,6 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
         return;
       }
     }
-
     // Commit draft attachments if present
     let attachments: import("../shared/types.ts").MessageAttachment[] | undefined;
     if (draftAttachments.length > 0) {
@@ -1695,11 +1729,18 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
         });
         return;
       }
-      attachments = await attachmentStore.commitDrafts({
-        workspaceId,
-        conversationId: conversation!.id,
-        draftAttachments,
-      });
+      try {
+        attachments = await attachmentStore.commitDrafts({
+          workspaceId,
+          conversationId: conversation!.id,
+          draftAttachments,
+        });
+      } catch (error) {
+        // 草稿缺失/过期/校验失败：整条消息不发送，保留可恢复状态。
+        const message = error instanceof Error ? error.message : String(error);
+        sendJson(res, 400, { ok: false, message });
+        return;
+      }
     }
 
     // 模式快照：每条用户消息在发送时记录当轮 interaction mode，

@@ -12,7 +12,7 @@ import {
   type ClaudeAcpConnector,
 } from "../src/core/claude-acp-runtime.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
-import type { AgentActivityEvent } from "../src/shared/types.ts";
+import type { AgentActivityEvent, MessageAttachment } from "../src/shared/types.ts";
 
 type FakeOptions = {
   capabilities?: Awaited<ReturnType<ClaudeAcpConnection["initialize"]>>["agentCapabilities"];
@@ -273,7 +273,7 @@ test("resumes an existing Claude ACP session without replaying loaded history", 
   assert.ok(!fake.calls.some((call) => call.method === "session/new"));
 });
 
-test("sends attached images as native ACP content", async () => {
+test("sends mixed attachments as native image plus resource_link content", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-claude-acp-image-"));
   const imagePath = path.join(tempDir, "sample.png");
   fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
@@ -291,14 +291,32 @@ test("sends attached images as native ACP content", async () => {
       },
     });
     const runtime = createClaudeAcpRuntime(fake.connector);
-    await runtime.run(runOptions({ imagePaths: [imagePath] })).result;
+    const attachments: MessageAttachment[] = [
+      {
+        id: "img-1", kind: "image", mimeType: "image/png", filename: "sample.png",
+        path: imagePath, url: `/api/attachments/ws/conv/img-1`, size: 4,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "pdf-1", kind: "file", mimeType: "application/pdf", filename: "spec.pdf",
+        path: path.join(tempDir, "spec.pdf"), url: `/api/attachments/ws/conv/pdf-1`, size: 4096,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    await runtime.run(runOptions({ attachments })).result;
 
     const prompt = fake.calls.find((call) => call.method === "session/prompt")!.value as {
-      prompt: Array<{ type: string; mimeType?: string; data?: string }>;
+      prompt: Array<{ type: string; mimeType?: string; data?: string; uri?: string; name?: string; size?: number }>;
     };
+    assert.equal(prompt.prompt.length, 3, "text + image + resource_link in input order");
     assert.equal(prompt.prompt[1]?.type, "image");
     assert.equal(prompt.prompt[1]?.mimeType, "image/png");
     assert.equal(prompt.prompt[1]?.data, Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64"));
+    assert.equal(prompt.prompt[2]?.type, "resource_link", "PDF must travel as resource_link, not a local path");
+    assert.equal(prompt.prompt[2]?.name, "spec.pdf");
+    assert.equal(prompt.prompt[2]?.mimeType, "application/pdf");
+    assert.equal(prompt.prompt[2]?.size, 4096);
+    assert.match(prompt.prompt[2]?.uri ?? "", /^file:\/\//);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

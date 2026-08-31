@@ -226,10 +226,10 @@ export type AgentState = {
   runtimeAvailable?: boolean;
 };
 
-export type MessageAttachment = {
+export type AttachmentKind = "image" | "file";
+
+type MessageAttachmentBase = {
   id: string;
-  kind: "image";
-  mimeType: "image/png" | "image/jpeg" | "image/webp";
   filename: string;
   path: string;
   url: string;
@@ -239,19 +239,31 @@ export type MessageAttachment = {
   createdAt: string;
 };
 
+/**
+ * 附件判别联合：图片（图片能力开启时进入 ACP image 块，并作为缩略图
+ * 预览）与文件（PDF/文本/代码）。凡不是原生 image 块的附件一律以 ACP
+ * `resource_link` 内容块传递（file:// URI 指向服务端存储的文件）；下载
+ * 时强制为附件响应。
+ */
+export type MessageAttachment = MessageAttachmentBase & (
+  | { kind: "image"; mimeType: "image/png" | "image/jpeg" | "image/webp" }
+  | { kind: "file"; mimeType: string }
+);
+
 export type DraftAttachmentInfo = {
   id: string;
-  kind: "image";
+  kind: AttachmentKind;
   mimeType: string;
   filename: string;
   size: number;
-  previewUrl: string;
+  /** 仅图片提供预览 URL；文件以 chip 展示。 */
+  previewUrl?: string;
 };
 
 export const ATTACHMENT_LIMITS = {
   MAX_FILE_SIZE: 5 * 1024 * 1024,
   MAX_FILES_PER_MESSAGE: 5,
-  ALLOWED_MIME_TYPES: ["image/png", "image/jpeg", "image/webp"],
+  ALLOWED_IMAGE_MIME_TYPES: ["image/png", "image/jpeg", "image/webp"],
   DRAFT_MAX_AGE_MS: 1 * 60 * 60 * 1000, // Issue #88: 清理频率从24小时改为1小时
   MAX_DRAFTS_PER_CONVERSATION: 20, // Issue #88: 每会话最多20个draft
 } as const;
