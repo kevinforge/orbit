@@ -139,3 +139,98 @@ test("cleanupHistory removes expired transcript segments but keeps newest per ag
     fs.rmSync(baseDir, { recursive: true, force: true });
   }
 });
+
+const oldMessage = (id: string, attachmentId: string) => JSON.stringify({
+  id,
+  kind: "user",
+  attachments: [{ id: attachmentId, filename: `${attachmentId}.png` }],
+});
+
+test("cleanupHistory reclaims attachments orphaned by a deleted shard", () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-retention-attach-"));
+  try {
+    const convDir = path.join(baseDir, "conversations", "ws1", "conv-old");
+    const messagesDir = path.join(convDir, "messages");
+    const attachmentsDir = path.join(convDir, "attachments");
+    fs.mkdirSync(messagesDir, { recursive: true });
+    fs.mkdirSync(attachmentsDir, { recursive: true });
+
+    const shard = (name: string, day: string) => ({
+      name,
+      firstCreatedAt: `${day}T00:00:00.000Z`,
+      lastCreatedAt: `${day}T00:00:00.000Z`,
+      count: 1,
+      bytes: 2,
+    });
+    fs.writeFileSync(path.join(messagesDir, "2026-01-01.ndjson"), `${oldMessage("msg_000001", "gone-1")}\n`);
+    fs.writeFileSync(path.join(messagesDir, "2026-05-30.ndjson"), `${oldMessage("msg_000002", "kept-1")}\n`);
+    fs.writeFileSync(path.join(messagesDir, "2026-06-02.ndjson"), "{}\n");
+    fs.writeFileSync(path.join(messagesDir, "manifest.json"), JSON.stringify({
+      version: 1,
+      nextId: 3,
+      shards: [
+        shard("2026-01-01.ndjson", "2026-01-01"),
+        shard("2026-05-30.ndjson", "2026-05-30"),
+        shard("2026-06-02.ndjson", "2026-06-02"),
+      ],
+    }));
+
+    const orphan = path.join(attachmentsDir, "gone-1.png");
+    const referenced = path.join(attachmentsDir, "kept-1.png");
+    fs.writeFileSync(orphan, "orphan");
+    fs.writeFileSync(referenced, "referenced");
+    fs.writeFileSync(path.join(attachmentsDir, "index.json"), JSON.stringify({
+      "gone-1": "旧图.png",
+      "kept-1": "新图.png",
+    }));
+    const longAgo = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(orphan, longAgo, longAgo);
+    fs.utimesSync(referenced, longAgo, longAgo);
+
+    const result = cleanupHistory({
+      baseDir,
+      now: new Date("2026-06-03T00:00:00.000Z"),
+      messageRetentionDays: 30,
+      transcriptRetentionDays: 30,
+      activeConversations: [],
+    });
+
+    assert.equal(result.deletedMessageShards, 1, "the expired shard must be removed");
+    assert.equal(result.deletedAttachments, 1, "only its orphaned attachment may be reclaimed");
+    assert.equal(fs.existsSync(orphan), false, "the orphaned attachment must be deleted");
+    assert.equal(fs.existsSync(referenced), true, "an attachment referenced by a kept shard must survive");
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(attachmentsDir, "index.json"), "utf8")),
+      { "kept-1": "新图.png" },
+      "the filename index must be pruned together with the files",
+    );
+  } finally {
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("cleanupHistory leaves attachments of an active conversation untouched", () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-retention-active-"));
+  try {
+    const convDir = path.join(baseDir, "conversations", "ws1", "conv-active");
+    fs.mkdirSync(path.join(convDir, "messages"), { recursive: true });
+    fs.mkdirSync(path.join(convDir, "attachments"), { recursive: true });
+    fs.writeFileSync(path.join(convDir, "messages", "2026-01-01.ndjson"), "{}\n");
+    const attachment = path.join(convDir, "attachments", "live-1.png");
+    fs.writeFileSync(attachment, "live");
+
+    const result = cleanupHistory({
+      baseDir,
+      now: new Date("2026-06-03T00:00:00.000Z"),
+      messageRetentionDays: 30,
+      transcriptRetentionDays: 30,
+      activeConversations: [{ workspaceId: "ws1", conversationId: "conv-active" }],
+    });
+
+    assert.equal(result.deletedMessageShards, 0);
+    assert.equal(result.deletedAttachments, 0, "active conversations must never lose attachments");
+    assert.equal(fs.existsSync(attachment), true);
+  } finally {
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  }
+});

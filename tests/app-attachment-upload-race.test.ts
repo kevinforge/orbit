@@ -221,8 +221,9 @@ describe("App composer wiring for upload races", () => {
     const guardIndex = body.indexOf("getUploadingCount() > 0");
     const sendIndex = body.indexOf("api/messages");
     assert.ok(guardIndex > 0, "sendMessage must check the synchronous upload count");
+    assert.ok(sendIndex > 0, "sendMessage must issue the message request");
     assert.ok(
-      sendIndex < 0 || guardIndex < sendIndex,
+      guardIndex < sendIndex,
       "the upload guard must run before the message request is issued",
     );
   });
@@ -259,7 +260,7 @@ describe("App composer wiring for upload races", () => {
 
   test("workspace/conversation switch resets the upload lifecycle in a layout effect", () => {
     const effectMatch = appSource.match(
-      /useLayoutEffect\(\(\) => \{\s*attachmentUploadLifecycleRef\.current\.resetContext\(\);[\s\S]*?\}, \[state\.workspace\.id, state\.conversation\.id\]\);/,
+      /useLayoutEffect\(\(\) => \{[\s\S]*?attachmentUploadLifecycleRef\.current\.resetContext\(\);[\s\S]*?\}, \[state\.workspace\.id, state\.conversation\.id\]\);/,
     );
     assert.ok(effectMatch, "switching context must resetContext() synchronously before paint");
   });

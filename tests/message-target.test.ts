@@ -87,7 +87,7 @@ describe("server wiring for message targets and write-backs", () => {
     const draftRoute = serverSource.match(/req\.method === "POST" && url\.pathname === "\/api\/attachments\/drafts"[\s\S]*?\n    \}/)?.[0] ?? "";
     assert.ok(draftRoute, "the draft upload route must exist");
     assert.ok(
-      draftRoute.includes("resolveTarget(url)"),
+      draftRoute.includes("resolveTargetDetailed(url)"),
       "draft uploads must resolve the target from the query page context",
     );
   });

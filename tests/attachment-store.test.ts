@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { ATTACHMENT_LIMITS } from "../src/shared/types.ts";
 import { AttachmentStore } from "../src/core/attachment-store.ts";
+import { ConversationStore } from "../src/core/conversation-store.ts";
 import { knownAttachmentExtension } from "../src/shared/attachment-registry.ts";
 
 function makeTmpDir(): string {
@@ -517,40 +518,36 @@ test("getAttachment does not match by prefix (exact extension only)", async () =
   assert.equal(result, null);
 });
 
-// --- deleteConversationAttachments ---
+// --- conversation deletion removes permanent attachments ---
 
-test("deleteConversationAttachments removes all attachments for a conversation", async () => {
+test("deleting a conversation removes its permanent attachments", async () => {
+  // ConversationStore.delete() 会删除整个 conversations/<ws>/<conv> 目录，
+  // 永久附件随之清理；服务端不再额外并发删除同一目录（避免 Windows 上的
+  // EBUSY/EPERM 竞态）。
   const baseDir = makeTmpDir();
   const store = new AttachmentStore(baseDir);
+  const conversations = new ConversationStore(baseDir);
+  const conversation = conversations.create("ws1", "With attachments");
 
-  const data1 = makePngBuffer(100);
-  const data2 = makeJpegBuffer(200);
-
-  const draft1 = await store.saveDraft({
-    workspaceId: "ws1", conversationId: "conv1", data: data1,
+  const draft = await store.saveDraft({
+    workspaceId: "ws1", conversationId: conversation.id, data: makePngBuffer(100),
     ext: "png", filename: "img1.png",
   });
-  const draft2 = await store.saveDraft({
-    workspaceId: "ws1", conversationId: "conv1", data: data2,
-    ext: "jpg", filename: "img2.jpg",
-  });
 
-  const attachments = await store.commitDrafts({
+  const [attachment] = await store.commitDrafts({
     workspaceId: "ws1",
-    conversationId: "conv1",
+    conversationId: conversation.id,
     draftAttachments: [
-      { id: draft1.id, mimeType: "image/png", filename: "img1.png", size: draft1.size },
-      { id: draft2.id, mimeType: "image/jpeg", filename: "img2.jpg", size: draft2.size },
+      { id: draft.id, mimeType: "image/png", filename: "img1.png", size: draft.size },
     ],
   });
 
-  assert.equal(attachments.length, 2);
+  assert.ok(fs.existsSync(attachment.path));
 
-  await store.deleteConversationAttachments("ws1", "conv1");
+  conversations.delete("ws1", conversation.id);
 
-  // Both files should be gone
-  assert.ok(!fs.existsSync(attachments[0].path));
-  assert.ok(!fs.existsSync(attachments[1].path));
+  assert.ok(!fs.existsSync(attachment.path), "attachments must not survive conversation deletion");
+  assert.ok(!fs.existsSync(path.dirname(attachment.path)), "the attachment directory must be gone");
 });
 
 // --- cleanupExpiredDrafts ---
@@ -630,4 +627,111 @@ test("getAttachment rejects path traversal in attachmentId", async () => {
     /Invalid id/,
   );
   fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+// --- 展示文件名索引（PR #147 审查修复：下载不再全量扫描历史分片） ---
+
+test("commitDrafts records display filenames so downloads skip the history scan", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  const draft = await store.saveDraft({
+    workspaceId: "ws1", conversationId: "conv1", data: makePngBuffer(120),
+    ext: "png", filename: "设计稿 终版.png",
+  });
+
+  assert.equal(
+    await store.attachmentFilename("ws1", "conv1", draft.id),
+    null,
+    "the index must be empty before the draft is committed",
+  );
+
+  const [attachment] = await store.commitDrafts({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    draftAttachments: [{ id: draft.id, mimeType: "image/png", filename: "设计稿 终版.png", size: draft.size }],
+  });
+
+  assert.equal(
+    await store.attachmentFilename("ws1", "conv1", draft.id),
+    attachment.filename,
+    "the committed display name must be readable from the index alone",
+  );
+  assert.equal(attachment.filename, "设计稿 终版.png");
+});
+
+test("rememberAttachmentFilename backfills names for attachments predating the index", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  await store.rememberAttachmentFilename("ws1", "conv1", "legacy-id", "旧附件.txt");
+
+  assert.equal(await store.attachmentFilename("ws1", "conv1", "legacy-id"), "旧附件.txt");
+  assert.equal(await store.attachmentFilename("ws1", "conv1", "other-id"), null);
+  await assert.rejects(
+    () => store.attachmentFilename("ws1", "conv1", "../../etc/passwd"),
+    /Invalid id/,
+  );
+});
+
+// --- 单条消息附件合计上限（PR #147 审查修复） ---
+
+test("commitDrafts rejects a batch whose combined size exceeds the per-message cap", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  // 5 个文件合计 > MAX_TOTAL_SIZE_PER_MESSAGE (20MB)，单个仍 < MAX_FILE_SIZE (5MB)。
+  const perFile = Math.floor(ATTACHMENT_LIMITS.MAX_TOTAL_SIZE_PER_MESSAGE / 5) + 1;
+  const drafts: Array<{ id: string; path: string; size: number }> = [];
+  for (let i = 0; i < ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE; i++) {
+    drafts.push(await store.saveDraft({
+      workspaceId: "ws1", conversationId: "conv1", data: makePngBuffer(perFile),
+      ext: "png", filename: `big-${i}.png`,
+    }));
+  }
+
+  await assert.rejects(
+    () => store.commitDrafts({
+      workspaceId: "ws1",
+      conversationId: "conv1",
+      draftAttachments: drafts.map((draft) => ({
+        id: draft.id, mimeType: "image/png", filename: "big.png", size: draft.size,
+      })),
+    }),
+    /超过限制/,
+    "the combined cap must reject the whole batch",
+  );
+
+  // 失败后草稿与永久目录都必须保持可重试状态：草稿还在，没有永久文件落地。
+  for (const draft of drafts) {
+    assert.ok(fs.existsSync(draft.path), "drafts must survive a rejected commit");
+  }
+  const permDir = path.join(baseDir, "conversations", "ws1", "conv1", "attachments");
+  assert.ok(!fs.existsSync(permDir), "no permanent file may be written before the size cap passes");
+});
+
+test("commitDrafts accepts a batch under the combined cap", async () => {
+  const baseDir = makeTmpDir();
+  const store = new AttachmentStore(baseDir);
+
+  const a = await store.saveDraft({
+    workspaceId: "ws1", conversationId: "conv1", data: makePngBuffer(500),
+    ext: "png", filename: "a.png",
+  });
+  const b = await store.saveDraft({
+    workspaceId: "ws1", conversationId: "conv1", data: makeJpegBuffer(700),
+    ext: "jpg", filename: "b.jpg",
+  });
+
+  const attachments = await store.commitDrafts({
+    workspaceId: "ws1",
+    conversationId: "conv1",
+    draftAttachments: [
+      { id: a.id, mimeType: "image/png", filename: "a.png", size: a.size },
+      { id: b.id, mimeType: "image/jpeg", filename: "b.jpg", size: b.size },
+    ],
+  });
+
+  assert.equal(attachments.length, 2);
+  assert.equal(attachments.reduce((sum, item) => sum + item.size, 0), 1200);
 });

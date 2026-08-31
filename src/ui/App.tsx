@@ -8,6 +8,7 @@ import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelSta
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
 import { canSendMessage } from "../shared/message-validation.ts";
 import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
+import { createConversationForUpload } from "./attachment-upload-conversation.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
 import * as TDesign from "tdesign-react";
@@ -397,10 +398,21 @@ export function App() {
     refreshWorkspaces();
   }, [state.workspace.id, state.conversation.id]);
 
+  const previousUploadContextRef = useRef<PageContext>({ workspaceId: "", conversationId: "" });
+
   // 切换工作区或会话时：作废进行中的上传（旧请求完成后不得回写新会话的
   // 输入区或递减新会话的计数与槽位），并清空输入区附件，避免预览 URL 指
   // 向错误的工作区/会话路径（PR #147 M1）。
   useLayoutEffect(() => {
+    const previous = previousUploadContextRef.current;
+    previousUploadContextRef.current = {
+      workspaceId: state.workspace.id,
+      conversationId: state.conversation.id,
+    };
+    // 会话"从无到有"（上传前自动补建）不是用户切换上下文：输入区此时本来
+    // 就是空的，重置会作废刚开始的上传批次。
+    if (previous.workspaceId === state.workspace.id && !previous.conversationId) return;
+
     attachmentUploadLifecycleRef.current.resetContext();
     setUploadingAttachments(0);
     setPendingAttachments([]);
@@ -824,6 +836,20 @@ export function App() {
     }
   }
 
+  /** 采用补建出来的会话 id：同步地址栏与状态，后续请求都带上它。 */
+  function adoptBootstrapConversation(conversationId: string) {
+    const workspaceId = state.workspace.id;
+    if (readPageContext(window.location.search).workspaceId !== workspaceId) return;
+    // 先同步地址栏：refreshState 校验地址栏与请求上下文是否一致。
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${pageContextQuery({ workspaceId, conversationId })}${window.location.hash}`,
+    );
+    setState((current) => ({ ...current, conversation: { ...current.conversation, id: conversationId } }));
+    refreshConversations();
+  }
+
   /** 统一附件上传入口：文件选择、文件粘贴、图片粘贴与文本转附件都走这里。 */
   async function uploadAttachmentFiles(files: File[]) {
     if (files.length === 0) return;
@@ -836,11 +862,34 @@ export function App() {
       window.setTimeout(() => setAttachmentToast(null), 3000);
       return;
     }
+
+    // 新工作区还没有会话：上传目标必须是已存在的会话，先补建一个并采用，
+    // 否则"首条消息就是附件"这个场景会拿到 409 而完全用不了。
+    let uploadConversationId = state.conversation.id;
+    if (!uploadConversationId) {
+      const bootstrapContext = lifecycle.captureContext({
+        workspaceId: state.workspace.id,
+        conversationId: "",
+      });
+      try {
+        uploadConversationId = await createConversationForUpload(state.workspace.id, fetch);
+      } catch (error) {
+        if (!lifecycle.isStale(bootstrapContext)) {
+          setAttachmentToast(error instanceof Error ? error.message : "创建会话失败，无法添加附件。");
+          window.setTimeout(() => setAttachmentToast(null), 3000);
+        }
+        return;
+      }
+      // 补建期间用户切换了工作区/会话：放弃本批，不采用新 id 也不回写输入区。
+      if (lifecycle.isStale(bootstrapContext)) return;
+      adoptBootstrapConversation(uploadConversationId);
+    }
+
     // 每批上传绑定发起时的工作区/会话快照；请求显式携带目标 ID，服务端
     // 不再依赖全局 active 指针（PR #147 M1：上传中切换会话不得错投）。
     const uploadContext = lifecycle.beginUpload({
       workspaceId: state.workspace.id,
-      conversationId: state.conversation.id,
+      conversationId: uploadConversationId,
     }, files.length);
     setUploadingAttachments(lifecycle.getUploadingCount());
 
@@ -961,7 +1010,7 @@ export function App() {
     });
     const hadAttachment = pendingAttachments.some((a) => a.id === id);
     try {
-      await fetch(`/api/attachments/drafts/${removeContext.workspaceId}/${removeContext.conversationId}/${id}?workspaceId=${encodeURIComponent(removeContext.workspaceId)}&conversationId=${encodeURIComponent(removeContext.conversationId)}`, {
+      await fetch(`/api/attachments/drafts/${removeContext.workspaceId}/${removeContext.conversationId}/${id}`, {
         method: "DELETE",
       });
     } catch { /* best effort */ }
