@@ -34,6 +34,7 @@ The data directory is organized by data type and workspace id:
   conversations/<workspace-id>/<conversation-id>/messages/manifest.json
   conversations/<workspace-id>/<conversation-id>/messages/<YYYY-MM-DD>.ndjson
   conversations/<workspace-id>/<conversation-id>/attachments/<attachment-id>.<ext>
+  conversations/<workspace-id>/<conversation-id>/attachments/index.json
   sessions/<workspace-id>/<runtime>/<conversation-id>/<agent-id>.json
   transcripts/<workspace-id>/<conversation-id>/<agent-id>/<YYYY-MM-DD>-<sequence>.log
   tmp/attachments/<workspace-id>/<conversation-id>/<draft-id>/<draft-id>.<ext>
@@ -48,11 +49,20 @@ the composer are drafts under `tmp/attachments` (one directory per draft) and
 are removed when they are sent or deleted.
 
 Attachments support images (`png`/`jpg`/`webp`) and files (`pdf`, `txt`,
-`md`, and common code/config source files). Each file is limited to 5 MB with
-at most 5 attachments per message. Executables, shell scripts, and archives
-(`exe`, `sh`, `bat`, `zip`, …) are rejected at upload. Drafts that are neither
-sent nor deleted expire after one hour, and each conversation keeps at most 20
-pending drafts.
+`md`, and common code/config source files). Every other extension is rejected
+at upload, including executables, shell scripts, and archives (`exe`, `sh`,
+`bat`, `zip`, …); source and config files such as `js`, `py`, `rb`, and `php`
+are accepted as text attachments. Each file is limited to 5 MB, a single
+message carries at most 5 attachments, and their combined size is capped at
+20 MB. Drafts that are neither sent nor deleted expire after one hour, and each
+conversation keeps at most 20 pending drafts.
+
+Stored attachment files are named `<attachment-id>.<ext>`, so the name you
+picked is only kept in the message history. `attachments/index.json` maps each
+id back to that display name so downloads and previews do not have to read the
+whole conversation history. It is derived data: Orbit rebuilds a missing entry
+from the message history, and history retention prunes entries whose messages
+are gone.
 
 `agent-model-state.json` caches, per digital employee, the model choices
 reported through ACP session config options. Discovery probes write the
@@ -146,6 +156,16 @@ the project directory itself.
 To remove one conversation, use the conversation delete action in Orbit. This
 removes the conversation metadata, messages, attachments, sessions, and
 transcripts for that conversation.
+
+Message shards and terminal transcripts older than the retention window are
+reclaimed at startup. When a message shard is removed, the attachments that
+only it referenced are removed with it; attachments still referenced by a
+retained shard are kept. Set `ORBIT_HISTORY_RETAIN_DAYS` and
+`ORBIT_TRANSCRIPT_RETAIN_DAYS` to change the windows. The check runs only for a
+conversation that actually lost a shard in that pass, so startup never has to
+read every shard: attachments already orphaned from an earlier version are
+reclaimed the next time that conversation loses a shard, not in a one-off
+sweep. Deleting the conversation removes them immediately.
 
 ## Release Verification
 

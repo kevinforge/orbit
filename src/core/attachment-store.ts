@@ -8,6 +8,10 @@ import {
   attachmentExtensionSpec,
   knownAttachmentExtension,
 } from "../shared/attachment-registry.ts";
+import {
+  readAttachmentFilenameIndex,
+  writeAttachmentFilenameIndex,
+} from "./attachment-filename-index.ts";
 
 const ALLOWED_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set<string>(ATTACHMENT_LIMITS.ALLOWED_IMAGE_MIME_TYPES);
 
@@ -33,8 +37,33 @@ export type StoredAttachment = {
   filename: string;
 };
 
+export type SaveDraftResult =
+  | { ok: true; id: string; path: string; size: number }
+  | { ok: false; limit: number };
+
 export class AttachmentStore {
   constructor(private readonly baseDir: string) {}
+
+  /**
+   * 每会话一条串行链（PR #147 审查修复）：草稿计数与写入之间原本存在
+   * await 交错点，N 个并发上传会各自读到旧计数而一起突破
+   * MAX_DRAFTS_PER_CONVERSATION。计数与写入必须在同一段互斥区内完成。
+   */
+  private readonly draftLocks = new Map<string, Promise<void>>();
+
+  private async withDraftLock<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.draftLocks.get(key) ?? Promise.resolve();
+    let release = () => {};
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.draftLocks.set(key, current);
+    try {
+      await previous;
+      return await task();
+    } finally {
+      release();
+      if (this.draftLocks.get(key) === current) this.draftLocks.delete(key);
+    }
+  }
 
   // --- Path safety ---
 
@@ -98,6 +127,29 @@ export class AttachmentStore {
     return { id, path: filePath, size: params.data.length };
   }
 
+  /**
+   * 在会话级互斥区内先计数再写入，使并发上传无法各自读到旧计数而突破
+   * MAX_DRAFTS_PER_CONVERSATION（PR #147 审查修复）。
+   */
+  async saveDraftWithinLimit(params: {
+    workspaceId: string;
+    conversationId: string;
+    data: Buffer;
+    /** Server-validated extension from the whitelist — never a client MIME. */
+    ext: string;
+    /** Sanitized display filename. */
+    filename: string;
+  }): Promise<SaveDraftResult> {
+    const key = `drafts:${params.workspaceId}:${params.conversationId}`;
+    return this.withDraftLock(key, async () => {
+      const count = await this.countDrafts(params.workspaceId, params.conversationId);
+      if (count >= ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION) {
+        return { ok: false, limit: ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION };
+      }
+      return { ok: true, ...(await this.saveDraft(params)) };
+    });
+  }
+
   async deleteDraft(workspaceId: string, conversationId: string, attachmentId: string): Promise<boolean> {
     AttachmentStore.validateId(attachmentId);
     const draftBase = this.safePath("tmp", "attachments", workspaceId, conversationId, attachmentId);
@@ -158,6 +210,16 @@ export class AttachmentStore {
       located.push({ draft, draftDir, stored });
     }
 
+    // 合计上限在复制之前判定：超限则整条消息不发送，草稿原样保留可重试，
+    // 不会留下永久附件孤儿。字节数取自文件系统而非客户端声明的 size。
+    const totalSize = located.reduce((sum, entry) => sum + entry.stored.data.length, 0);
+    if (totalSize > ATTACHMENT_LIMITS.MAX_TOTAL_SIZE_PER_MESSAGE) {
+      const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
+      throw new Error(
+        `本条消息附件合计 ${mb(totalSize)}MB，超过限制 ${mb(ATTACHMENT_LIMITS.MAX_TOTAL_SIZE_PER_MESSAGE)}MB，请减少附件后重试。`,
+      );
+    }
+
     const permDir = this.safePath(
       "conversations",
       params.workspaceId, params.conversationId, "attachments",
@@ -205,6 +267,7 @@ export class AttachmentStore {
         : { ...base, kind: "file", mimeType: stored.mimeType });
     }
 
+    this.rememberAttachmentFilenames(permDir, results);
     return results;
   }
 
@@ -218,14 +281,45 @@ export class AttachmentStore {
     return AttachmentStore.findStoredFile(permDir, attachmentId);
   }
 
-  async deleteConversationAttachments(workspaceId: string, conversationId: string): Promise<void> {
+  /**
+   * 附件的展示文件名。落盘名是 `<id>.<ext>`，原始名查索引即可；索引里没有
+   * （早于索引的历史附件）返回 null，由调用方扫描一次历史后回填。
+   */
+  async attachmentFilename(
+    workspaceId: string,
+    conversationId: string,
+    attachmentId: string,
+  ): Promise<string | null> {
+    AttachmentStore.validateId(attachmentId);
     const permDir = this.safePath("conversations", workspaceId, conversationId, "attachments");
-    try {
-      await fsPromises.access(permDir);
-      await fsPromises.rm(permDir, { recursive: true, force: true });
-    } catch {
-      // Directory doesn't exist, nothing to delete
+    return readAttachmentFilenameIndex(permDir)[attachmentId] ?? null;
+  }
+
+  /** 回填历史附件的展示文件名，之后下载同一附件不再扫描历史分片。 */
+  async rememberAttachmentFilename(
+    workspaceId: string,
+    conversationId: string,
+    attachmentId: string,
+    filename: string,
+  ): Promise<void> {
+    AttachmentStore.validateId(attachmentId);
+    const permDir = this.safePath("conversations", workspaceId, conversationId, "attachments");
+    const index = readAttachmentFilenameIndex(permDir);
+    if (index[attachmentId] === filename) return;
+    index[attachmentId] = filename;
+    writeAttachmentFilenameIndex(permDir, index);
+  }
+
+  private rememberAttachmentFilenames(
+    permDir: string,
+    attachments: MessageAttachment[],
+  ): void {
+    if (attachments.length === 0) return;
+    const index = readAttachmentFilenameIndex(permDir);
+    for (const attachment of attachments) {
+      index[attachment.id] = attachment.filename;
     }
+    writeAttachmentFilenameIndex(permDir, index);
   }
 
   /** Remove abandoned draft uploads when an entire workspace is deleted. */

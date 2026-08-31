@@ -221,10 +221,26 @@ describe("App composer wiring for upload races", () => {
     const guardIndex = body.indexOf("getUploadingCount() > 0");
     const sendIndex = body.indexOf("api/messages");
     assert.ok(guardIndex > 0, "sendMessage must check the synchronous upload count");
+    assert.ok(sendIndex > 0, "sendMessage must issue the message request");
     assert.ok(
-      sendIndex < 0 || guardIndex < sendIndex,
+      guardIndex < sendIndex,
       "the upload guard must run before the message request is issued",
     );
+  });
+
+  test("sendMessage allows an attachment-only message after uploads settle", () => {
+    const sendMatch = appSource.match(/async function sendMessage\([\s\S]*?\n  \}/);
+    assert.ok(sendMatch, "sendMessage must exist in App.tsx");
+    assert.match(sendMatch[0], /canSendMessage\(trimmed, pendingAttachments\.length\)/);
+    assert.match(appSource, /canSendMessage\(content, pendingAttachments\.length\)/);
+  });
+
+  test("uploads reject oversized files before reading and time out stalled requests", () => {
+    assert.match(appSource, /file\.size > ATTACHMENT_LIMITS\.MAX_FILE_SIZE/);
+    assert.match(appSource, /const controller = new AbortController\(\)/);
+    assert.match(appSource, /controller\.abort\(\)/);
+    assert.match(appSource, /signal: controller\.signal/);
+    assert.match(appSource, /window\.clearTimeout\(timeoutId\)/);
   });
 
   test("Enter send path keeps the IME guard first and delegates the rest to sendMessage", () => {
@@ -244,7 +260,7 @@ describe("App composer wiring for upload races", () => {
 
   test("workspace/conversation switch resets the upload lifecycle in a layout effect", () => {
     const effectMatch = appSource.match(
-      /useLayoutEffect\(\(\) => \{\s*attachmentUploadLifecycleRef\.current\.resetContext\(\);[\s\S]*?\}, \[state\.workspace\.id, state\.conversation\.id\]\);/,
+      /useLayoutEffect\(\(\) => \{[\s\S]*?attachmentUploadLifecycleRef\.current\.resetContext\(\);[\s\S]*?\}, \[state\.workspace\.id, state\.conversation\.id\]\);/,
     );
     assert.ok(effectMatch, "switching context must resetContext() synchronously before paint");
   });

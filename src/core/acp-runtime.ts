@@ -305,17 +305,24 @@ export function runAcp(
       }
 
       acceptingUpdates = !forcedCancelled;
-      const response = await connection.prompt({
-        sessionId: activeSessionId,
-        prompt: buildPromptContent(options.prompt, options.attachments, initialized.agentCapabilities),
-      });
+      let response: Awaited<ReturnType<AcpConnection["prompt"]>>;
+      try {
+        response = await connection.prompt({
+          sessionId: activeSessionId,
+          prompt: buildPromptContent(options.prompt, options.attachments, initialized.agentCapabilities),
+        });
+      } catch (error) {
+        throw normalizePromptError(error, definition.displayName, options.attachments);
+      }
       acceptingUpdates = false;
 
       if (cancelled || response.stopReason === "cancelled") {
         throw cancellationError();
       }
       if (response.stopReason === "refusal") {
-        throw new Error(`${definition.displayName} ACP refused the request.`);
+        throw new Error(
+          `${definition.displayName} ACP refused the request. 建议：请切换到其他可用模型后重试。`,
+        );
       }
 
       const selection = selectFinalAnswer(answerState);
@@ -323,6 +330,8 @@ export function runAcp(
       if (!answer) {
         throw new Error(`${definition.displayName} ACP completed with ${response.stopReason} but no final answer.`);
       }
+      const providerError = normalizeProviderAnswer(answer, definition.displayName);
+      if (providerError) throw providerError;
       // 结算快照：流式期间所有文本（含将成为最终回复的文本）都以增量形式进入
       // 过程区；结算时剔除归入最终回复的分组文本，整体替换，保证不重复、不残留。
       emitProcessTextSnapshot(options, answerState, selection.group);
@@ -678,7 +687,7 @@ export function buildPromptContent(
   attachments: readonly MessageAttachment[] | undefined,
   capabilities: AgentCapabilities | undefined,
 ): ContentBlock[] {
-  const blocks: ContentBlock[] = [{ type: "text", text: prompt }];
+  const blocks: ContentBlock[] = prompt ? [{ type: "text", text: prompt }] : [];
   if (!attachments?.length) return blocks;
 
   const imageEnabled = capabilities?.promptCapabilities?.image === true;
@@ -701,6 +710,34 @@ export function buildPromptContent(
     });
   }
   return blocks;
+}
+
+function normalizePromptError(
+  error: unknown,
+  displayName: string,
+  attachments: readonly MessageAttachment[] | undefined,
+): Error {
+  const original = error instanceof Error ? error.message : String(error);
+  const hasImage = attachments?.some((attachment) => attachment.kind === "image") === true;
+  const mentionsImageInput = /image|vision|multimodal|content block|图片|图像/i.test(original);
+  const indicatesRejection = /unsupported|not support|invalid|reject|denied|cannot|can't|不支持|无效|拒绝|无法/i.test(original);
+  if (hasImage && mentionsImageInput && indicatesRejection) {
+    return new Error(
+      `${displayName} 原始报错：${original}\n建议：当前模型不支持图片输入，请切换支持图片的模型，或移除图片附件后重试。`,
+    );
+  }
+  return error instanceof Error ? error : new Error(original);
+}
+
+function normalizeProviderAnswer(answer: string, displayName: string): Error | null {
+  if (/^selected model is at capacity\.?$/i.test(answer.trim())
+    || /^model capacity has been reached\.?$/i.test(answer.trim())
+    || /^模型容量已满[。.]?$/.test(answer.trim())) {
+    return new Error(
+      `${displayName} 原始报错：${answer.trim()}\n建议：当前模型容量已满，请切换到其他可用模型后重试。`,
+    );
+  }
+  return null;
 }
 
 function handleSessionUpdate(

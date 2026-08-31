@@ -118,3 +118,77 @@ test("Issue #88: Cleanup removes expired drafts within 1 hour", async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test("concurrent uploads cannot slip past the per-conversation draft cap", async () => {
+  // 修复前：countDrafts 与 saveDraft 之间有 await 交错点，N 个并发请求各自
+  // 读到旧计数，20 个上限被整体绕过。
+  const tmpDir = path.join(process.cwd(), "test-tmp-count-drafts-race");
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const store = new AttachmentStore(tmpDir);
+    const limit = ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION;
+
+    // 上限-1 个已有草稿：只剩一个名额。
+    for (let i = 0; i < limit - 1; i++) {
+      await store.saveDraft({
+        workspaceId: "ws-1",
+        conversationId: "conv-1",
+        data: VALID_PNG,
+        ext: "png",
+        filename: `seeded-${i}.png`,
+      });
+    }
+    assert.equal(await store.countDrafts("ws-1", "conv-1"), limit - 1);
+
+    const attempts = await Promise.all(
+      Array.from({ length: 8 }, () => store.saveDraftWithinLimit({
+        workspaceId: "ws-1",
+        conversationId: "conv-1",
+        data: VALID_PNG,
+        ext: "png",
+        filename: "racer.png",
+      })),
+    );
+
+    const accepted = attempts.filter((result) => result.ok).length;
+    assert.equal(accepted, 1, "only the one remaining slot may be taken");
+    assert.equal(
+      attempts.filter((result) => !result.ok).length,
+      7,
+      "every other concurrent upload must be rejected, not silently accepted",
+    );
+    assert.equal(await store.countDrafts("ws-1", "conv-1"), limit, "the cap must hold after the race");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("the draft cap reports its limit so the caller can explain the rejection", async () => {
+  const tmpDir = path.join(process.cwd(), "test-tmp-count-drafts-limit");
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const store = new AttachmentStore(tmpDir);
+
+    for (let i = 0; i < ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION; i++) {
+      await store.saveDraft({
+        workspaceId: "ws-1",
+        conversationId: "conv-1",
+        data: VALID_PNG,
+        ext: "png",
+        filename: `full-${i}.png`,
+      });
+    }
+
+    const rejected = await store.saveDraftWithinLimit({
+      workspaceId: "ws-1",
+      conversationId: "conv-1",
+      data: VALID_PNG,
+      ext: "png",
+      filename: "one-too-many.png",
+    });
+
+    assert.deepEqual(rejected, { ok: false, limit: ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

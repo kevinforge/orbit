@@ -40,6 +40,7 @@ type FakeConnectionControls = {
   resumeError?: Error;
   secondResumeError?: Error;
   answerText?: string;
+  promptError?: Error;
   // issue #142：会话建立响应携带的 config options 与 set_config_option 行为。
   sessionConfigOptions?: Array<SessionConfigOption>;
   setConfigOptionError?: Error;
@@ -115,6 +116,8 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
         }
         return controls.hangPrompt
           ? new Promise<PromptResponse>(() => {})
+          : controls.promptError
+            ? Promise.reject(controls.promptError)
           : Promise.resolve(controls.promptResponse ?? { stopReason: "end_turn" });
       },
       cancel(sessionId: string) {
@@ -754,6 +757,34 @@ test("image capability off: images degrade to resource_link instead of a text pa
   assert.equal(link.size, 2048, "resource_link size comes from attachment metadata");
 });
 
+test("image-only prompts omit an empty text block", () => {
+  const blocks = buildPromptContent("", [
+    makeAttachment({ id: "img-only", kind: "image", mimeType: "image/png", filename: "photo.png", path: process.execPath, size: 2048 }),
+  ], { promptCapabilities: { image: true } } as AgentCapabilities);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0]!.type, "image");
+});
+
+test("image input rejection becomes an actionable model error", async () => {
+  const fake = fakeConnector({ promptError: new Error("invalid request: image input is not supported by this model") });
+  const handle = runAcp(runOptions({
+    attachments: [makeAttachment({ id: "img-1", kind: "image", mimeType: "image/png", filename: "photo.png", path: "/data/photo.png", size: 2048 })],
+  }), definition, fake.connector);
+  await assert.rejects(handle.result, /原始报错：invalid request: image input is not supported by this model[\s\S]*建议：当前模型不支持图片输入/);
+});
+
+test("ACP refusal becomes an actionable model error", async () => {
+  const fake = fakeConnector({ promptResponse: { stopReason: "refusal" } });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+  await assert.rejects(handle.result, /ACP refused the request\.[\s\S]*建议：请切换到其他可用模型/);
+});
+
+test("provider capacity responses become actionable errors", async () => {
+  const fake = fakeConnector({ answerText: "Selected model is at capacity." });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+  await assert.rejects(handle.result, /原始报错：Selected model is at capacity\.[\s\S]*建议：当前模型容量已满/);
+});
+
 test("resource_link fields come exclusively from the validated attachment metadata", () => {
   const attachment = makeAttachment({
     id: "pdf-9",
@@ -766,7 +797,10 @@ test("resource_link fields come exclusively from the validated attachment metada
 
   const blocks = buildPromptContent("read it", [attachment], {} as AgentCapabilities);
   const link = blocks[1] as { uri: string; name: string; mimeType: string; size: number };
-  assert.equal(link.uri, `file://${"/data/quarterly.pdf"}`);
+  const expectedUri = process.platform === "win32"
+    ? "file:///D:/data/quarterly.pdf"
+    : "file:///data/quarterly.pdf";
+  assert.equal(link.uri, expectedUri);
   assert.equal(link.name, "季度报告.pdf");
   assert.equal(link.mimeType, "application/pdf");
   assert.equal(link.size, 40960);

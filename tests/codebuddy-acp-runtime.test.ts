@@ -753,3 +753,32 @@ test("sends PDF, text and code attachments as resource_link content", async () =
   assert.equal(code?.type, "resource_link");
   assert.equal(code?.name, "example.ts");
 });
+
+test("sends native images when CodeBuddy advertises image capability", async () => {
+  const fake = fakeConnector({
+    capabilities: { promptCapabilities: { image: true } },
+    onPrompt(notify) {
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "image received" },
+        },
+      });
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  await runtime.run(runOptions({
+    attachments: [{
+      id: "img-1", kind: "image", mimeType: "image/png", filename: "diagram.png",
+      path: process.execPath, url: "/api/attachments/ws/conv/img-1", size: 2048,
+      createdAt: new Date().toISOString(),
+    } satisfies MessageAttachment],
+  })).result;
+
+  const prompt = fake.calls.find((call) => call.method === "session/prompt")!.value as {
+    prompt: Array<{ type: string; mimeType?: string }>;
+  };
+  assert.equal(prompt.prompt[1]?.type, "image");
+  assert.equal(prompt.prompt[1]?.mimeType, "image/png");
+});

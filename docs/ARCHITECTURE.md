@@ -244,7 +244,33 @@ types rely on the extension whitelist plus size limits. Composer uploads are
 drafts under `tmp/attachments`; sending a message commits drafts into
 `conversations/<ws>/<conv>/attachments`, re-validating the stored bytes and
 failing the whole message (with drafts preserved and partial copies rolled
-back) when one is missing or a copy fails.
+back) when one is missing or a copy fails. A single message is capped at five
+attachments of 5 MB each and 20 MB in total; the combined cap is checked
+against the bytes read back from disk before anything is copied, so a rejected
+message stays retryable. The two caps cannot both be reached at once — five
+full-size files would be 25 MB — so a message is either five smaller
+attachments or a few large ones. The combined cap exists because images are
+inlined into the ACP prompt as base64; it applies to every kind today, so
+five 5 MB text files are rejected even though only their URI reaches the
+runtime. Draft creation counts and writes inside one
+per-conversation critical section, so concurrent uploads cannot each read a
+stale count and slip past the 20-draft cap.
+
+Composing an attachment-only first message is possible on a workspace without
+any conversation yet: the composer creates the conversation through
+`POST /api/conversations` before uploading, because drafts are stored per
+conversation and the upload target must already exist. History retention
+(`src/core/history-retention.ts`) reclaims permanent attachments once the only
+message shard referencing them is removed, and prunes the display-name index
+with them. The reconciliation only runs for a conversation that actually lost a
+shard in that pass — deliberately, so startup does not read every shard — so
+attachments orphaned before this existed are reclaimed the next time that
+conversation loses a shard rather than by a one-off sweep.
+
+Serving an attachment back to the UI resolves the user's original filename from
+`attachments/index.json` (`src/core/attachment-filename-index.ts`) instead of
+scanning every message shard; entries missing from the index — attachments
+committed before it existed — are read from history once and then backfilled.
 
 Delivery to runtimes keeps the full server-validated attachment metadata
 intact along `run-manager.ts` → `agent-session.ts` → `AgentRuntimeRunOptions.attachments`.
@@ -259,7 +285,9 @@ generated with Node's `pathToFileURL()` so spaces and non-ASCII path segments
 survive on every platform. The `<current-attachments>` section of the agent
 prompt lists attachments with kind, name, and size only — marked as untrusted
 user data that must not be executed — while structured content blocks are the
-primary transport. The HTTP layer serves images inline and every other kind as a
+primary transport. A message may contain attachments without any text; when a
+selected employee marker is the only visible text, the attachment remains the
+task input. The HTTP layer serves images inline and every other kind as a
 generic `application/octet-stream` download with `nosniff` (see
 `src/server/attachment-response.ts`).
 

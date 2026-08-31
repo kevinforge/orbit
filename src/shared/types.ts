@@ -263,6 +263,12 @@ export type DraftAttachmentInfo = {
 export const ATTACHMENT_LIMITS = {
   MAX_FILE_SIZE: 5 * 1024 * 1024,
   MAX_FILES_PER_MESSAGE: 5,
+  /**
+   * 单条消息附件的合计字节上限。理论上 5 个文件 × 5MB = 25MB，但图片会以
+   * base64 内联进 ACP prompt（体积膨胀约 4/3），且发送时是同步读取，故把
+   * 合计压到 20MB 以约束单次 prompt 体积与内存峰值。
+   */
+  MAX_TOTAL_SIZE_PER_MESSAGE: 20 * 1024 * 1024,
   ALLOWED_IMAGE_MIME_TYPES: ["image/png", "image/jpeg", "image/webp"],
   DRAFT_MAX_AGE_MS: 1 * 60 * 60 * 1000, // Issue #88: 清理频率从24小时改为1小时
   MAX_DRAFTS_PER_CONVERSATION: 20, // Issue #88: 每会话最多20个draft

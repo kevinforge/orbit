@@ -30,9 +30,15 @@ import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { buildAttachmentHeaders } from "./attachment-response.ts";
-import { shouldPromoteNewConversation } from "./message-target.ts";
+import { canSendMessage } from "../shared/message-validation.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
+import { readJson, RequestBodyTooLargeError } from "./read-json.ts";
+import {
+  resolveTargetIds as resolveTargetDetails,
+  type RequestTarget,
+  type TargetMissingReason,
+} from "./request-target.ts";
 import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 import { buildWorkspaceWorkAnalysis } from "./workspace-work-analysis.ts";
@@ -345,18 +351,31 @@ function contextKey(workspaceId: string, conversationId: string): string {
   return `${workspaceId}:${conversationId}`;
 }
 
-type RequestTarget = { workspaceId: string; conversationId: string };
-
 /** Resolve page-owned context. Query parameters are the public API contract;
  * the active pointers are retained only as a compatibility fallback for old clients. */
-function resolveTarget(url: URL, requireConversation = true): RequestTarget | null {
-  const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
-  if (!workspaceId || !workspaceStore.get(workspaceId)) return null;
-  const conversationId = url.searchParams.get("conversationId")
-    || (workspaceId === activeWorkspaceId ? activeConversationId : "");
-  if (requireConversation && (!conversationId || !conversationStore.get(workspaceId, conversationId))) return null;
-  return { workspaceId, conversationId };
+function resolveTargetDetailed(url: URL, requireConversation = true) {
+  return resolveTargetDetails(
+    url,
+    { activeWorkspaceId, activeConversationId },
+    {
+      workspace: (id) => Boolean(workspaceStore.get(id)),
+      conversation: (ws, conv) => Boolean(conversationStore.get(ws, conv)),
+    },
+    requireConversation,
+  );
 }
+
+function resolveTarget(url: URL, requireConversation = true): RequestTarget | null {
+  return resolveTargetDetailed(url, requireConversation).target;
+}
+
+/** 上传类端点的目标缺失文案：未知会话是 404（与 /api/messages 一致），
+ * 无会话/无工作区是 409（调用方补齐上下文后可重试）。 */
+const TARGET_MISSING_MESSAGES: Record<TargetMissingReason, string> = {
+  missing_workspace: "请先选择或创建工作区，再上传附件。",
+  missing_conversation: "当前没有可接收附件的会话，请先创建或选择一个会话。",
+  unknown_conversation: "会话不存在或已被删除。",
+};
 
 function contextForTarget(target: RequestTarget | null): ConversationContext | null {
   if (!target) return null;
@@ -619,18 +638,31 @@ function clearActiveConversation(): void {
 /**
  * 附件下载名：优先使用会话消息历史里记录的用户原始文件名；存储文件名是
  * `<id>.<ext>`，直接下发会让"用户说明.txt"下载成 UUID 名。
+ *
+ * 展示文件名存在附件目录的索引里（commit 时写入），下载只读这个小文件；
+ * 早于索引的历史附件才扫描一次历史并回填，避免每次下载都同步读取全部
+ * 历史分片（长会话单次上百毫秒，一条多图消息会阻塞事件循环）。
  */
-function resolveAttachmentFilename(workspaceId: string, conversationId: string, attachmentId: string): string | null {
+async function resolveAttachmentFilename(
+  workspaceId: string,
+  conversationId: string,
+  attachmentId: string,
+): Promise<string | null> {
+  const indexed = await attachmentStore.attachmentFilename(workspaceId, conversationId, attachmentId);
+  if (indexed) return indexed;
+
   const ctx = contextMap.get(contextKey(workspaceId, conversationId));
-  if (ctx) {
-    return ctx.messages.attachmentFilename(attachmentId);
+  const scanned = ctx
+    ? ctx.messages.attachmentFilename(attachmentId)
+    // 该会话当前没有活动上下文：只读打开消息历史，不做任何写入。
+    : new MessageStore(
+      path.join(workspaceStore.channelsDir(workspaceId, conversationId), "messages.json"),
+      { historyRead: true },
+    ).attachmentFilename(attachmentId);
+  if (scanned) {
+    await attachmentStore.rememberAttachmentFilename(workspaceId, conversationId, attachmentId, scanned);
   }
-  // 该会话当前没有活动上下文：只读打开消息历史，不做任何写入。
-  const messages = new MessageStore(
-    path.join(workspaceStore.channelsDir(workspaceId, conversationId), "messages.json"),
-    { historyRead: true },
-  );
-  return messages.attachmentFilename(attachmentId);
+  return scanned;
 }
 
 function currentAgentStates() {
@@ -826,11 +858,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/attachments/drafts") {
       // 目标来自请求 query 快照（#155 页面上下文契约）：上传进行中切换
       // 会话时，文件仍保存到发起上传的会话目录，不会错投到新会话。
-      const target = resolveTarget(url);
-      if (!target) {
-        sendJson(res, 409, { ok: false, message: "No active conversation." });
+      const resolution = resolveTargetDetailed(url);
+      if (!resolution.target) {
+        // #7：未知会话是 404（与 /api/messages 一致），没有会话/工作区是 409。
+        sendJson(res, resolution.reason === "unknown_conversation" ? 404 : 409, {
+          ok: false,
+          message: TARGET_MISSING_MESSAGES[resolution.reason],
+        });
         return;
       }
+      const target = resolution.target;
       const input = (await readJson(req)) as {
         data?: unknown;
         mimeType?: unknown;
@@ -841,7 +878,7 @@ const server = http.createServer(async (req, res) => {
       const filename = typeof input.filename === "string" ? input.filename : "";
 
       if (!base64Data) {
-        sendJson(res, 400, { ok: false, message: "Missing attachment data." });
+        sendJson(res, 400, { ok: false, message: "附件内容为空，请重新选择文件。" });
         return;
       }
 
@@ -853,23 +890,21 @@ const server = http.createServer(async (req, res) => {
       }
       const validated = validation.attachment;
 
-      // Issue #88: Check draft count limit before saving
-      const draftCount = await attachmentStore.countDrafts(target.workspaceId, target.conversationId);
-      if (draftCount >= ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION) {
-        sendJson(res, 400, {
-          ok: false,
-          message: `Too many pending attachments (limit ${ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION}). Please send or remove the existing attachments first.`
-        });
-        return;
-      }
-
-      const saved = await attachmentStore.saveDraft({
+      // Issue #88: 计数与写入在同一段互斥区内完成，并发上传无法绕过上限。
+      const saved = await attachmentStore.saveDraftWithinLimit({
         workspaceId: target.workspaceId,
         conversationId: target.conversationId,
         data: buffer,
         ext: validated.ext,
         filename: validated.filename,
       });
+      if (!saved.ok) {
+        sendJson(res, 400, {
+          ok: false,
+          message: `待上传附件过多（上限 ${saved.limit} 个），请先发送或删除已有附件。`,
+        });
+        return;
+      }
 
       sendJson(res, 200, {
         ok: true,
@@ -938,7 +973,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { ok: false, message: "Attachment not found." });
         return;
       }
-      const displayFilename = resolveAttachmentFilename(wsId, convId, attachId) ?? attachment.filename;
+      const displayFilename = await resolveAttachmentFilename(wsId, convId, attachId) ?? attachment.filename;
       res.writeHead(200, buildAttachmentHeaders({ ...attachment, filename: displayFilename }));
       res.end(attachment.data);
       return;
@@ -1337,11 +1372,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/conversations") {
-      // 入口快照先于 readJson 取得；创建会话是显式操作，但读取请求体期间
-      // 用户可能又切换了会话/工作区，写回 active 前必须 compare-and-set。
-      const entryActiveWorkspaceId = activeWorkspaceId;
-      const entryActiveConversationId = activeConversationId;
-      const wsId = url.searchParams.get("workspaceId") || entryActiveWorkspaceId;
+      // 创建会话只创建并返回资源，不激活它；页面随后通过显式上下文决定是否切换。
+      const workspaceParam = url.searchParams.get("workspaceId");
+      const wsId = workspaceParam === null ? activeWorkspaceId : workspaceParam.trim();
       if (!wsId) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before creating a conversation." });
         return;
@@ -1471,7 +1504,6 @@ const server = http.createServer(async (req, res) => {
       try {
         const wasActiveConversation = wsId === activeWorkspaceId && convId === activeConversationId;
         disposeContext(wsId, convId);
-        attachmentStore.deleteConversationAttachments(wsId, convId).catch(() => { /* best effort */ });
         const store = conversationStoreFor(wsId);
         store.delete(wsId, convId);
         if (wasActiveConversation) {
@@ -1515,6 +1547,11 @@ const server = http.createServer(async (req, res) => {
 
     sendJson(res, 404, { ok: false, message: "Not found." });
   } catch (error) {
+    // 请求体超限返回 413：客户端原本只能看到连接被掐断（fetch failed）。
+    if (error instanceof RequestBodyTooLargeError) {
+      sendJson(res, 413, { ok: false, message: error.message });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     sendJson(res, 500, { ok: false, message });
   }
@@ -1658,13 +1695,19 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   const content = typeof input.content === "string" ? input.content.trim() : "";
   const approvalMode: ApprovalMode = input.approvalMode === "full-access" ? "full-access" : "ask";
 
-  if (!content) {
+  const draftAttachments = Array.isArray(input.draftAttachments)
+    ? input.draftAttachments as Array<{ id: string; mimeType: string; filename: string; size: number }>
+    : [];
+
+  if (!canSendMessage(content, draftAttachments.length)) {
     sendJson(res, 400, { ok: false, message: "Message cannot be empty." });
     return;
   }
 
-  const workspaceId = url.searchParams.get("workspaceId") || entryActiveWorkspaceId;
-  const requestedConversationId = url.searchParams.get("conversationId") || "";
+  const workspaceParam = url.searchParams.get("workspaceId");
+  const workspaceId = workspaceParam === null ? entryActiveWorkspaceId : workspaceParam.trim();
+  const conversationParam = url.searchParams.get("conversationId");
+  const requestedConversationId = conversationParam === null ? "" : conversationParam.trim();
   if (!workspaceId || !workspaceStore.get(workspaceId)) {
     sendJson(res, 409, { ok: false, message: "Create or select a workspace before sending a message." });
     return;
@@ -1687,10 +1730,11 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     // Compare-and-set（PR #147 M1）：仅当实时 active 指针仍等于入口快照
     // （读取请求体期间用户未切换）且新会话建在入口工作区时才写回，
     // 否则不打断用户已切换到的会话。判定与写回之间无 await 穿插。
-    if (workspaceId === entryActiveWorkspaceId && shouldPromoteNewConversation(
-      { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
-      { workspaceId: activeWorkspaceId, conversationId: activeConversationId },
-    )) {
+    const legacyRequest = workspaceParam === null;
+    if (legacyRequest
+      && workspaceId === entryActiveWorkspaceId
+      && activeWorkspaceId === entryActiveWorkspaceId
+      && activeConversationId === entryActiveConversationId) {
       activeConversationId = conversation.id;
       activeConversation = toActiveConversation(conversation);
       saveLastActive(workspaceId, conversation.id);
@@ -1706,10 +1750,6 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   }
 
   const clientMessageId = typeof input.clientMessageId === "string" ? input.clientMessageId.trim() : "";
-  const draftAttachments = Array.isArray(input.draftAttachments)
-    ? input.draftAttachments as Array<{ id: string; mimeType: string; filename: string; size: number }>
-    : [];
-
   await context.withMessageMutation(async () => {
     if (clientMessageId) {
       const existing = context.messages.findByClientMessageId(clientMessageId);
@@ -1725,7 +1765,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
       if (draftAttachments.length > ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE) {
         sendJson(res, 400, {
           ok: false,
-          message: `Too many attachments (${draftAttachments.length}). Maximum is ${ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE}.`,
+          message: `附件数量过多（${draftAttachments.length} 个），每条消息最多 ${ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE} 个。`,
         });
         return;
       }
@@ -1761,8 +1801,6 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   });
 }
 
-const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1795,35 +1833,6 @@ function parseElicitationResponse(input: unknown): ElicitationResponse | null {
   return { action: "accept", content };
 }
 
-function readJson(req: http.IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    let bodySize = 0;
-    req.setEncoding("utf8");
-    req.on("data", (chunk: string) => {
-      bodySize += chunk.length;
-      if (bodySize > MAX_BODY_SIZE) {
-        req.destroy(new Error("Request body too large"));
-        return;
-      }
-      body += chunk;
-    });
-    req.on("end", () => {
-      if (!body) {
-        resolve({});
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(error);
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
 function sendJson(res: http.ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(value));
@@ -1839,11 +1848,19 @@ function emptyMessagePage(): MessagePage {
 
 function runHistoryCleanup(): void {
   try {
-    cleanupHistory({
+    const result = cleanupHistory({
       activeConversations: activeWorkspaceId && activeConversationId
         ? [{ workspaceId: activeWorkspaceId, conversationId: activeConversationId }]
         : [],
     });
+    // 附件随分片回收而删除，静默发生时无从诊断，故清理有结果就记一行。
+    if (result.deletedMessageShards > 0 || result.deletedTranscriptSegments > 0 || result.deletedAttachments > 0) {
+      console.log(
+        `[orbit] history cleanup removed ${result.deletedMessageShards} message shard(s), `
+        + `${result.deletedTranscriptSegments} transcript segment(s) and `
+        + `${result.deletedAttachments} orphaned attachment(s)`,
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[orbit] history cleanup skipped: ${message}`);

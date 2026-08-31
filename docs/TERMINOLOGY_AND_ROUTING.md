@@ -39,7 +39,8 @@ Use these terms in docs, issues, PRs, screenshots, and user-facing copy.
   and common code/config source files) show as chips, and every attachment
   that is not a native image block is delivered as an ACP `resource_link`
   content block whose `file://` URI points at the stored file for same-machine
-  employees to read. User-visible copy says 附件 (Simplified Chinese) and
+  employees to read. A message may contain only attachments; in that case the
+  selected employee marker is sufficient to route the task. User-visible copy says 附件 (Simplified Chinese) and
   "attachment" (English); avoid internal storage terms such as `draft` or
   `commit` in the UI.
 
