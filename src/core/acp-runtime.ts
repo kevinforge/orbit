@@ -320,7 +320,7 @@ export function runAcp(
         throw cancellationError();
       }
       if (response.stopReason === "refusal") {
-        throw new Error(`${definition.displayName} ACP refused the request.`);
+        throw new Error(`${definition.displayName} 拒绝了本次请求，请切换到其他可用模型后重试。`);
       }
 
       const selection = selectFinalAnswer(answerState);
@@ -328,6 +328,8 @@ export function runAcp(
       if (!answer) {
         throw new Error(`${definition.displayName} ACP completed with ${response.stopReason} but no final answer.`);
       }
+      const providerError = normalizeProviderAnswer(answer, definition.displayName);
+      if (providerError) throw providerError;
       // 结算快照：流式期间所有文本（含将成为最终回复的文本）都以增量形式进入
       // 过程区；结算时剔除归入最终回复的分组文本，整体替换，保证不重复、不残留。
       emitProcessTextSnapshot(options, answerState, selection.group);
@@ -721,6 +723,15 @@ function normalizePromptError(
     return new Error(`${displayName} 当前模型不支持图片输入，请切换支持图片的模型，或移除图片附件后重试。`);
   }
   return error instanceof Error ? error : new Error(original);
+}
+
+function normalizeProviderAnswer(answer: string, displayName: string): Error | null {
+  if (/^selected model is at capacity\.?$/i.test(answer.trim())
+    || /^model capacity has been reached\.?$/i.test(answer.trim())
+    || /^模型容量已满[。.]?$/.test(answer.trim())) {
+    return new Error(`${displayName} 当前模型容量已满，请切换到其他可用模型后重试。`);
+  }
+  return null;
 }
 
 function handleSessionUpdate(

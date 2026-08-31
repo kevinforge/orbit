@@ -773,6 +773,18 @@ test("image input rejection becomes an actionable model error", async () => {
   await assert.rejects(handle.result, /当前模型不支持图片输入.*切换支持图片的模型/);
 });
 
+test("ACP refusal becomes an actionable model error", async () => {
+  const fake = fakeConnector({ promptResponse: { stopReason: "refusal" } });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+  await assert.rejects(handle.result, /拒绝了本次请求.*切换到其他可用模型/);
+});
+
+test("provider capacity responses become actionable errors", async () => {
+  const fake = fakeConnector({ answerText: "Selected model is at capacity." });
+  const handle = runAcp(runOptions(), definition, fake.connector);
+  await assert.rejects(handle.result, /当前模型容量已满.*切换到其他可用模型/);
+});
+
 test("resource_link fields come exclusively from the validated attachment metadata", () => {
   const attachment = makeAttachment({
     id: "pdf-9",
