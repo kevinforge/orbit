@@ -1364,7 +1364,7 @@ export function App() {
       return;
     }
 
-    if (event.key === "Enter" || event.key === "Tab") {
+    if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
       event.preventDefault();
       chooseMention(mentionCandidates[selectedMentionIndex] ?? mentionCandidates[0]);
       return;
@@ -1830,12 +1830,16 @@ export function App() {
                 if (isImeComposition(event)) {
                   return;
                 }
+                // @ 候选菜单打开时，Enter/Tab/方向键/Esc 优先交给候选菜单处理，
+                // 只有菜单关闭时 Enter 才是发送消息。
+                if (mentionCandidates.length > 0) {
+                  handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
+                  return;
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   sendMessage(event as unknown as FormEvent<HTMLFormElement>);
-                  return;
                 }
-                handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
               placeholder={!hasWorkspace
