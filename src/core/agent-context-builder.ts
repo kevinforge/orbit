@@ -19,7 +19,7 @@ export type AgentContextInput = {
   interactionMode: InteractionMode;
   history?: AgentHistoryEntry[];
   workspaceConfig?: WorkspaceRuntimeConfig;
-  /** 源消息的全部附件：图片与文件都以本地路径列出（图片另走 ACP image 块）。 */
+  /** 源消息的全部附件：结构化 ACP 内容块承载内容，提示词只列名称、类型与大小。 */
   attachments?: MessageAttachment[];
 };
 

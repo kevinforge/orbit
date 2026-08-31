@@ -30,7 +30,7 @@ import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { buildAttachmentHeaders } from "./attachment-response.ts";
-import { shouldPromoteNewConversation } from "./message-target.ts";
+import { canSendMessage } from "../shared/message-validation.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { serveStatic } from "./static-server.ts";
@@ -350,10 +350,13 @@ type RequestTarget = { workspaceId: string; conversationId: string };
 /** Resolve page-owned context. Query parameters are the public API contract;
  * the active pointers are retained only as a compatibility fallback for old clients. */
 function resolveTarget(url: URL, requireConversation = true): RequestTarget | null {
-  const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+  const workspaceParam = url.searchParams.get("workspaceId");
+  const workspaceId = workspaceParam === null ? activeWorkspaceId : workspaceParam.trim();
   if (!workspaceId || !workspaceStore.get(workspaceId)) return null;
-  const conversationId = url.searchParams.get("conversationId")
-    || (workspaceId === activeWorkspaceId ? activeConversationId : "");
+  const conversationParam = url.searchParams.get("conversationId");
+  const conversationId = conversationParam === null
+    ? (workspaceId === activeWorkspaceId ? activeConversationId : "")
+    : conversationParam.trim();
   if (requireConversation && (!conversationId || !conversationStore.get(workspaceId, conversationId))) return null;
   return { workspaceId, conversationId };
 }
@@ -1337,11 +1340,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/conversations") {
-      // 入口快照先于 readJson 取得；创建会话是显式操作，但读取请求体期间
-      // 用户可能又切换了会话/工作区，写回 active 前必须 compare-and-set。
-      const entryActiveWorkspaceId = activeWorkspaceId;
-      const entryActiveConversationId = activeConversationId;
-      const wsId = url.searchParams.get("workspaceId") || entryActiveWorkspaceId;
+      // 创建会话只创建并返回资源，不激活它；页面随后通过显式上下文决定是否切换。
+      const workspaceParam = url.searchParams.get("workspaceId");
+      const wsId = workspaceParam === null ? activeWorkspaceId : workspaceParam.trim();
       if (!wsId) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before creating a conversation." });
         return;
@@ -1658,13 +1659,19 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   const content = typeof input.content === "string" ? input.content.trim() : "";
   const approvalMode: ApprovalMode = input.approvalMode === "full-access" ? "full-access" : "ask";
 
-  if (!content) {
+  const draftAttachments = Array.isArray(input.draftAttachments)
+    ? input.draftAttachments as Array<{ id: string; mimeType: string; filename: string; size: number }>
+    : [];
+
+  if (!canSendMessage(content, draftAttachments.length)) {
     sendJson(res, 400, { ok: false, message: "Message cannot be empty." });
     return;
   }
 
-  const workspaceId = url.searchParams.get("workspaceId") || entryActiveWorkspaceId;
-  const requestedConversationId = url.searchParams.get("conversationId") || "";
+  const workspaceParam = url.searchParams.get("workspaceId");
+  const workspaceId = workspaceParam === null ? entryActiveWorkspaceId : workspaceParam.trim();
+  const conversationParam = url.searchParams.get("conversationId");
+  const requestedConversationId = conversationParam === null ? "" : conversationParam.trim();
   if (!workspaceId || !workspaceStore.get(workspaceId)) {
     sendJson(res, 409, { ok: false, message: "Create or select a workspace before sending a message." });
     return;
@@ -1687,10 +1694,11 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     // Compare-and-set（PR #147 M1）：仅当实时 active 指针仍等于入口快照
     // （读取请求体期间用户未切换）且新会话建在入口工作区时才写回，
     // 否则不打断用户已切换到的会话。判定与写回之间无 await 穿插。
-    if (workspaceId === entryActiveWorkspaceId && shouldPromoteNewConversation(
-      { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
-      { workspaceId: activeWorkspaceId, conversationId: activeConversationId },
-    )) {
+    const legacyRequest = workspaceParam === null;
+    if (legacyRequest
+      && workspaceId === entryActiveWorkspaceId
+      && activeWorkspaceId === entryActiveWorkspaceId
+      && activeConversationId === entryActiveConversationId) {
       activeConversationId = conversation.id;
       activeConversation = toActiveConversation(conversation);
       saveLastActive(workspaceId, conversation.id);
@@ -1706,10 +1714,6 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   }
 
   const clientMessageId = typeof input.clientMessageId === "string" ? input.clientMessageId.trim() : "";
-  const draftAttachments = Array.isArray(input.draftAttachments)
-    ? input.draftAttachments as Array<{ id: string; mimeType: string; filename: string; size: number }>
-    : [];
-
   await context.withMessageMutation(async () => {
     if (clientMessageId) {
       const existing = context.messages.findByClientMessageId(clientMessageId);

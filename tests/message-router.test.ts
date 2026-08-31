@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { MessageRouter } from "../src/core/message-router.ts";
-import type { AgentId, AgentProfile, ChatMessage, InteractionMode, MessageRouteState } from "../src/shared/types.ts";
+import type { AgentId, AgentProfile, ChatMessage, InteractionMode, MessageAttachment, MessageRouteState } from "../src/shared/types.ts";
 
 const agents: readonly AgentProfile[] = [
   { id: "agent1", name: "甄架构", runtime: "codex", cwd: "/tmp", systemPrompt: "design" },
@@ -86,12 +86,21 @@ test("@all no longer expands to every employee in any mode", () => {
   assert.deepEqual(direct.agentRuns.map((run) => run.agentId), ["agent1"]);
 });
 
-test("empty assignment is blocked", () => {
+test("empty assignment is blocked without attachments", () => {
   const { router, agentRuns, systemMessages, routeStates } = createRouter();
   router.process(message("user", "@甄架构:"));
   assert.equal(agentRuns.length, 0);
   assert.ok(systemMessages[0]?.includes("task content"));
   assert.deepEqual(routeStates, ["blocked"]);
+});
+
+test("image-only assignment routes through the selected employee", () => {
+  const { router, agentRuns, routeStates } = createRouter({ mode: "direct" });
+  router.process(message("user", "@甄架构:", {
+    attachments: [{ kind: "image", id: "img-1" } as MessageAttachment],
+  }));
+  assert.deepEqual(agentRuns, [{ agentId: "agent1", prompt: "@甄架构:" }]);
+  assert.deepEqual(routeStates, ["routed"]);
 });
 
 test("depth limit blocks assignments", () => {

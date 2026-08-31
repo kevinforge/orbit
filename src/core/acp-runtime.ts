@@ -305,10 +305,15 @@ export function runAcp(
       }
 
       acceptingUpdates = !forcedCancelled;
-      const response = await connection.prompt({
-        sessionId: activeSessionId,
-        prompt: buildPromptContent(options.prompt, options.attachments, initialized.agentCapabilities),
-      });
+      let response: Awaited<ReturnType<AcpConnection["prompt"]>>;
+      try {
+        response = await connection.prompt({
+          sessionId: activeSessionId,
+          prompt: buildPromptContent(options.prompt, options.attachments, initialized.agentCapabilities),
+        });
+      } catch (error) {
+        throw normalizePromptError(error, definition.displayName, options.attachments);
+      }
       acceptingUpdates = false;
 
       if (cancelled || response.stopReason === "cancelled") {
@@ -678,7 +683,7 @@ export function buildPromptContent(
   attachments: readonly MessageAttachment[] | undefined,
   capabilities: AgentCapabilities | undefined,
 ): ContentBlock[] {
-  const blocks: ContentBlock[] = [{ type: "text", text: prompt }];
+  const blocks: ContentBlock[] = prompt ? [{ type: "text", text: prompt }] : [];
   if (!attachments?.length) return blocks;
 
   const imageEnabled = capabilities?.promptCapabilities?.image === true;
@@ -701,6 +706,21 @@ export function buildPromptContent(
     });
   }
   return blocks;
+}
+
+function normalizePromptError(
+  error: unknown,
+  displayName: string,
+  attachments: readonly MessageAttachment[] | undefined,
+): Error {
+  const original = error instanceof Error ? error.message : String(error);
+  const hasImage = attachments?.some((attachment) => attachment.kind === "image") === true;
+  const mentionsImageInput = /image|vision|multimodal|content block|图片|图像/i.test(original);
+  const indicatesRejection = /unsupported|not support|invalid|reject|denied|cannot|can't|不支持|无效|拒绝|无法/i.test(original);
+  if (hasImage && mentionsImageInput && indicatesRejection) {
+    return new Error(`${displayName} 当前模型不支持图片输入，请切换支持图片的模型，或移除图片附件后重试。`);
+  }
+  return error instanceof Error ? error : new Error(original);
 }
 
 function handleSessionUpdate(

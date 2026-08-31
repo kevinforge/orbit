@@ -259,7 +259,9 @@ generated with Node's `pathToFileURL()` so spaces and non-ASCII path segments
 survive on every platform. The `<current-attachments>` section of the agent
 prompt lists attachments with kind, name, and size only — marked as untrusted
 user data that must not be executed — while structured content blocks are the
-primary transport. The HTTP layer serves images inline and every other kind as a
+primary transport. A message may contain attachments without any text; when a
+selected employee marker is the only visible text, the attachment remains the
+task input. The HTTP layer serves images inline and every other kind as a
 generic `application/octet-stream` download with `nosniff` (see
 `src/server/attachment-response.ts`).
 

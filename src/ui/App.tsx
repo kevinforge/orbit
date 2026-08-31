@@ -6,6 +6,7 @@ import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
 import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
+import { canSendMessage } from "../shared/message-validation.ts";
 import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
@@ -627,7 +628,7 @@ export function App() {
       return;
     }
     const trimmed = content.trim();
-    if (!trimmed || isSending || isSwitchingInteractionMode) {
+    if (!canSendMessage(trimmed, pendingAttachments.length) || isSending || isSwitchingInteractionMode) {
       return;
     }
 
@@ -849,17 +850,26 @@ export function App() {
       if (lifecycle.isStale(uploadContext)) {
         break;
       }
+      if (file.size > ATTACHMENT_LIMITS.MAX_FILE_SIZE) {
+        setAttachmentToast(`附件过大，单个文件不能超过 ${ATTACHMENT_LIMITS.MAX_FILE_SIZE / 1024 / 1024} MB`);
+        window.setTimeout(() => setAttachmentToast(null), 3000);
+        lifecycle.releaseSlots(uploadContext);
+        continue;
+      }
       const base64 = await readFileAsBase64(file);
       if (!base64) {
         lifecycle.releaseSlots(uploadContext);
         continue;
       }
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 60_000);
       try {
         // 目标经 query 参数随请求发送（#155 页面上下文契约）：上传进行中
         // 切换会话时，文件仍保存到发起上传的会话目录，不会错投到新会话。
         const response = await fetch(withPageContext("/api/attachments/drafts", uploadContext), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             data: base64,
             mimeType: file.type,
@@ -889,10 +899,12 @@ export function App() {
           continue;
         }
         setPendingAttachments((prev) => [...prev, result.attachment as DraftAttachmentInfo]);
-      } catch {
-        setAttachmentToast("附件上传失败");
+      } catch (error) {
+        setAttachmentToast(error instanceof DOMException && error.name === "AbortError" ? "附件上传超时，请重试" : "附件上传失败");
         window.setTimeout(() => setAttachmentToast(null), 3000);
         lifecycle.releaseSlots(uploadContext);
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     }
 
@@ -1917,7 +1929,7 @@ export function App() {
               type="submit"
               theme="primary"
               icon={<SendIcon />}
-              disabled={!hasWorkspace || !hasEnabledAgent || !content.trim() || isSending || isSwitchingInteractionMode || uploadingAttachments > 0}
+              disabled={!hasWorkspace || !hasEnabledAgent || !canSendMessage(content, pendingAttachments.length) || isSending || isSwitchingInteractionMode || uploadingAttachments > 0}
               title={uploadingAttachments > 0 ? "附件上传中，完成后可发送" : undefined}
             >
               {isSending ? <span className="sendSpinner" aria-hidden="true" /> : uploadingAttachments > 0 ? "上传中…" : "发送"}

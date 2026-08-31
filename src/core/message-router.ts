@@ -53,7 +53,11 @@ export class MessageRouter {
     }
 
     const senderAgentId = message.kind === "agent" ? message.agentId : undefined;
-    const result = routeMention(message.content, this.options.availableAgents, senderAgentId);
+    const result = routeMention(message.content, this.options.availableAgents, senderAgentId, {
+      // A selected employee marker may be the only text in an image/file-only
+      // message. The attachment itself is the task input.
+      allowEmptyAssignment: message.kind === "user" && (message.attachments?.length ?? 0) > 0,
+    });
 
     switch (result.kind) {
       case "none": {

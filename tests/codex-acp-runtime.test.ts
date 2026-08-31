@@ -363,6 +363,35 @@ test("degrades attached images to resource_link when the image capability is off
   assert.match(prompt.prompt[1]?.uri ?? "", /^file:\/\//);
 });
 
+test("sends native images when Codex advertises image capability", async () => {
+  const fake = fakeConnector({
+    capabilities: { promptCapabilities: { image: true } },
+    onPrompt(notify) {
+      notify({
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "image received" },
+        },
+      });
+    },
+  });
+  const runtime = createCodexAcpRuntime(fake.connector);
+  await runtime.run(runOptions({
+    attachments: [{
+      id: "img-1", kind: "image", mimeType: "image/png", filename: "diagram.png",
+      path: process.execPath, url: "/api/attachments/ws/conv/img-1", size: 2048,
+      createdAt: new Date().toISOString(),
+    } satisfies MessageAttachment],
+  })).result;
+
+  const prompt = fake.calls.find((call) => call.method === "session/prompt")!.value as {
+    prompt: Array<{ type: string; mimeType?: string }>;
+  };
+  assert.equal(prompt.prompt[1]?.type, "image");
+  assert.equal(prompt.prompt[1]?.mimeType, "image/png");
+});
+
 test("Codex ACP cancelled turns expose a typed cancellation error", async () => {
   const fake = fakeConnector({ promptResponse: { stopReason: "cancelled" } });
   const runtime = createCodexAcpRuntime(fake.connector);

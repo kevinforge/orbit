@@ -10,7 +10,12 @@ type AssignmentMarker = { name: string; start: number; end: number; agentId?: Ag
 
 export const assignmentPattern = /@([^\s@:]+)\s*(?::|：)/gu;
 
-export function routeMention(content: string, availableAgents: readonly AgentProfile[], senderAgentId?: AgentId): MentionRouteResult {
+export function routeMention(
+  content: string,
+  availableAgents: readonly AgentProfile[],
+  senderAgentId?: AgentId,
+  options?: { allowEmptyAssignment?: boolean },
+): MentionRouteResult {
   const rawAssignments = Array.from(content.matchAll(assignmentPattern), (match): AssignmentMarker => {
     const start = match.index ?? 0;
     return { name: match[1] ?? "", start, end: start + match[0].length };
@@ -30,7 +35,8 @@ export function routeMention(content: string, availableAgents: readonly AgentPro
   if (known.length === 0) return { kind: "none", message: `Use ${formatAssignmentList(availableAgents)} to assign work to an employee.` };
 
   for (const assignment of known) {
-    if (!content.slice(assignment.end, findNextMarkerEnd(assignment.end, known)).trim()) {
+    if (!content.slice(assignment.end, findNextMarkerEnd(assignment.end, known)).trim()
+      && !options?.allowEmptyAssignment) {
       return { kind: "empty_assignment", agentId: assignment.agentId, message: `Add task content after @${assignment.name}:.` };
     }
   }
