@@ -3,293 +3,168 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Orbit — 一个碳基，可以拥有一支硅基团队</title>
-<meta name="description" content="Orbit 是本地优先的多 Agent 工作台。一个碳基，可以拥有一支硅基团队：把 Claude Code、Codex 与 CodeBuddy 汇聚到同一个工作区和会话中，协同完成每一个目标。" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%236ee7d3' stroke-width='3'/%3E%3C/svg%3E" />
+<title>Orbit — 让 Agent 真正成为你的团队</title>
+<meta name="description" content="Orbit 是本地优先的多 Agent 工作台。把 Claude Code、Codex 与 CodeBuddy 编排进同一个可回看的工作流。" />
+<meta property="og:title" content="Orbit — 让 Agent 真正成为你的团队" />
+<meta property="og:description" content="一个工作区。多个数字员工。每一步都清楚可见。" />
+<meta property="og:type" content="website" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23141613'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%23c6f26b' stroke-width='2'/%3E%3Ccircle cx='24' cy='9' r='2' fill='%23c6f26b'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
 
-<!-- 0. 顶栏 -->
 <header class="topbar">
-  <div class="topbar-inner">
+  <div class="container topbar-inner">
     <a class="brand" href="#top" aria-label="Orbit 首页">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-name">Orbit</span>
+      <span class="brand-mark" aria-hidden="true"><i></i></span>
+      <span>Orbit</span>
     </a>
     <nav class="topnav" aria-label="主导航">
-      <a href="https://github.com/kevinforge/orbit">GitHub</a>
-      <a href="https://github.com/kevinforge/orbit#readme">快速上手</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/docs/ARCHITECTURE.md">文档</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/docs/TERMINOLOGY_AND_ROUTING.md">术语与路由</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/CONTRIBUTING.md">参与贡献</a>
+      <a href="#why">为什么 Orbit</a>
+      <a href="#workflow">工作方式</a>
+      <a href="https://github.com/kevinforge/orbit">GitHub ↗</a>
     </nav>
+    <a class="topbar-cta" href="#quickstart">开始使用 <span aria-hidden="true">↗</span></a>
   </div>
 </header>
 
 <main id="main">
 <span id="top"></span>
 
-<!-- 1. Hero -->
 <section class="hero" aria-labelledby="hero-title">
-  <div class="hero-glow" aria-hidden="true"></div>
-  <div class="container hero-inner">
-    <p class="kicker">本地优先的多 Agent 工作台</p>
-    <h1 id="hero-title" class="display-title">一个<span class="tone-carbon">碳基</span>，可以拥有一支<span class="tone-silicon">硅基团队</span></h1>
-    <p class="lede">
-      把 Claude Code、Codex 与 CodeBuddy 汇聚到同一个工作区和会话中，协同完成每一个目标。
-      Orbit 负责路由、队列、审批与历史，由你决定谁来做、何时交接。
-    </p>
-    <div class="cta-row">
-      <a class="btn btn-primary" href="https://github.com/kevinforge/orbit">在 GitHub 上查看</a>
-      <a class="btn btn-ghost" href="#quickstart">快速开始</a>
-    </div>
-
-    <!-- 命令卡 -->
-    <div class="cmd-card" aria-label="安装命令">
-      <div class="cmd-tabs" role="tablist" aria-label="安装方式">
-        <button role="tab" id="tab-quick" class="cmd-tab is-active" aria-selected="true" aria-controls="panel-quick" tabindex="0">快速安装</button>
-        <button role="tab" id="tab-source" class="cmd-tab" aria-selected="false" aria-controls="panel-source" tabindex="-1">从源码运行</button>
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <div class="eyebrow"><span class="pulse-dot" aria-hidden="true"></span> LOCAL-FIRST · OPEN SOURCE</div>
+      <h1 id="hero-title">让 Agent<br /><em>真正成为你的团队。</em></h1>
+      <p class="hero-lede">Orbit 把 Claude Code、Codex 与 CodeBuddy 编排进一个本地优先的工作区。你负责方向，数字员工负责把事情做完。</p>
+      <div class="hero-actions">
+        <a class="button button-dark" href="https://github.com/kevinforge/orbit">查看源码 <span aria-hidden="true">↗</span></a>
+        <a class="button button-light" href="#quickstart">三分钟开始 <span aria-hidden="true">↓</span></a>
       </div>
-      <div role="tabpanel" id="panel-quick" class="cmd-panel" aria-labelledby="tab-quick">
-        <code class="cmd-line"><span class="prompt">$</span> npm install -g @kevinforge/orbit</code>
-        <button type="button" class="copy-btn" data-copy="npm install -g @kevinforge/orbit" aria-label="复制快速安装命令">
-          <span class="copy-label">复制</span>
-        </button>
-        <p class="cmd-note">不要安装公开 npm 上那个无关的 <code>orbit</code> 包。</p>
-      </div>
-      <div role="tabpanel" id="panel-source" class="cmd-panel is-hidden" aria-labelledby="tab-source" hidden>
-        <code class="cmd-block"><span class="prompt">$</span> git clone https://github.com/kevinforge/orbit.git
-<span class="prompt">$</span> cd orbit
-<span class="prompt">$</span> npm ci
-<span class="prompt">$</span> npm run build
-<span class="prompt">$</span> npm run dev</code>
-        <button type="button" class="copy-btn" data-copy="git clone https://github.com/kevinforge/orbit.git
-cd orbit
-npm ci
-npm run build
-npm run dev" aria-label="复制从源码运行命令">
-          <span class="copy-label">复制</span>
-        </button>
-        <p class="cmd-note">随后在浏览器打开 <code>http://localhost:4317</code>。</p>
+      <div class="hero-meta" aria-label="Orbit 特性">
+        <span><strong>01</strong> 一个工作区</span>
+        <span><strong>02</strong> 多个专家</span>
+        <span><strong>03</strong> 清晰可回看</span>
       </div>
     </div>
-  </div>
-</section>
 
-<!-- 2. 核心理念：公式 + 三卡 -->
-<section class="section concept" aria-labelledby="concept-title">
-  <div class="container">
-    <p class="kicker">核心理念</p>
-    <h2 id="concept-title" class="section-title">协作 = <span class="tone-carbon">碳基判断</span> × <span class="tone-silicon">硅基行动</span></h2>
-    <p class="section-lede">
-      Orbit 把一个本地项目目录变成会话式协作工作台。你负责判断与方向，数字员工负责并行执行、交叉核验与结果交付。
-    </p>
-
-    <ul class="card-grid card-grid-3" role="list">
-      <li class="card">
-        <p class="card-kicker">ONE CONVERSATION</p>
-        <h3 class="card-title">一个会话，多个专家</h3>
-        <p class="card-text">目标、过程与结果保留在同一条可见的工作流里，不用在多个窗口之间复制上下文。</p>
-      </li>
-      <li class="card">
-        <p class="card-kicker">HUMAN-DIRECTED ROUTING</p>
-        <h3 class="card-title">由人控制路由</h3>
-        <p class="card-text">用 <code>@显示名称:</code> 明确指派；或不写指派，把目标交给内部监工协调启用的团队。</p>
-      </li>
-      <li class="card">
-        <p class="card-kicker">LOCAL-FIRST &amp; RECOVERABLE</p>
-        <h3 class="card-title">本地优先，执行可恢复</h3>
-        <p class="card-text">工作区、消息、会话与附件保存在本机 <code>~/.orbit</code>；每个员工独立排队，支持审批、取消与失败恢复。</p>
-      </li>
-    </ul>
-  </div>
-</section>
-
-<!-- 3. 设计思路：交互 tabs -->
-<section class="section design" aria-labelledby="design-title">
-  <div class="container">
-    <p class="kicker">设计思路</p>
-    <h2 id="design-title" class="section-title">把协作过程留在可见的工作流里</h2>
-
-    <div class="design-layout">
-      <div class="design-tabs" role="tablist" aria-label="设计思路" aria-orientation="vertical">
-        <button role="tab" id="dtab-modes" class="design-tab is-active" aria-selected="true" aria-controls="dpanel-modes" tabindex="0">
-          <span class="design-tab-kicker">COLLABORATION MODES</span>
-          <span class="design-tab-title">协作模式</span>
-        </button>
-        <button role="tab" id="dtab-trace" class="design-tab" aria-selected="false" aria-controls="dpanel-trace" tabindex="-1">
-          <span class="design-tab-kicker">TRACEABLE PROCESS</span>
-          <span class="design-tab-title">过程可回看</span>
-        </button>
-        <button role="tab" id="dtab-runtime" class="design-tab" aria-selected="false" aria-controls="dpanel-runtime" tabindex="-1">
-          <span class="design-tab-kicker">HYBRID RUNTIMES</span>
-          <span class="design-tab-title">混合运行时</span>
-        </button>
-      </div>
-
-      <div class="design-panels">
-        <!-- 协作模式 -->
-        <div role="tabpanel" id="dpanel-modes" class="design-panel" aria-labelledby="dtab-modes">
-          <div class="mock" aria-label="协作模式选择示意">
-            <div class="mock-chrome">
-              <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
-              <span class="mock-title">Orbit · 复杂协作</span>
+    <div class="hero-product" aria-label="Orbit 工作区界面示意">
+      <div class="product-window">
+        <div class="window-bar">
+          <div class="window-controls" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span class="window-title">orbit / launch-plan</span>
+          <span class="window-status"><i></i> 3 employees online</span>
+        </div>
+        <div class="workspace-shell">
+          <aside class="workspace-nav" aria-label="工作区示意导航">
+            <div class="nav-avatar">O</div>
+            <div class="nav-line active"><span class="nav-glyph">◌</span> Overview</div>
+            <div class="nav-line"><span class="nav-glyph">↗</span> Conversations</div>
+            <div class="nav-line"><span class="nav-glyph">⌘</span> Employees</div>
+            <div class="nav-spacer"></div>
+            <div class="nav-line muted"><span class="nav-glyph">⚙</span> Settings</div>
+          </aside>
+          <div class="workspace-main">
+            <div class="workspace-heading">
+              <div><span class="tiny-label">CONVERSATION / 04</span><h2>Launch plan</h2></div>
+              <span class="live-badge">RUNNING</span>
             </div>
-            <div class="mock-body">
-              <ul class="mode-list" role="list">
-                <li class="mode-item"><span class="mode-name">普通对话</span><span class="mode-desc">与一位员工聚焦沟通</span></li>
-                <li class="mode-item"><span class="mode-name">简单协作</span><span class="mode-desc">明确组织多个员工交接</span></li>
-                <li class="mode-item mode-item-active"><span class="mode-name">复杂协作</span><span class="mode-desc">目标交给监工拆解与收敛</span></li>
-              </ul>
-              <div class="mock-thread">
-                <div class="mock-msg mock-msg-user">把登录流程的改进合并发布并回报结果。</div>
-                <div class="mock-msg mock-msg-supervisor">已拆解为：方案评估 → 并行实现 + 回归清单 → 核验 → 汇总。</div>
-                <div class="mock-msg mock-msg-emp">@蔡一平: 实现修复。@田小坑: 准备回归检查清单。</div>
+            <div class="workspace-thread">
+              <div class="thread-message human">
+                <div class="message-label"><span class="person-dot">Y</span> You <time>10:42</time></div>
+                <p>把这次发布拆成一份可执行的计划，并标出风险。</p>
+              </div>
+              <div class="thread-message agent">
+                <div class="message-label"><span class="agent-dot">A</span> Aria <span class="role">PRODUCT</span><time>10:43</time></div>
+                <p>我会先梳理范围与验收标准，再交给工程和测试并行推进。</p>
+              </div>
+              <div class="thread-message agent compact">
+                <div class="message-label"><span class="agent-dot green">C</span> Cai <span class="role">ENGINEERING</span><span class="queued">IN QUEUE</span></div>
+                <div class="progress-line"><span></span><b>正在准备实现方案</b><small>02:14</small></div>
               </div>
             </div>
+            <div class="workspace-composer"><span>Message the team...</span><b>↗</b></div>
           </div>
+          <aside class="workspace-activity">
+            <span class="tiny-label">ACTIVITY</span>
+            <div class="activity-item"><i class="done"></i><span>Scope defined<small>just now</small></span></div>
+            <div class="activity-item"><i class="live"></i><span>Aria is working<small>product review</small></span></div>
+            <div class="activity-item"><i></i><span>Cai is queued<small>engineering</small></span></div>
+            <div class="activity-rule"></div>
+            <div class="activity-note"><b>Local session</b><span>Every message is yours to keep.</span></div>
+          </aside>
         </div>
+      </div>
+      <div class="product-caption"><span class="caption-mark">↳</span> One conversation, many hands.</div>
+    </div>
+  </div>
+</section>
 
-        <!-- 过程可回看 -->
-        <div role="tabpanel" id="dpanel-trace" class="design-panel is-hidden" aria-labelledby="dtab-trace" hidden>
-          <div class="mock" aria-label="过程回看示意">
-            <div class="mock-chrome">
-              <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
-              <span class="mock-title">Orbit · 协作洞察</span>
-            </div>
-            <div class="mock-body">
-              <ul class="trace-list" role="list">
-                <li class="trace-item"><span class="trace-status trace-status-done">已完成</span><span class="trace-who">范同经</span><span class="trace-text">澄清范围与验收标准</span></li>
-                <li class="trace-item"><span class="trace-status trace-status-done">已完成</span><span class="trace-who">甄架构</span><span class="trace-text">提出实现方案</span></li>
-                <li class="trace-item"><span class="trace-status trace-status-running">进行中</span><span class="trace-who">蔡一平</span><span class="trace-text">修改文件并运行检查</span></li>
-                <li class="trace-item"><span class="trace-status trace-status-queued">排队中</span><span class="trace-who">田小坑</span><span class="trace-text">验证行为并报告回归</span></li>
-              </ul>
-              <p class="mock-caption">消息历史、运行时会话与终端记录持久化在 <code>~/.orbit</code>。</p>
-            </div>
-          </div>
-        </div>
+<section class="statement" id="why" aria-labelledby="statement-title">
+  <div class="container statement-grid">
+    <div class="section-index">01 / THE IDEA</div>
+    <div>
+      <h2 id="statement-title">工具越来越多，<br /><span>上下文不该越来越碎。</span></h2>
+      <p class="statement-lede">Orbit 不是又一个聊天窗口。它是一个把目标、分工、审批和结果放在一起的控制面，让 Agent 的能力变成一支真正可调度的团队。</p>
+    </div>
+  </div>
+</section>
 
-        <!-- 混合运行时 -->
-        <div role="tabpanel" id="dpanel-runtime" class="design-panel is-hidden" aria-labelledby="dtab-runtime" hidden>
-          <div class="mock" aria-label="混合运行时示意">
-            <div class="mock-chrome">
-              <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
-              <span class="mock-title">Orbit · 统一 ACP 运行时层</span>
-            </div>
-            <div class="mock-body">
-              <div class="runtime-diagram">
-                <div class="runtime-row">
-                  <span class="rt-chip">Claude Code</span>
-                  <span class="rt-chip">Codex</span>
-                  <span class="rt-chip">CodeBuddy</span>
-                </div>
-                <span class="rt-arrow" aria-hidden="true">↕</span>
-                <span class="rt-core">统一 ACP 适配层</span>
-                <span class="rt-arrow" aria-hidden="true">↕</span>
-                <span class="rt-store">本地消息存储 · ~/.orbit</span>
-              </div>
-              <p class="mock-caption">三种运行时都走 ACP v1（换行分隔的 JSON-RPC），运行时差异留在各自适配器内。</p>
-            </div>
-          </div>
+<section class="principles section-pad" aria-labelledby="principles-title">
+  <div class="container">
+    <div class="section-heading-row">
+      <div><div class="section-index">02 / BUILT FOR REAL WORK</div><h2 id="principles-title">少一点魔法，<br /><span>多一点掌控。</span></h2></div>
+      <p>Orbit 把复杂性放在该放的位置：运行时留在适配器，状态留在本地，会话留在你手里。</p>
+    </div>
+    <div class="principle-grid">
+      <article class="principle-card card-dark"><span class="card-number">01</span><div class="card-symbol">↗</div><h3>一个目标，多位专家</h3><p>在同一条会话里，让产品、架构、开发和测试按你的节奏接力。</p><a href="#workflow">看它怎么协作 <span>→</span></a></article>
+      <article class="principle-card card-paper"><span class="card-number">02</span><div class="card-symbol">◷</div><h3>过程清楚，结果可信</h3><p>每一步都可见、可暂停、可恢复。你知道谁在做什么，也知道下一步是什么。</p><a href="#workflow">了解可回看工作流 <span>→</span></a></article>
+      <article class="principle-card card-lime"><span class="card-number">03</span><div class="card-symbol">⌂</div><h3>本地优先，数据归你</h3><p>工作区、消息、会话与附件保存在本机。你的工作不需要绕远路。</p><a href="https://github.com/kevinforge/orbit/blob/main/docs/DATA_DIRECTORY.md">查看数据目录 <span>↗</span></a></article>
+    </div>
+  </div>
+</section>
+
+<section class="workflow section-pad" id="workflow" aria-labelledby="workflow-title">
+  <div class="container">
+    <div class="section-index">03 / THE WORKFLOW</div>
+    <div class="workflow-heading"><h2 id="workflow-title">把协作过程，<br /><em>留在视线里。</em></h2><p>不是把任务丢给黑盒，而是让每一段工作都有位置、有负责人、有回声。</p></div>
+    <div class="workflow-layout">
+      <div class="workflow-tabs" role="tablist" aria-label="Orbit 工作方式">
+        <button role="tab" id="wtab-route" class="workflow-tab is-active" aria-selected="true" aria-controls="wpanel-route"><span>01</span><b>明确路由</b><small>把工作交给对的人</small></button>
+        <button role="tab" id="wtab-trace" class="workflow-tab" aria-selected="false" aria-controls="wpanel-trace" tabindex="-1"><span>02</span><b>看见过程</b><small>每一步都有迹可循</small></button>
+        <button role="tab" id="wtab-recover" class="workflow-tab" aria-selected="false" aria-controls="wpanel-recover" tabindex="-1"><span>03</span><b>随时接管</b><small>暂停、审批、继续</small></button>
+      </div>
+      <div class="workflow-panels">
+        <div id="wpanel-route" class="workflow-panel" role="tabpanel" aria-labelledby="wtab-route">
+          <div class="route-view"><div class="route-top"><span class="tiny-label">ASSIGNMENT MAP</span><span class="route-count">3 routes / 1 goal</span></div><div class="route-goal"><span class="route-icon">◎</span><div><b>Prepare v1.2 release</b><small>One shared outcome</small></div></div><div class="route-branch"><div class="route-node"><span class="agent-dot">A</span><div><b>Aria</b><small>Scope &amp; acceptance</small></div><strong>DONE</strong></div><div class="route-node"><span class="agent-dot green">C</span><div><b>Cai</b><small>Implementation</small></div><strong class="in-progress">WORKING</strong></div><div class="route-node"><span class="agent-dot purple">T</span><div><b>Tian</b><small>Regression check</small></div><strong class="waiting">QUEUED</strong></div></div></div>
         </div>
+        <div id="wpanel-trace" class="workflow-panel is-hidden" role="tabpanel" aria-labelledby="wtab-trace" hidden><div class="trace-view"><div class="route-top"><span class="tiny-label">SESSION LOG</span><span class="route-count">replayable</span></div><div class="trace-row"><span class="trace-time">10:42</span><i class="trace-line-dot done"></i><div><b>Goal received</b><small>You asked the team to prepare a release plan.</small></div></div><div class="trace-row"><span class="trace-time">10:43</span><i class="trace-line-dot live"></i><div><b>Work routed</b><small>Aria, Cai and Tian picked up their roles.</small></div></div><div class="trace-row"><span class="trace-time">10:45</span><i class="trace-line-dot"></i><div><b>Waiting for results</b><small>Nothing disappears while the work is in motion.</small></div></div></div></div>
+        <div id="wpanel-recover" class="workflow-panel is-hidden" role="tabpanel" aria-labelledby="wtab-recover" hidden><div class="recover-view"><span class="pause-icon">Ⅱ</span><div><span class="tiny-label">CONTROL WHEN IT MATTERS</span><h3>Your work, your call.</h3><p>需要确认时再确认，需要暂停时就暂停。Orbit 会把可恢复的状态留在本地，而不是让一次中断变成一次重来。</p><a href="https://github.com/kevinforge/orbit/blob/main/docs/ARCHITECTURE.md">阅读架构原则 <span>↗</span></a></div></div></div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- 4. 演示区：大标题 + GIF -->
-<section class="section showcase" aria-labelledby="showcase-title">
+<section class="demo section-pad" aria-labelledby="demo-title">
   <div class="container">
-    <h2 id="showcase-title" class="display-title showcase-title">自定义你的 Orbit 数字员工团队</h2>
-    <p class="section-lede">
-      下方演示来自一次真实的复杂协作运行：监工拆解目标，多名数字员工并行调研，核验员工复核，最后在同一会话中汇总。
-    </p>
-    <figure class="demo-media" id="demo-container">
-      <img id="demo-media-el"
-           src="assets/orbit-complex-collaboration-demo.gif"
-           alt="Orbit 复杂协作演示：监工拆解任务、并行执行、核验与汇总的完整会话过程。"
-           aria-describedby="demo-caption" />
-      <figcaption id="demo-caption" class="demo-caption">
-        演示使用 Claude Code、Codex 与 CodeBuddy 的数字员工，在「复杂协作」模式下完成。演示工程与 Orbit 源码隔离，画面中不包含个人工作区信息。
-      </figcaption>
-    </figure>
+    <div class="demo-intro"><div><div class="section-index">04 / SEE IT IN MOTION</div><h2 id="demo-title">从一句话，<br /><em>到一支队伍。</em></h2></div><p>一次真实的复杂协作运行：拆解、并行、核验，最后在同一个会话里收敛。</p></div>
+    <figure class="demo-media"><div class="demo-frame"><img src="assets/orbit-complex-collaboration-demo.gif" alt="Orbit 复杂协作演示：监工拆解任务、并行执行、核验与汇总。" /></div><figcaption><span>Orbit / complex collaboration</span><span>真实工作流演示 ↗</span></figcaption></figure>
   </div>
 </section>
 
-<!-- 5. 安装双卡 -->
-<section class="section install" id="quickstart" aria-labelledby="install-title">
-  <div class="container">
-    <p class="kicker">开始使用</p>
-    <h2 id="install-title" class="section-title">三分钟跑起来</h2>
-    <p class="section-lede">需要 Node.js 22 或更高版本，以及至少一个已登录的运行时。</p>
-
-    <ul class="card-grid card-grid-2" role="list">
-      <li class="card install-card">
-        <p class="card-kicker">QUICK INSTALL</p>
-        <h3 class="card-title">快速安装</h3>
-        <p class="card-text">通过 npm 全局安装并启动。</p>
-        <code class="cmd-block"><span class="prompt">$</span> npm install -g @kevinforge/orbit
-<span class="prompt">$</span> orbit</code>
-        <button type="button" class="copy-btn" data-copy="npm install -g @kevinforge/orbit
-orbit" aria-label="复制快速安装命令"><span class="copy-label">复制</span></button>
-        <p class="card-link">随后打开 <a href="http://localhost:4317">http://localhost:4317</a>。</p>
-      </li>
-      <li class="card install-card">
-        <p class="card-kicker">FROM SOURCE</p>
-        <h3 class="card-title">从源码运行</h3>
-        <p class="card-text">克隆仓库后本地构建并启动开发服务。</p>
-        <code class="cmd-block"><span class="prompt">$</span> git clone https://github.com/kevinforge/orbit.git
-<span class="prompt">$</span> cd orbit
-<span class="prompt">$</span> npm ci
-<span class="prompt">$</span> npm run build
-<span class="prompt">$</span> npm run dev</code>
-        <button type="button" class="copy-btn" data-copy="git clone https://github.com/kevinforge/orbit.git
-cd orbit
-npm ci
-npm run build
-npm run dev" aria-label="复制从源码运行命令"><span class="copy-label">复制</span></button>
-        <p class="card-link">或从 <a href="https://github.com/kevinforge/orbit/releases">GitHub Releases</a> 下载平台安装包。</p>
-      </li>
-    </ul>
-    <p class="install-tip">也可阅读 <a href="https://github.com/kevinforge/orbit/blob/main/docs/QUICKSTART.zh-CN.md">中文快速上手</a> 了解首次使用流程。</p>
+<section class="quickstart section-pad" id="quickstart" aria-labelledby="quickstart-title">
+  <div class="container quickstart-shell">
+    <div class="section-index">05 / GET STARTED</div>
+    <div class="quickstart-heading"><h2 id="quickstart-title">把 Orbit 放进<br /><em>你的工作区。</em></h2><p>需要 Node.js 22 或更高版本，以及至少一个已登录的运行时。</p></div>
+    <div class="install-box"><div class="install-copy"><span class="tiny-label">QUICK INSTALL</span><h3>从命令行开始。</h3><p>安装完成后，运行 <code>orbit</code>，然后在浏览器打开本地工作区。</p><a href="https://github.com/kevinforge/orbit/blob/main/docs/QUICKSTART.zh-CN.md">阅读中文快速上手 ↗</a></div><div class="command"><div class="command-top"><span>TERMINAL</span><button type="button" class="copy-btn" data-copy="npm install -g @kevinforge/orbit\norbit" aria-label="复制安装命令">复制</button></div><code><span>$</span> npm install -g @kevinforge/orbit<br /><span>$</span> orbit</code><small>localhost:4317</small></div></div>
   </div>
 </section>
 
-<!-- 6. 尾部 CTA -->
-<section class="section cta" aria-labelledby="cta-title">
-  <div class="container cta-inner">
-    <h2 id="cta-title" class="section-title">现在，召集你的<span class="tone-silicon">硅基团队</span></h2>
-    <p class="section-lede">
-      用一个本地工程目录，搭起一支由你调度、可恢复、可审计的数字员工团队。
-    </p>
-    <div class="cta-row">
-      <a class="btn btn-primary" href="https://github.com/kevinforge/orbit">查看源码</a>
-      <a class="btn btn-ghost" href="https://github.com/kevinforge/orbit/issues">提交反馈</a>
-      <a class="btn btn-ghost" href="https://github.com/kevinforge/orbit/blob/main/CONTRIBUTING.md">参与贡献</a>
-    </div>
-  </div>
-</section>
+<section class="final-cta" aria-labelledby="final-title"><div class="container final-cta-inner"><div class="section-index">ORBIT / 2026</div><h2 id="final-title">下一件事，<br /><em>让团队来做。</em></h2><p>开源 · 本地优先 · 由你调度</p><div class="hero-actions"><a class="button button-lime" href="https://github.com/kevinforge/orbit">在 GitHub 上开始 <span>↗</span></a><a class="button button-outline" href="https://github.com/kevinforge/orbit/issues">告诉我们你的想法 <span>↗</span></a></div></div></section>
 </main>
 
-<!-- 7. 页脚 -->
-<footer class="footer">
-  <div class="container footer-inner">
-    <nav class="footer-nav" aria-label="文档索引">
-      <a href="https://github.com/kevinforge/orbit/blob/main/docs/QUICKSTART.zh-CN.md">快速上手</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/docs/ARCHITECTURE.md">架构</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/docs/DATA_DIRECTORY.md">数据目录</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/docs/TERMINOLOGY_AND_ROUTING.md">术语与路由</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/docs/standalone-build.md">独立构建</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/CONTRIBUTING.md">贡献指南</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/SUPPORT.md">支持</a>
-      <a href="https://github.com/kevinforge/orbit/blob/main/SECURITY.md">安全</a>
-    </nav>
-    <p class="footer-meta">开源 · MIT · © 2026 Orbit</p>
-  </div>
-</footer>
-
+<footer class="footer"><div class="container footer-inner"><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"><i></i></span><span>Orbit</span></a><nav aria-label="页脚导航"><a href="https://github.com/kevinforge/orbit/blob/main/docs/ARCHITECTURE.md">架构</a><a href="https://github.com/kevinforge/orbit/blob/main/docs/DATA_DIRECTORY.md">数据</a><a href="https://github.com/kevinforge/orbit/blob/main/CONTRIBUTING.md">贡献</a><a href="https://github.com/kevinforge/orbit/blob/main/SECURITY.md">安全</a></nav><span class="footer-note">MIT License · Made for focused work.</span></div></footer>
 <script src="script.js" defer></script>
 </body>
 </html>
