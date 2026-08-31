@@ -253,8 +253,12 @@ describe("App composer wiring for upload races", () => {
     const uploadMatch = appSource.match(/async function uploadAttachmentFiles\([\s\S]*?\n  \}/);
     assert.ok(uploadMatch, "uploadAttachmentFiles must exist in App.tsx");
     const body = uploadMatch[0];
-    assert.ok(body.includes("workspaceId: uploadContext.workspaceId"), "request body must send the captured workspaceId");
-    assert.ok(body.includes("conversationId: uploadContext.conversationId"), "request body must send the captured conversationId");
+    // #155 页面上下文契约：目标经 query 参数随请求发送（withPageContext
+    // 使用捕获的 uploadContext，而非实时页面状态）。
+    assert.ok(
+      body.includes('withPageContext("/api/attachments/drafts", uploadContext)'),
+      "the upload request must carry the captured context as query parameters",
+    );
     assert.ok(
       body.indexOf("lifecycle.isStale(uploadContext)") >= 0 &&
         body.indexOf("setPendingAttachments") > body.indexOf("lifecycle.isStale(uploadContext)"),
@@ -291,13 +295,12 @@ describe("App composer wiring for upload races", () => {
       "clearing the composer after a send must happen only for a non-stale context",
     );
     assert.ok(
-      sendMatch[0].includes("workspaceId: sendContext.workspaceId") &&
-        sendMatch[0].includes("conversationId: sendContext.conversationId"),
-      "the message request must carry the captured workspace/conversation ids",
+      sendMatch[0].includes('withPageContext("/api/messages", requestedContext)'),
+      "the message request must carry the page context as query parameters",
     );
     assert.ok(
-      sendMatch[0].includes("sendContext.conversationId ? { conversationId: sendContext.conversationId } : {}"),
-      "an empty conversation id must be omitted so the server treats it as first-message, not rejected",
+      sendMatch[0].includes("clientMessageId: draftMessageIdRef.current.id"),
+      "the send request must keep its idempotency key",
     );
 
     const removeMatch = appSource.match(/async function removePendingAttachment\([\s\S]*?\n  \}/)!;

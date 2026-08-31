@@ -11,6 +11,7 @@ import type {
   PendingPermission,
   PermissionDecision,
   RunResult,
+  RuntimeEvent,
 } from "../shared/types.ts";
 import { isAgentRunCancelledError, type AgentRuntime } from "./agent-runtime.ts";
 import { sanitizeAgentVisibleReply } from "./agent-prompt.ts";
@@ -36,6 +37,8 @@ export type AgentSessionOptions = {
   quietWindowMs?: number;
   sessionStore: SessionStore;
   conversationId: string;
+  /** Workspace scope for events; optional for standalone unit-test callers. */
+  workspaceId?: string;
   interactionTimeoutMs?: number;
   preferredModelId?: string;
   modelState?: AgentModelStateBridge;
@@ -72,8 +75,32 @@ export class AgentSession {
   private readonly pendingElicitationStates = new Map<string, PendingElicitationState>();
   private elicitationCount = 0;
   private runCount = 0;
+  /** 首选模型可在会话运行期间更新（issue #153），下一次运行开始时生效。 */
+  private preferredModelId?: string;
 
-  constructor(private readonly options: AgentSessionOptions) {}
+  constructor(private readonly options: AgentSessionOptions) {
+    this.preferredModelId = options.preferredModelId;
+  }
+
+  /**
+   * 更新首选模型。只改内存中的偏好，不重启会话、不中断当前运行：
+   * 偏好在每次运行开始时惰性应用，因此新值从下一次运行开始生效。
+   */
+  setPreferredModelId(preferredModelId?: string): void {
+    this.preferredModelId = preferredModelId?.trim() || undefined;
+  }
+
+  preferredModel(): string | undefined {
+    return this.preferredModelId;
+  }
+
+  private publish(event: RuntimeEvent): void {
+    this.options.eventBus.publish(
+      this.options.workspaceId && "conversationId" in event
+        ? { ...event, workspaceId: this.options.workspaceId }
+        : event,
+    );
+  }
 
   get id(): AgentId {
     return this.options.id;
@@ -218,7 +245,8 @@ export class AgentSession {
       resumeSessionId,
       attachments,
       // 模型偏好（issue #142）：每次运行开始时读最近快照并惰性应用。
-      preferredModelId: this.options.preferredModelId,
+      // 读可变字段而非 options，使运行期更新的偏好在下一次运行生效（issue #153）。
+      preferredModelId: this.preferredModelId,
       lastSessionConfig: this.options.modelState?.load(this.id),
       onSessionConfig: this.options.modelState
         ? (snapshot) => this.options.modelState!.update(snapshot)
@@ -226,7 +254,7 @@ export class AgentSession {
       requestPermission: (request) => this.requestPermission(runId, request),
       requestElicitation: (request) => this.requestElicitation(runId, request),
       onOutput: (text) => {
-        this.options.eventBus.publish({
+        this.publish({
           type: "terminal.chunk",
           conversationId: this.options.conversationId,
           agentId: this.id,
@@ -235,7 +263,7 @@ export class AgentSession {
         });
       },
       onActivity: (activity) => {
-        this.options.eventBus.publish({
+        this.publish({
           type: "runtime.activity",
           conversationId: this.options.conversationId,
           agentId: this.id,
@@ -248,7 +276,7 @@ export class AgentSession {
 
     handle.sessionId.then((sessionId) => {
       if (sessionId && this.activeRun?.runId === runId) {
-        this.options.eventBus.publish({
+        this.publish({
           type: "run.sessionId",
           conversationId: this.options.conversationId,
           agentId: this.id,
@@ -330,12 +358,12 @@ export class AgentSession {
         this.settlePendingPermission(permission.id, pending, "reject", "审批请求已过期，操作未获批准。");
       }, timeoutMs);
       this.pendingPermissionStates.set(permission.id, { permission, resolve, timer });
-      this.options.eventBus.publish({
+      this.publish({
         type: "permission.requested",
         conversationId: this.options.conversationId,
         permission,
       });
-      this.options.eventBus.publish({
+      this.publish({
         type: "runtime.activity",
         conversationId: this.options.conversationId,
         agentId: this.id,
@@ -374,12 +402,12 @@ export class AgentSession {
         this.settlePendingElicitation(id, pending, { action: "cancel" }, "用户输入请求已过期。");
       }, timeoutMs);
       this.pendingElicitationStates.set(id, { elicitation, resolve, timer });
-      this.options.eventBus.publish({
+      this.publish({
         type: "elicitation.requested",
         conversationId: this.options.conversationId,
         elicitation,
       });
-      this.options.eventBus.publish({
+      this.publish({
         type: "runtime.activity",
         conversationId: this.options.conversationId,
         agentId: this.id,
@@ -402,12 +430,12 @@ export class AgentSession {
     this.pendingPermissionStates.delete(requestId);
     clearTimeout(pending.timer);
     pending.resolve(decision);
-    this.options.eventBus.publish({
+    this.publish({
       type: "permission.resolved",
       conversationId: this.options.conversationId,
       requestId: pending.permission.id,
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "runtime.activity",
       conversationId: this.options.conversationId,
       agentId: this.id,
@@ -443,13 +471,13 @@ export class AgentSession {
     this.pendingElicitationStates.delete(requestId);
     clearTimeout(pending.timer);
     pending.resolve(response);
-    this.options.eventBus.publish({
+    this.publish({
       type: "elicitation.resolved",
       conversationId: this.options.conversationId,
       requestId,
     });
     if (activityText) {
-      this.options.eventBus.publish({
+      this.publish({
         type: "runtime.activity",
         conversationId: this.options.conversationId,
         agentId: this.id,
@@ -490,7 +518,7 @@ export class AgentSession {
     }
 
     this.status = status;
-    this.options.eventBus.publish({
+    this.publish({
       type: "agent.status",
       conversationId: this.options.conversationId,
       agentId: this.id,

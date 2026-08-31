@@ -3,97 +3,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveMessageTarget, shouldPromoteNewConversation } from "../src/server/message-target.ts";
+import { shouldPromoteNewConversation } from "../src/server/message-target.ts";
 
 /**
- * PR #147 M1 服务端收尾：消息发送目标的解析规则。
+ * PR #147 M1 服务端收尾（已合并 #155 页面上下文）。
  *
- * 入口快照在读取请求体之前取得，字段缺失（undefined）才允许回退快照；
- * 显式空串/非字符串一律 400 拒绝，绝不静默改投其他会话。显式会话存在但
- * context 被 LRU 回收时，handlePostMessage 走 getOrCreateContext 恢复而
- * 不是新建会话（源码断言）。
+ * 消息发送目标自 #155 起统一从请求 query 参数解析（页面上下文契约），
+ * 显式 conversationId 不存在即 404，不静默改投。新建会话写回 active 指
+ * 针采用 compare-and-set：仅当实时指针仍等于请求入口快照（读取请求体期
+ * 间用户未切换）才写回。
  */
-
-const exists = {
-  workspace(workspaceId: string) {
-    return workspaceId === "ws-1";
-  },
-  conversation(workspaceId: string, conversationId: string) {
-    return workspaceId === "ws-1" && conversationId === "conv-1";
-  },
-};
-
-describe("resolveMessageTarget", () => {
-  test("explicit empty ids are rejected outright, never silently rerouted", () => {
-    for (const input of [
-      { workspaceId: "" },
-      { conversationId: "" },
-      { workspaceId: "", conversationId: "conv-1" },
-      { workspaceId: "ws-1", conversationId: "" },
-      { workspaceId: 42 },
-      { conversationId: null },
-    ]) {
-      const result = resolveMessageTarget(input, { workspaceId: "ws-1", conversationId: "conv-1" }, exists);
-      assert.equal(result.ok, false, `input ${JSON.stringify(input)} must be rejected`);
-      assert.equal((result as { status: number }).status, 400);
-      // 拒绝意味着不产生任何目标：消息不会被改投到 active 或其他会话。
-    }
-  });
-
-  test("missing fields fall back to the request-entry snapshot", () => {
-    const result = resolveMessageTarget({}, { workspaceId: "ws-1", conversationId: "conv-1" }, exists);
-    assert.deepEqual(result, { ok: true, workspaceId: "ws-1", conversationId: "conv-1" });
-  });
-
-  test("explicit existing ids win and are verified", () => {
-    const result = resolveMessageTarget(
-      { workspaceId: "ws-1", conversationId: "conv-1" },
-      { workspaceId: "ws-other", conversationId: "conv-other" },
-      exists,
-    );
-    assert.deepEqual(result, { ok: true, workspaceId: "ws-1", conversationId: "conv-1" });
-  });
-
-  test("explicit unknown workspace or conversation is 404", () => {
-    const ws = resolveMessageTarget(
-      { workspaceId: "ws-missing", conversationId: "conv-1" },
-      { workspaceId: "ws-1", conversationId: "conv-1" },
-      exists,
-    );
-    assert.equal((ws as { status: number }).status, 404);
-
-    const conv = resolveMessageTarget(
-      { workspaceId: "ws-1", conversationId: "conv-missing" },
-      { workspaceId: "ws-1", conversationId: "conv-1" },
-      exists,
-    );
-    assert.equal((conv as { status: number }).status, 404);
-  });
-
-  test("no workspace anywhere yields 409", () => {
-    const result = resolveMessageTarget({}, { workspaceId: "", conversationId: "" }, exists);
-    assert.equal((result as { status: number }).status, 409);
-  });
-
-  test("explicit workspace without a conversation id falls back to the entry conversation", () => {
-    // 旧调用兼容语义：只带 workspaceId 时，会话回退入口快照。
-    const result = resolveMessageTarget(
-      { workspaceId: "ws-1" },
-      { workspaceId: "ws-1", conversationId: "conv-1" },
-      exists,
-    );
-    assert.deepEqual(result, { ok: true, workspaceId: "ws-1", conversationId: "conv-1" });
-  });
-
-  test("no conversation at all resolves to null for the first-message scenario", () => {
-    const result = resolveMessageTarget(
-      { workspaceId: "ws-1" },
-      { workspaceId: "ws-1", conversationId: "" },
-      exists,
-    );
-    assert.deepEqual(result, { ok: true, workspaceId: "ws-1", conversationId: null });
-  });
-});
 
 describe("shouldPromoteNewConversation (active write-back compare-and-set)", () => {
   test("promotes the new conversation when the live pointers still match the entry snapshot", () => {
@@ -105,7 +24,7 @@ describe("shouldPromoteNewConversation (active write-back compare-and-set)", () 
       ),
       true,
     );
-    // 入口已有会话的场景（创建会话端点）：无切换同样写回。
+    // 入口已有会话的场景：无切换同样写回。
     assert.equal(
       shouldPromoteNewConversation(
         { workspaceId: "ws-a", conversationId: "conv-old" },
@@ -144,8 +63,7 @@ describe("shouldPromoteNewConversation (active write-back compare-and-set)", () 
     );
   });
 
-  test("switching away and back still differs from a plain unchanged pointer only via ids", () => {
-    // 快照与实时逐字段相等才写回；会话 id 相同但工作区不同同样拒绝。
+  test("matching conversation id under a different workspace is still rejected", () => {
     assert.equal(
       shouldPromoteNewConversation(
         { workspaceId: "ws-a", conversationId: "conv-1" },
@@ -156,34 +74,40 @@ describe("shouldPromoteNewConversation (active write-back compare-and-set)", () 
   });
 });
 
-describe("handlePostMessage context recovery wiring", () => {
+describe("server wiring for message targets and write-backs", () => {
   const serverSource = fs.readFileSync(
     path.resolve(import.meta.dirname, "../src/server/index.ts"),
     "utf-8",
   );
 
-  test("an existing target conversation recovers its context instead of creating a new conversation", () => {
-    const handler = serverSource.match(/async function handlePostMessage\([\s\S]*?\nasync function |async function handlePostMessage\([\s\S]*?\n\}/)?.[0] ?? "";
-    assert.ok(handler, "handlePostMessage must exist in server/index.ts");
-    const recoveryIndex = handler.indexOf("context = getOrCreateContext(target.workspaceId, conversation.id);");
-    assert.ok(recoveryIndex > 0, "an existing conversation must restore its context via getOrCreateContext");
-    const createIndex = handler.indexOf("conversationStore.create(");
-    assert.ok(createIndex > recoveryIndex, "conversationStore.create may only run when no target conversation exists");
-    // 恢复与新建之间必须有分支隔离：存在会话绝不新建。
-    assert.ok(
-      handler.slice(recoveryIndex, createIndex).includes("} else {"),
-      "recovery and creation must be mutually exclusive branches",
-    );
-  });
-
-  test("the entry snapshot is taken before the request body is read", () => {
+  test("handlePostMessage resolves the target from query params with an entry snapshot fallback", () => {
     const handler = serverSource.match(/async function handlePostMessage\([\s\S]*?\n\}/)?.[0] ?? "";
+    assert.ok(handler, "handlePostMessage must exist in server/index.ts");
+    // 目标来自 query（页面上下文契约）；入口快照仅作为旧调用回退。
+    assert.ok(handler.includes('url.searchParams.get("workspaceId")'), "workspace must come from the query string");
+    assert.ok(handler.includes('url.searchParams.get("conversationId")'), "conversation must come from the query string");
     const snapshotIndex = handler.indexOf("const entryActiveWorkspaceId = activeWorkspaceId;");
     const readBodyIndex = handler.indexOf("await readJson(req)");
     assert.ok(snapshotIndex > 0, "handlePostMessage must snapshot the active pointers at entry");
+    assert.ok(readBodyIndex > snapshotIndex, "the entry snapshot must be taken before awaiting the request body");
     assert.ok(
-      readBodyIndex > snapshotIndex,
-      "the entry snapshot must be taken before awaiting the request body",
+      handler.includes("url.searchParams.get(\"workspaceId\") || entryActiveWorkspaceId"),
+      "the legacy fallback must use the entry snapshot, not the live pointer",
+    );
+    // 显式 conversationId 不存在 → 404，不静默改投。
+    assert.ok(handler.includes("Conversation not found."), "an explicit unknown conversation must 404");
+  });
+
+  test("an existing target conversation recovers its context instead of creating a new conversation", () => {
+    const handler = serverSource.match(/async function handlePostMessage\([\s\S]*?\n\}/)?.[0] ?? "";
+    assert.ok(handler, "handlePostMessage must exist in server/index.ts");
+    const recoveryIndex = handler.indexOf("getOrCreateContext(workspaceId, conversation.id)");
+    assert.ok(recoveryIndex > 0, "an existing conversation must restore its context via getOrCreateContext");
+    const createIndex = handler.indexOf("conversationStoreFor(workspaceId).create(");
+    assert.ok(createIndex > recoveryIndex, "conversationStoreFor().create may only run when no target conversation exists");
+    assert.ok(
+      handler.slice(recoveryIndex, createIndex).includes("} else if") || handler.slice(recoveryIndex, createIndex).includes("if (!context)"),
+      "recovery and creation must be mutually exclusive branches",
     );
   });
 
@@ -200,18 +124,26 @@ describe("handlePostMessage context recovery wiring", () => {
     );
   });
 
-  test("conversation creation guards its active write-back the same way", () => {
+  test("creating a conversation no longer touches the active pointers at all", () => {
+    // #155 将创建与激活解耦：无写回即无竞态（compare-and-set 由消息链路承担）。
     const createRoute = serverSource.match(/req\.method === "POST" && url\.pathname === "\/api\/conversations"[\s\S]*?\n    \}/)?.[0] ?? "";
     assert.ok(createRoute, "the conversation creation route must exist");
     assert.ok(
-      createRoute.includes("shouldPromoteNewConversation("),
-      "creating a conversation must guard switch/activate with compare-and-set",
+      !createRoute.includes("activeConversationId ="),
+      "conversation creation must not write the active conversation pointer",
     );
-    // 快照先于 readJson，创建与写回之间无其他 await。
-    const snapshotIndex = createRoute.indexOf("const entryActiveWorkspaceId = activeWorkspaceId;");
-    const readBodyIndex = createRoute.indexOf("await readJson(req)");
-    const promoteIndex = createRoute.indexOf("shouldPromoteNewConversation(");
-    assert.ok(snapshotIndex > 0 && readBodyIndex > snapshotIndex, "the entry snapshot must precede readJson");
-    assert.ok(promoteIndex > readBodyIndex, "the guard runs after the body is read");
+    assert.ok(
+      !createRoute.includes("switchWorkspace("),
+      "conversation creation must not switch workspaces",
+    );
+  });
+
+  test("draft uploads resolve their target from the query page context", () => {
+    const draftRoute = serverSource.match(/req\.method === "POST" && url\.pathname === "\/api\/attachments\/drafts"[\s\S]*?\n    \}/)?.[0] ?? "";
+    assert.ok(draftRoute, "the draft upload route must exist");
+    assert.ok(
+      draftRoute.includes("resolveTarget(url)"),
+      "draft uploads must resolve the target from the query page context",
+    );
   });
 });

@@ -228,6 +228,12 @@ export class AttachmentStore {
     }
   }
 
+  /** Remove abandoned draft uploads when an entire workspace is deleted. */
+  async deleteWorkspaceDrafts(workspaceId: string): Promise<void> {
+    const draftDir = this.safePath("tmp", "attachments", workspaceId);
+    await fsPromises.rm(draftDir, { recursive: true, force: true });
+  }
+
   // --- Cleanup ---
 
   async cleanupExpiredDrafts(): Promise<number> {

@@ -5,11 +5,11 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { configsToProfiles } from "../core/agent-profiles.ts";
+import { configsToProfiles, INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import { disposeAcpConnectionPool, probeAcpModelState } from "../core/acp-runtime.ts";
 import { defaultAcpRunnerRegistry } from "../core/acp-runner-registry.ts";
 import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
-import { AgentModelStateStore } from "../core/agent-model-state-store.ts";
+import { AgentModelStateStore, supervisorStorageKey } from "../core/agent-model-state-store.ts";
 import { probeAllRuntimes, runtimeKindToCliKey, type RuntimeProbeResult } from "../core/runtime-probe.ts";
 import type { AgentConfig } from "../core/agent-config-store.ts";
 import { WorkspaceConfigStore } from "../core/workspace-config-store.ts";
@@ -25,12 +25,12 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, WorkspaceInfo } from "../shared/types.ts";
-import { isInteractionMode } from "../shared/types.ts";
+import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo } from "../shared/types.ts";
+import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { buildAttachmentHeaders } from "./attachment-response.ts";
-import { resolveMessageTarget, shouldPromoteNewConversation } from "./message-target.ts";
+import { shouldPromoteNewConversation } from "./message-target.ts";
 import { ConversationContext } from "./conversation-context.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { serveStatic } from "./static-server.ts";
@@ -50,14 +50,14 @@ function toActiveConversation(conversation: Conversation | {
   name: string;
   interactionMode?: InteractionMode;
   lastDirectAgentId?: ConversationInfo["lastDirectAgentId"];
-  supervisionRuntime?: ConversationInfo["supervisionRuntime"];
+  supervisorConfig?: ConversationInfo["supervisorConfig"];
 }): ConversationInfo {
   return {
     id: conversation.id,
     name: conversation.name,
     interactionMode: conversation.interactionMode ?? "direct",
     lastDirectAgentId: conversation.lastDirectAgentId,
-    supervisionRuntime: conversation.supervisionRuntime,
+    supervisorConfig: conversation.supervisorConfig,
   };
 }
 const execFileAsync = promisify(execFile);
@@ -105,9 +105,11 @@ async function probeConfiguredAgentModels(
   force = false,
   runtimeFilter?: AgentConfig["runtime"],
   targetAgentId?: string,
+  targetWorkspaceId?: string,
+  targetConversationId?: string,
 ): Promise<void> {
-  if (!activeWorkspaceId) return;
-  const workspaceId = activeWorkspaceId;
+  const workspaceId = targetWorkspaceId || activeWorkspaceId;
+  if (!workspaceId) return;
   const workspace = workspaceStore.get(workspaceId);
   if (!workspace) return;
 
@@ -116,7 +118,7 @@ async function probeConfiguredAgentModels(
   if (runtimeFilter && targetAgentId) {
     targetsByRuntime.set(runtimeFilter, [{ id: targetAgentId, runtime: runtimeFilter }]);
   } else {
-    for (const config of allConfigs) {
+    for (const config of configStore.load(workspaceId)) {
       if (runtimeFilter && config.runtime !== runtimeFilter) continue;
       const snapshot = existing[config.id];
       const probeState = modelProbeStates.get(workspaceId)?.get(config.runtime);
@@ -159,7 +161,11 @@ async function probeConfiguredAgentModels(
         updatedAt: snapshot.updatedAt,
       });
       for (const target of targets) {
-        const previous = existing[target.id];
+        // 监工快照按会话隔离（issue #153）：存储键带会话后缀，
+        // 事件带 conversationId 以便 SSE 按页面过滤。
+        const isSupervisor = target.id === INTERNAL_SUPERVISOR_ID && targetConversationId !== undefined;
+        const storageKey = isSupervisor ? supervisorStorageKey(targetConversationId!) : target.id;
+        const previous = existing[storageKey];
         const hasSessionValue = previous?.runtimeKind === runtimeKind && previous.currentValueSource === "session";
         const targetSnapshot = {
           ...snapshot,
@@ -167,12 +173,13 @@ async function probeConfiguredAgentModels(
           currentValue: hasSessionValue ? previous.currentValue : undefined,
           currentValueSource: hasSessionValue ? "session" as const : "probe" as const,
         };
-        agentModelStateStore.update(workspaceId, targetSnapshot);
+        agentModelStateStore.update(workspaceId, targetSnapshot, storageKey);
         sseHub.publish({
           type: "agent.model_state",
           workspaceId,
           agentId: target.id,
           modelState: targetSnapshot,
+          ...(isSupervisor ? { conversationId: targetConversationId! } : {}),
         });
       }
     } catch (error) {
@@ -217,7 +224,7 @@ type AgentModelWithState = NonNullable<AgentConfigWithModelState["modelState"]>;
 
 function configsWithModelState(workspaceId: string): AgentConfigWithModelState[] {
   const modelStates = agentModelStateStore.load(workspaceId);
-  return allConfigs.map((config) => ({
+  return configStore.load(workspaceId).map((config) => ({
     ...config,
     modelState: modelStates[config.id],
     modelProbe: modelProbeStateFor(workspaceId, config.runtime, modelStates[config.id]),
@@ -253,10 +260,28 @@ function runtimeAvailable(runtime: string): boolean {
   return result?.available ?? false;
 }
 
-// Forward all events to SSE clients (single global subscriber)
+// Add the owning workspace at the server boundary so older core components can
+// keep publishing conversation events without knowing transport concerns.
 eventBus.subscribe((event) => {
   if (event.type === "runtime.activity") return;
-  sseHub.publish(event);
+  let scopedEvent = event;
+  if (event.type !== "events.gap" && "conversationId" in event && event.workspaceId === undefined) {
+    // agent.model_state 的 conversationId 是可选的（issue #153），缺失时不做推断。
+    const eventConversationId = event.conversationId;
+    if (eventConversationId !== undefined) {
+      const matches = [...contextMap.keys()].filter((key) => key.endsWith(`:${eventConversationId}`));
+      // An unscoped legacy event is safe to infer only when the conversation id
+      // is unique in this process. Otherwise dropping it is safer than leaking
+      // one workspace's activity into another page.
+      if (matches.length === 1) {
+        const key = matches[0]!;
+        scopedEvent = { ...event, workspaceId: key.slice(0, key.length - eventConversationId.length - 1) };
+      } else if (matches.length > 1) {
+        return;
+      }
+    }
+  }
+  sseHub.publish(scopedEvent);
   // After agent.status events, push running.updated if summaries changed
   if (event.type === "agent.status") {
     pushRunningSummaries();
@@ -320,6 +345,30 @@ function contextKey(workspaceId: string, conversationId: string): string {
   return `${workspaceId}:${conversationId}`;
 }
 
+type RequestTarget = { workspaceId: string; conversationId: string };
+
+/** Resolve page-owned context. Query parameters are the public API contract;
+ * the active pointers are retained only as a compatibility fallback for old clients. */
+function resolveTarget(url: URL, requireConversation = true): RequestTarget | null {
+  const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+  if (!workspaceId || !workspaceStore.get(workspaceId)) return null;
+  const conversationId = url.searchParams.get("conversationId")
+    || (workspaceId === activeWorkspaceId ? activeConversationId : "");
+  if (requireConversation && (!conversationId || !conversationStore.get(workspaceId, conversationId))) return null;
+  return { workspaceId, conversationId };
+}
+
+function contextForTarget(target: RequestTarget | null): ConversationContext | null {
+  if (!target) return null;
+  if (!target.workspaceId || !target.conversationId) return null;
+  if (!workspaceStore.get(target.workspaceId) || !conversationStore.get(target.workspaceId, target.conversationId)) return null;
+  return getOrCreateContext(target.workspaceId, target.conversationId);
+}
+
+function conversationStoreFor(workspaceId: string): ConversationStore {
+  return workspaceId === activeWorkspaceId ? conversationStore : new ConversationStore();
+}
+
 function getOrCreateContext(workspaceId: string, conversationId: string): ConversationContext {
   const key = contextKey(workspaceId, conversationId);
   const existing = contextMap.get(key);
@@ -345,7 +394,7 @@ function evictIfNeeded(): void {
     let evicted = false;
     for (const key of contextLru) {
       const ctx = contextMap.get(key);
-      if (ctx && !ctx.hasRunningAgent()) {
+      if (ctx && !ctx.hasRunningOrQueued()) {
         ctx.dispose();
         contextMap.delete(key);
         const idx = contextLru.indexOf(key);
@@ -388,15 +437,13 @@ function disposeWorkspaceContexts(workspaceId: string): void {
 }
 
 function createContext(workspaceId: string, conversationId: string): ConversationContext {
-  const configs = workspaceId === activeWorkspaceId
-    ? allConfigs
-    : configStore.load(workspaceId);
+  const configs = configStore.load(workspaceId);
   const enabledConfigs = configs.filter((c) => c.enabled);
   const ws = workspaceStore.get(workspaceId);
   const profiles = configsToProfiles(enabledConfigs, ws!.path);
   const sessStore = new SessionStore(workspaceStore.sessionsDir(workspaceId));
   const workspaceConfig = workspaceConfigStore.load(workspaceId);
-  const conversation = conversationStore.get(workspaceId, conversationId);
+  const conversation = conversationStoreFor(workspaceId).get(workspaceId, conversationId);
   return new ConversationContext({
     workspaceId,
     conversationId,
@@ -407,15 +454,31 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
     workspaceConfig,
     globalConfig: globalConfigStore.load(),
     interactionMode: conversation?.interactionMode,
-    supervisionRuntime: conversation?.supervisionRuntime,
+    supervisorConfig: conversation?.supervisorConfig,
     lastDirectAgentId: conversation?.lastDirectAgentId,
     // 模型快照桥（issue #142）：runtime 返回的模型列表/当前值写穿到 workspace
     // 级存储，同时广播给 UI；读取供池复用捷径补发偏好。
+    // 监工按会话隔离（issue #153）：所有会话共用 agentId "supervisor"，
+    // 存储键须带会话后缀，事件须带 conversationId 才能按页面过滤。
     modelState: {
-      load: (agentId) => agentModelStateStore.get(workspaceId, agentId),
+      load: (agentId) => agentModelStateStore.get(
+        workspaceId,
+        agentId === INTERNAL_SUPERVISOR_ID ? supervisorStorageKey(conversationId) : agentId,
+      ),
       update: (snapshot) => {
-        agentModelStateStore.update(workspaceId, snapshot);
-        sseHub.publish({ type: "agent.model_state", workspaceId, agentId: snapshot.agentId, modelState: snapshot });
+        const isSupervisor = snapshot.agentId === INTERNAL_SUPERVISOR_ID;
+        agentModelStateStore.update(
+          workspaceId,
+          snapshot,
+          isSupervisor ? supervisorStorageKey(conversationId) : snapshot.agentId,
+        );
+        sseHub.publish({
+          type: "agent.model_state",
+          workspaceId,
+          agentId: snapshot.agentId,
+          modelState: snapshot,
+          ...(isSupervisor ? { conversationId } : {}),
+        });
       },
     },
     onConversationPatch: (patch) => {
@@ -424,7 +487,6 @@ function createContext(workspaceId: string, conversationId: string): Conversatio
         const updated = store.update(workspaceId, conversationId, patch);
         if (workspaceId === activeWorkspaceId && conversationId === activeConversationId) {
           activeConversation = toActiveConversation(updated);
-          publishContextSwitched();
         }
       } catch {
         // 持久化失败不阻断路由流程；模式仍在本会话上下文中生效
@@ -520,41 +582,20 @@ function switchWorkspace(workspaceId: string): void {
   activeConversation = EMPTY_CONVERSATION;
   saveLastActive(activeWorkspaceId, activeConversationId);
 
-  publishContextSwitched();
 }
 
-function switchConversation(conversationId: string): void {
-  if (conversationId === activeConversationId) return;
-  if (!activeWorkspaceId) throw new Error("No active workspace.");
-  // No running-agent check
-
-  const conv = conversationStore.get(activeWorkspaceId, conversationId);
-  if (!conv) throw new Error(`Conversation not found: ${conversationId}`);
-
-  // Issue #77: Don't touch lastOpenedAt when switching conversations
-  activateConversation(conv, false);
-  publishContextSwitched();
-}
-
-function refreshEnabledAgents(): void {
-  if (!activeWorkspaceId) return;
-  const enabledConfigs = allConfigs.filter((c) => c.enabled);
-  const profiles = configsToProfiles(enabledConfigs, activeWorkspace.path);
+function refreshEnabledAgentsForWorkspace(workspaceId: string, configs: AgentConfig[]): void {
+  const workspace = workspaceStore.get(workspaceId);
+  if (!workspace) return;
+  const enabledConfigs = configs.filter((c) => c.enabled);
+  const profiles = configsToProfiles(enabledConfigs, workspace.path);
 
   // Refresh profiles for ALL contexts in the same workspace, not just the active one
   for (const [key, ctx] of contextMap) {
-    if (key.startsWith(`${activeWorkspaceId}:`)) {
+    if (key.startsWith(`${workspaceId}:`)) {
       ctx.refreshProfiles(profiles);
     }
   }
-}
-
-function publishContextSwitched(): void {
-  sseHub.publish({
-    type: "context.switched",
-    workspace: activeWorkspace,
-    conversation: activeConversation,
-  });
 }
 
 function clearActiveContext(): void {
@@ -566,7 +607,6 @@ function clearActiveContext(): void {
   allConfigs = [];
   sessionStore = null;
   clearLastActive();
-  publishContextSwitched();
 }
 
 function clearActiveConversation(): void {
@@ -574,7 +614,6 @@ function clearActiveConversation(): void {
   activeConversationId = "";
   activeConversation = EMPTY_CONVERSATION;
   saveLastActive(activeWorkspaceId, activeConversationId);
-  publishContextSwitched();
 }
 
 /**
@@ -620,6 +659,46 @@ initActiveContext();
 runHistoryCleanup();
 runAttachmentDraftCleanup();
 
+/**
+ * 解析并校验监工配置（issue #153）。
+ *
+ * 模型取值不在当前列表里时不拒绝保存：运行时会在应用时提示并回退，
+ * 提前拒绝会让用户在模型列表刷新不出来时无法保存其他改动。
+ */
+function parseSupervisorConfig(input: { runtime?: unknown; model?: unknown }):
+  { config: SupervisorConfig } | { error: string } {
+  if (!isAgentRuntimeKind(input.runtime)) {
+    return { error: "监工运行时必须是 claude-code、codex 或 codebuddy。" };
+  }
+  const runtime = input.runtime;
+  if (input.model === undefined || input.model === null) return { config: { runtime } };
+  if (typeof input.model !== "object" || Array.isArray(input.model)) {
+    return { error: "监工模型配置格式不正确。" };
+  }
+  const model = input.model as { preferredModelId?: unknown; runtimeKind?: unknown };
+  if (model.runtimeKind !== undefined && !isAgentRuntimeKind(model.runtimeKind)) {
+    return { error: "监工模型配置格式不正确。" };
+  }
+  if (model.preferredModelId !== undefined
+    && model.preferredModelId !== null
+    && typeof model.preferredModelId !== "string") {
+    return { error: "监工模型配置格式不正确。" };
+  }
+  const preferredModelId = typeof model.preferredModelId === "string"
+    ? model.preferredModelId.trim()
+    : "";
+  if (preferredModelId.length > 512) {
+    return { error: "监工模型标识过长。" };
+  }
+  if (!preferredModelId) return { config: { runtime } };
+  return {
+    config: {
+      runtime,
+      model: { preferredModelId, runtimeKind: isAgentRuntimeKind(model.runtimeKind) ? model.runtimeKind : runtime },
+    },
+  };
+}
+
 // --- HTTP Server (created before probe to avoid blocking setup) ---
 const server = http.createServer(async (req, res) => {
   try {
@@ -627,18 +706,25 @@ const server = http.createServer(async (req, res) => {
 
     // SSE
     if (req.method === "GET" && url.pathname === "/events") {
-      sseHub.add(res);
+      const lastEventId = Number(req.headers["last-event-id"]);
+      sseHub.add(res, {
+        workspaceId: url.searchParams.get("workspaceId") || undefined,
+        conversationId: url.searchParams.get("conversationId") || undefined,
+      }, Number.isFinite(lastEventId) ? lastEventId : undefined);
       return;
     }
 
     // State
     if (req.method === "GET" && url.pathname === "/api/state") {
-      const ctx = getActiveContext();
+      const target = resolveTarget(url, false);
+      const ctx = target?.conversationId ? contextForTarget(target) : null;
+      const workspace = target ? workspaceStore.get(target.workspaceId) : null;
+      const conversation = target?.conversationId ? conversationStoreFor(target.workspaceId).get(target.workspaceId, target.conversationId) : null;
       const messages = ctx?.messages.list() ?? [];
       sendJson(res, 200, {
-        workspace: activeWorkspace,
-        conversation: activeConversation,
-        agents: currentAgentStates(),
+        workspace: workspace ? { id: workspace.id, name: workspace.name, path: workspace.path } : EMPTY_WORKSPACE,
+        conversation: conversation ? toActiveConversation(conversation) : EMPTY_CONVERSATION,
+        agents: ctx ? ctx.agents.states().map((s) => ({ ...s, runtimeAvailable: runtimeAvailable(s.runtime) })) : (target ? configsWithModelState(target.workspaceId).filter((c) => c.enabled).map((c, i) => ({ id: c.id, label: c.name, runtime: c.runtime, status: "idle" as const, selected: i === 0, runtimeAvailable: runtimeAvailable(c.runtime) })) : currentAgentStates()),
         messages: ctx?.runManager.projectLiveProcessState(messages) ?? messages,
         messageHistory: ctx?.messages.historyState() ?? emptyMessageHistory(),
         terminal: ctx?.transcripts.all() ?? {},
@@ -651,17 +737,18 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/work-analysis") {
-      if (!activeWorkspaceId) {
+      const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!workspaceId || !workspaceStore.get(workspaceId)) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before viewing work analysis." });
         return;
       }
       const requestedDays = Number(url.searchParams.get("days") ?? 30);
       const days = Number.isFinite(requestedDays) ? Math.max(1, Math.min(365, Math.floor(requestedDays))) : 30;
       sendJson(res, 200, buildWorkspaceWorkAnalysis({
-        workspaceId: activeWorkspaceId,
+        workspaceId,
         days,
         workspaceStore,
-        conversationStore,
+        conversationStore: conversationStoreFor(workspaceId),
         agentConfigStore: configStore,
       }));
       return;
@@ -669,7 +756,8 @@ const server = http.createServer(async (req, res) => {
 
     // Messages
     if (req.method === "GET" && url.pathname === "/api/messages") {
-      const ctx = getActiveContext();
+      const target = resolveTarget(url);
+      const ctx = target?.conversationId ? contextForTarget(target) : null;
       if (!ctx) {
         sendJson(res, 200, emptyMessagePage());
         return;
@@ -681,7 +769,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/messages") {
-      await handlePostMessage(req, res);
+      await handlePostMessage(req, res, url);
       return;
     }
 
@@ -695,7 +783,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "A valid requestId and decision are required." });
         return;
       }
-      const ctx = getActiveContext();
+      const ctx = contextForTarget(resolveTarget(url));
       if (!ctx?.resolvePermission(requestId, decision)) {
         sendJson(res, 404, { ok: false, message: "Permission request is no longer pending." });
         return;
@@ -712,7 +800,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "A valid requestId and elicitation response are required." });
         return;
       }
-      const ctx = getActiveContext();
+      const ctx = contextForTarget(resolveTarget(url));
       if (!ctx?.resolveElicitation(requestId, response)) {
         sendJson(res, 404, { ok: false, message: "Elicitation request is no longer pending." });
         return;
@@ -723,7 +811,7 @@ const server = http.createServer(async (req, res) => {
 
     // Interrupt current auto-collaboration chain
     if (req.method === "POST" && url.pathname === "/api/conversation/interrupt") {
-      const ctx = getActiveContext();
+      const ctx = contextForTarget(resolveTarget(url));
       if (!ctx) {
         sendJson(res, 409, { ok: false, message: "No active conversation." });
         return;
@@ -736,29 +824,22 @@ const server = http.createServer(async (req, res) => {
     // --- Attachment endpoints ---
 
     if (req.method === "POST" && url.pathname === "/api/attachments/drafts") {
+      // 目标来自请求 query 快照（#155 页面上下文契约）：上传进行中切换
+      // 会话时，文件仍保存到发起上传的会话目录，不会错投到新会话。
+      const target = resolveTarget(url);
+      if (!target) {
+        sendJson(res, 409, { ok: false, message: "No active conversation." });
+        return;
+      }
       const input = (await readJson(req)) as {
-        workspaceId?: unknown;
-        conversationId?: unknown;
         data?: unknown;
         mimeType?: unknown;
         filename?: unknown;
       };
-      // 目标来自请求快照而非全局 active 指针：上传进行中切换会话时，
-      // 文件仍保存到发起上传的会话目录，不会错投到新会话（PR #147 M1）。
-      const workspaceId = typeof input.workspaceId === "string" ? input.workspaceId : "";
-      const conversationId = typeof input.conversationId === "string" ? input.conversationId : "";
       const base64Data = typeof input.data === "string" ? input.data : "";
       const mimeType = typeof input.mimeType === "string" ? input.mimeType : "";
       const filename = typeof input.filename === "string" ? input.filename : "";
 
-      if (!workspaceId || !conversationId) {
-        sendJson(res, 409, { ok: false, message: "No active conversation." });
-        return;
-      }
-      if (!workspaceStore.get(workspaceId) || !conversationStore.get(workspaceId, conversationId)) {
-        sendJson(res, 404, { ok: false, message: "Workspace or conversation not found." });
-        return;
-      }
       if (!base64Data) {
         sendJson(res, 400, { ok: false, message: "Missing attachment data." });
         return;
@@ -773,7 +854,7 @@ const server = http.createServer(async (req, res) => {
       const validated = validation.attachment;
 
       // Issue #88: Check draft count limit before saving
-      const draftCount = await attachmentStore.countDrafts(workspaceId, conversationId);
+      const draftCount = await attachmentStore.countDrafts(target.workspaceId, target.conversationId);
       if (draftCount >= ATTACHMENT_LIMITS.MAX_DRAFTS_PER_CONVERSATION) {
         sendJson(res, 400, {
           ok: false,
@@ -783,8 +864,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       const saved = await attachmentStore.saveDraft({
-        workspaceId,
-        conversationId,
+        workspaceId: target.workspaceId,
+        conversationId: target.conversationId,
         data: buffer,
         ext: validated.ext,
         filename: validated.filename,
@@ -799,7 +880,7 @@ const server = http.createServer(async (req, res) => {
           filename: validated.filename,
           size: saved.size,
           ...(validated.kind === "image"
-            ? { previewUrl: `/api/attachments/drafts/${workspaceId}/${conversationId}/${saved.id}` }
+            ? { previewUrl: `/api/attachments/drafts/${target.workspaceId}/${target.conversationId}/${saved.id}` }
             : {}),
         },
       });
@@ -872,21 +953,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Search all active contexts for the run
-      let result: { ok: boolean; reason?: string } = { ok: false, reason: "not_found" };
-      for (const [, ctx] of contextMap) {
-        const candidate = ctx.runManager.cancel(runId);
-        if (candidate.ok) {
-          result = candidate;
-          break;
-        }
-        // Any reason other than "not_found" is definitive — stop searching
-        if (candidate.reason !== "not_found") {
-          result = candidate;
-          break;
-        }
+      // 定向取消：只作用于本页面的会话上下文，不再遍历全部上下文
+      const target = resolveTarget(url);
+      if (!target) {
+        sendJson(res, 409, { ok: false, message: "workspaceId and conversationId are required." });
+        return;
       }
-
+      const ctx = contextForTarget(target);
+      const result: { ok: boolean; reason?: string } = ctx?.runManager.cancel(runId) ?? { ok: false, reason: "not_found" };
       if (!result.ok) {
         if (result.reason === "not_cancellable") {
           sendJson(res, 409, { ok: false, reason: "not_cancellable", message: "This run has already finished and cannot be cancelled." });
@@ -904,7 +978,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/agents") {
       // 合并 workspace 级模型快照（issue #142）：模型列表/当前值由 runtime 在
       // 运行时写入独立存储，agents.json 只保存用户偏好。
-      sendJson(res, 200, activeWorkspaceId ? configsWithModelState(activeWorkspaceId) : allConfigs);
+      const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      sendJson(res, 200, workspaceId ? configsWithModelState(workspaceId) : allConfigs);
       return;
     }
 
@@ -920,21 +995,35 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "刷新指定员工模型时需要有效的员工 ID 和运行时。" });
         return;
       }
+      const targetConversationId = url.searchParams.get("conversationId")?.trim() || undefined;
+      // 监工是内部保留 ID，所有会话共用；缺会话维度会读写到别的会话的快照。
+      if (targetAgentId === INTERNAL_SUPERVISOR_ID && !targetConversationId) {
+        sendJson(res, 400, { ok: false, message: "刷新监工模型列表时需要会话 ID。" });
+        return;
+      }
       await probeConfiguredAgentModels(
         url.searchParams.get("force") === "1",
         runtimeFilter ?? undefined,
         targetAgentId,
+        url.searchParams.get("workspaceId") || undefined,
+        targetConversationId,
       );
-      const configs = activeWorkspaceId ? configsWithModelState(activeWorkspaceId) : allConfigs;
+      const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      const configs = workspaceId ? configsWithModelState(workspaceId) : allConfigs;
       const response: AgentModelProbeResponse = { configs };
-      if (activeWorkspaceId && runtimeFilter && targetAgentId) {
-        const snapshot = agentModelStateStore.get(activeWorkspaceId, targetAgentId);
+      if (workspaceId && runtimeFilter && targetAgentId) {
+        const snapshot = agentModelStateStore.get(
+          workspaceId,
+          targetAgentId === INTERNAL_SUPERVISOR_ID && targetConversationId
+            ? supervisorStorageKey(targetConversationId)
+            : targetAgentId,
+        );
         const matchingSnapshot = snapshot?.runtimeKind === runtimeFilter ? snapshot : undefined;
         response.target = {
           agentId: targetAgentId,
           runtimeKind: runtimeFilter,
           modelState: matchingSnapshot ?? null,
-          modelProbe: modelProbeStateFor(activeWorkspaceId, runtimeFilter, matchingSnapshot),
+          modelProbe: modelProbeStateFor(workspaceId, runtimeFilter, matchingSnapshot),
         };
       }
       sendJson(res, 200, response);
@@ -947,33 +1036,33 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "PUT" && url.pathname === "/api/agents") {
-      await handlePutAgents(req, res);
+      await handlePutAgents(req, res, url);
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/agents/reset") {
-      if (!activeWorkspaceId) {
+      const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!workspaceId || !workspaceStore.get(workspaceId)) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before resetting agents." });
         return;
       }
-      const ctx = getActiveContext();
-      if (ctx?.hasRunningAgent()) {
+      if ([...contextMap].some(([key, value]) => key.startsWith(`${workspaceId}:`) && value.hasRunningOrQueued())) {
         sendJson(res, 409, { ok: false, message: "Cannot reset while an agent is running. Wait for it to finish." });
         return;
       }
-      allConfigs = configStore.reset(activeWorkspaceId);
-      refreshEnabledAgents();
-      sendJson(res, 200, allConfigs);
+      const configs = configStore.reset(workspaceId);
+      refreshEnabledAgentsForWorkspace(workspaceId, configs);
+      sendJson(res, 200, configs);
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/agents/apply-team") {
-      if (!activeWorkspaceId) {
+      const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!workspaceId || !workspaceStore.get(workspaceId)) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before applying a team." });
         return;
       }
-      const ctx = getActiveContext();
-      if (ctx?.hasRunningAgent()) {
+      if ([...contextMap].some(([key, value]) => key.startsWith(`${workspaceId}:`) && value.hasRunningOrQueued())) {
         sendJson(res, 409, { ok: false, message: "Cannot change the team while an agent is running." });
         return;
       }
@@ -984,10 +1073,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       // 数字员工尽量使用本地实际可用的不同运行时（按 AGENT_RUNTIME_PRIORITY 轮流分配）。
-      allConfigs = initialAgentConfigsForWorkspacePreset(template.id, getRuntimeAvailabilityArray()) ?? [];
-      configStore.save(activeWorkspaceId, allConfigs);
-      refreshEnabledAgents();
-      sendJson(res, 200, allConfigs);
+      const configs = initialAgentConfigsForWorkspacePreset(template.id, getRuntimeAvailabilityArray()) ?? [];
+      configStore.save(workspaceId, configs);
+      refreshEnabledAgentsForWorkspace(workspaceId, configs);
+      sendJson(res, 200, configs);
       return;
     }
 
@@ -1004,16 +1093,18 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/workspace-config") {
-      if (!activeWorkspaceId) {
+      const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!workspaceId || !workspaceStore.get(workspaceId)) {
         sendJson(res, 200, { systemPrompt: "", rules: [] });
         return;
       }
-      sendJson(res, 200, workspaceConfigStore.load(activeWorkspaceId));
+      sendJson(res, 200, workspaceConfigStore.load(workspaceId));
       return;
     }
 
     if (req.method === "PUT" && url.pathname === "/api/workspace-config") {
-      if (!activeWorkspaceId) {
+      const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!workspaceId || !workspaceStore.get(workspaceId)) {
         sendJson(res, 409, { ok: false, message: "Create or select a workspace before saving workspace config." });
         return;
       }
@@ -1032,12 +1123,12 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "systemPrompt must be a string." });
         return;
       }
-      workspaceConfigStore.save(activeWorkspaceId, input);
-      const resolved = workspaceConfigStore.load(activeWorkspaceId);
+      workspaceConfigStore.save(workspaceId, input);
+      const resolved = workspaceConfigStore.load(workspaceId);
       // Update all active contexts for this workspace so the next agent run
       // immediately uses the new config.
       for (const [key, ctx] of contextMap) {
-        if (key.startsWith(`${activeWorkspaceId}:`)) {
+        if (key.startsWith(`${workspaceId}:`)) {
           ctx.updateWorkspaceConfig(resolved);
         }
       }
@@ -1175,7 +1266,7 @@ const server = http.createServer(async (req, res) => {
       // Check if ANY context for this workspace has running agents
       let hasRunning = false;
       for (const [key, ctx] of contextMap) {
-        if (key.startsWith(`${wsId}:`) && ctx.hasRunningAgent()) {
+        if (key.startsWith(`${wsId}:`) && ctx.hasRunningOrQueued()) {
           hasRunning = true;
           break;
         }
@@ -1187,6 +1278,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const wasActiveWorkspace = wsId === activeWorkspaceId;
         disposeWorkspaceContexts(wsId);
+        attachmentStore.deleteWorkspaceDrafts(wsId).catch(() => { /* best effort */ });
         workspaceStore.delete(wsId);
         if (wasActiveWorkspace) {
           const nextWorkspace = workspaceStore.list()[0];
@@ -1221,11 +1313,12 @@ const server = http.createServer(async (req, res) => {
     // --- Conversation endpoints ---
 
     if (req.method === "GET" && url.pathname === "/api/conversations") {
-      if (!activeWorkspaceId) {
+      const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+      if (!workspaceId || !workspaceStore.get(workspaceId)) {
         sendJson(res, 200, []);
         return;
       }
-      sendJson(res, 200, conversationStore.list(activeWorkspaceId));
+      sendJson(res, 200, conversationStoreFor(workspaceId).list(workspaceId));
       return;
     }
 
@@ -1234,7 +1327,7 @@ const server = http.createServer(async (req, res) => {
       const wsId = parts[3];
       if (!wsId) { sendJson(res, 400, { ok: false, message: "Missing workspace id." }); return; }
       try {
-        const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
+        const store = conversationStoreFor(wsId);
         sendJson(res, 200, store.list(wsId));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -1255,18 +1348,12 @@ const server = http.createServer(async (req, res) => {
       }
       const input = (await readJson(req)) as { name?: unknown };
       const name = conversationTitle(typeof input.name === "string" ? input.name : "");
-      const conv = conversationStore.create(wsId, name);
-      if (shouldPromoteNewConversation(
-        { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
-        { workspaceId: activeWorkspaceId, conversationId: activeConversationId },
-      )) {
-        // Switch workspace if creating in a different one
-        if (wsId !== activeWorkspaceId) {
-          switchWorkspace(wsId);
-        }
-        activateConversation(conv);
+      if (!workspaceStore.get(wsId)) {
+        sendJson(res, 404, { ok: false, message: "Workspace not found." });
+        return;
       }
-      publishContextSwitched();
+      const conv = conversationStoreFor(wsId).create(wsId, name);
+      getOrCreateContext(wsId, conv.id);
       sendJson(res, 200, conv);
       return;
     }
@@ -1275,8 +1362,9 @@ const server = http.createServer(async (req, res) => {
       const parts = url.pathname.split("/");
       const convId = parts[3];
       if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
-      if (convId !== activeConversationId || !activeWorkspaceId) {
-        sendJson(res, 409, { ok: false, message: "Only the active conversation can change the interaction mode." });
+      const target = resolveTarget(url);
+      if (!target || target.conversationId !== convId) {
+        sendJson(res, 409, { ok: false, message: "workspaceId and conversationId are required." });
         return;
       }
       const input = (await readJson(req)) as { mode?: unknown; runtime?: unknown };
@@ -1285,21 +1373,59 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const mode = input.mode;
-      const ctx = getActiveContext();
+      const ctx = contextForTarget(target);
       if (!ctx) { sendJson(res, 409, { ok: false, message: "No active conversation context." }); return; }
       try {
-        const current = conversationStore.get(activeWorkspaceId, activeConversationId);
+        const current = conversationStoreFor(target.workspaceId).get(target.workspaceId, convId);
         if (!current) throw new Error("Conversation not found.");
-        const runtime = typeof input.runtime === "string" ? input.runtime as import("../shared/types.ts").AgentRuntimeKind : current.supervisionRuntime;
+        // runtime 参数仅用于兼容旧调用方；内部统一以 supervisorConfig 为准。
+        const runtime = typeof input.runtime === "string"
+          ? input.runtime as import("../shared/types.ts").AgentRuntimeKind
+          : current.supervisorConfig?.runtime;
         if (mode === "supervised" && (!runtime || !runtimeAvailable(runtimeKindToCliKey(runtime)))) {
           sendJson(res, 409, { ok: false, message: "Choose an available runtime before enabling supervised collaboration." });
           return;
         }
-        // setInteractionMode 通过 onConversationPatch 持久化并广播 context.switched
+        // setInteractionMode 通过 onConversationPatch 持久化模式与监工配置
         ctx.setInteractionMode(mode, runtime);
-        const updated = conversationStore.get(activeWorkspaceId, activeConversationId) ?? current;
-        activeConversation = toActiveConversation(updated);
+        const updated = conversationStoreFor(target.workspaceId).get(target.workspaceId, convId) ?? current;
         sendJson(res, 200, { ok: true, conversation: updated });
+      } catch (error) {
+        sendJson(res, 409, { ok: false, message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+
+    // 监工配置（issue #153）：显式页面上下文，可在任意协作模式下修改，
+    // 不依赖全局 active 指针。
+    if (req.method === "PUT" && url.pathname.startsWith("/api/conversations/") && url.pathname.endsWith("/supervisor-config")) {
+      const parts = url.pathname.split("/");
+      const convId = parts[3];
+      if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
+      const target = resolveTarget(url);
+      if (!target || target.conversationId !== convId) {
+        sendJson(res, 409, { ok: false, message: "workspaceId and conversationId are required." });
+        return;
+      }
+      const input = (await readJson(req)) as { runtime?: unknown; model?: unknown };
+      const parsed = parseSupervisorConfig(input);
+      if ("error" in parsed) {
+        sendJson(res, 400, { ok: false, message: parsed.error });
+        return;
+      }
+      if (!runtimeAvailable(runtimeKindToCliKey(parsed.config.runtime))) {
+        sendJson(res, 409, { ok: false, message: "所选运行时当前不可用，请先安装或换一个运行时。" });
+        return;
+      }
+      const ctx = contextForTarget(target);
+      if (!ctx) { sendJson(res, 409, { ok: false, message: "No active conversation context." }); return; }
+      try {
+        if (!conversationStoreFor(target.workspaceId).get(target.workspaceId, convId)) {
+          throw new Error("Conversation not found.");
+        }
+        ctx.setSupervisorConfig(parsed.config);
+        const updated = conversationStoreFor(target.workspaceId).get(target.workspaceId, convId);
+        sendJson(res, 200, { ok: true, conversation: updated ? toActiveConversation(updated) : undefined });
       } catch (error) {
         sendJson(res, 409, { ok: false, message: error instanceof Error ? error.message : String(error) });
       }
@@ -1315,11 +1441,10 @@ const server = http.createServer(async (req, res) => {
       const input = (await readJson(req)) as { name?: unknown };
       const name = typeof input.name === "string" ? input.name.trim() : undefined;
       try {
-        const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
+        const store = conversationStoreFor(wsId);
         const conv = store.update(wsId, convId, { name });
         if (convId === activeConversationId && wsId === activeWorkspaceId) {
           activeConversation = toActiveConversation(conv);
-          publishContextSwitched();
         }
         sendJson(res, 200, conv);
       } catch (error) {
@@ -1339,7 +1464,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const targetCtx = contextMap.get(contextKey(wsId, convId));
-      if (targetCtx?.hasRunningAgent()) {
+      if (targetCtx?.hasRunningOrQueued()) {
         sendJson(res, 409, { ok: false, message: "Cannot delete a conversation with running agents." });
         return;
       }
@@ -1347,13 +1472,12 @@ const server = http.createServer(async (req, res) => {
         const wasActiveConversation = wsId === activeWorkspaceId && convId === activeConversationId;
         disposeContext(wsId, convId);
         attachmentStore.deleteConversationAttachments(wsId, convId).catch(() => { /* best effort */ });
-        const store = wsId === activeWorkspaceId ? conversationStore : new ConversationStore();
+        const store = conversationStoreFor(wsId);
         store.delete(wsId, convId);
         if (wasActiveConversation) {
           const nextConversation = conversationStore.list(activeWorkspaceId)[0];
           if (nextConversation) {
             activateConversation(nextConversation);
-            publishContextSwitched();
           } else {
             clearActiveConversation();
           }
@@ -1371,12 +1495,12 @@ const server = http.createServer(async (req, res) => {
       const convId = parts[3];
       if (!convId) { sendJson(res, 400, { ok: false, message: "Missing conversation id." }); return; }
       try {
-        const wsId = url.searchParams.get("workspaceId");
-        if (wsId && wsId !== activeWorkspaceId) {
-          switchWorkspace(wsId);
-        }
-        switchConversation(convId);
-        sendJson(res, 200, { ok: true, workspace: activeWorkspace, conversation: activeConversation });
+        const wsId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+        const conversation = wsId ? conversationStoreFor(wsId).get(wsId, convId) : null;
+        const workspace = wsId ? workspaceStore.get(wsId) : null;
+        if (!wsId || !conversation || !workspace) throw new Error("Conversation not found.");
+        getOrCreateContext(wsId, convId);
+        sendJson(res, 200, { ok: true, workspace: { id: workspace.id, name: workspace.name, path: workspace.path }, conversation: toActiveConversation(conversation) });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         sendJson(res, 409, { ok: false, message: msg });
@@ -1518,17 +1642,18 @@ function wait(ms: number): Promise<void> {
 
 // --- Helpers ---
 
-async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  // 请求入口一次性快照 active 指针：读取请求体、提交附件或任何后续 await
-  // 期间切换会话，都不会改变本条消息按入口时刻会话的归属（PR #147 M1）。
+async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  // 请求入口一次性快照 active 指针（PR #147 M1）：目标优先取 query 参数
+  // （#155 页面上下文契约，读取请求体前即固定），旧调用回退入口快照，
+  // 读取请求体、提交附件或任何后续 await 期间切换会话都不会改变本条
+  // 消息按入口时刻会话的归属。
   const entryActiveWorkspaceId = activeWorkspaceId;
   const entryActiveConversationId = activeConversationId;
   const input = (await readJson(req)) as {
     content?: unknown;
-    workspaceId?: unknown;
-    conversationId?: unknown;
     draftAttachments?: unknown;
     approvalMode?: unknown;
+    clientMessageId?: unknown;
   };
   const content = typeof input.content === "string" ? input.content.trim() : "";
   const approvalMode: ApprovalMode = input.approvalMode === "full-access" ? "full-access" : "ask";
@@ -1538,54 +1663,41 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  const target = resolveMessageTarget(
-    input,
-    { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
-    {
-      workspace: (workspaceId) => Boolean(workspaceStore.get(workspaceId)),
-      conversation: (workspaceId, conversationId) => Boolean(conversationStore.get(workspaceId, conversationId)),
-    },
-  );
-  if (!target.ok) {
-    sendJson(res, target.status, { ok: false, message: target.message });
+  const workspaceId = url.searchParams.get("workspaceId") || entryActiveWorkspaceId;
+  const requestedConversationId = url.searchParams.get("conversationId") || "";
+  if (!workspaceId || !workspaceStore.get(workspaceId)) {
+    sendJson(res, 409, { ok: false, message: "Create or select a workspace before sending a message." });
     return;
   }
 
-  let conversation = target.conversationId
-    ? conversationStore.get(target.workspaceId, target.conversationId)
+  let conversation = requestedConversationId
+    ? conversationStoreFor(workspaceId).get(workspaceId, requestedConversationId)
     : null;
-  let context: ConversationContext | null;
+  if (requestedConversationId && !conversation) {
+    sendJson(res, 404, { ok: false, message: "Conversation not found." });
+    return;
+  }
+  let context = conversation ? getOrCreateContext(workspaceId, conversation.id) : null;
 
-  if (conversation) {
-    // 目标会话存在（显式指定或入口快照）：context 被 LRU 回收时恢复，
-    // 绝不为已存在的会话新建（PR #147 M1）。
-    context = getOrCreateContext(target.workspaceId, conversation.id);
-  } else {
-    // 无目标会话：合法的首条消息场景，仅在解析出的工作区内新建。
-    conversation = conversationStore.create(target.workspaceId, conversationTitle(content));
-    conversationStore.touchLastOpened(target.workspaceId, conversation.id);
-    context = getOrCreateContext(target.workspaceId, conversation.id);
+  if (!context) {
+    // 无目标会话：合法的首条消息场景，仅在目标工作区内新建（PR #147 M1）。
+    conversation = conversationStoreFor(workspaceId).create(workspaceId, conversationTitle(content));
+    conversationStoreFor(workspaceId).touchLastOpened(workspaceId, conversation.id);
+    context = getOrCreateContext(workspaceId, conversation.id);
     // Compare-and-set（PR #147 M1）：仅当实时 active 指针仍等于入口快照
     // （读取请求体期间用户未切换）且新会话建在入口工作区时才写回，
     // 否则不打断用户已切换到的会话。判定与写回之间无 await 穿插。
-    if (target.workspaceId === entryActiveWorkspaceId && shouldPromoteNewConversation(
+    if (workspaceId === entryActiveWorkspaceId && shouldPromoteNewConversation(
       { workspaceId: entryActiveWorkspaceId, conversationId: entryActiveConversationId },
       { workspaceId: activeWorkspaceId, conversationId: activeConversationId },
     )) {
       activeConversationId = conversation.id;
       activeConversation = toActiveConversation(conversation);
-      saveLastActive(target.workspaceId, conversation.id);
+      saveLastActive(workspaceId, conversation.id);
     }
-    publishContextSwitched();
-  }
-
-  // 未命名会话收到首条消息时按内容命名；仅当目标会话即入口快照会话。
-  if (conversation.name === UNTITLED_CONVERSATION_NAME && conversation.id === entryActiveConversationId) {
-    conversation = conversationStore.update(target.workspaceId, conversation.id, { name: conversationTitle(content) });
-    if (conversation.id === activeConversationId) {
-      activeConversation = toActiveConversation(conversation);
-    }
-    publishContextSwitched();
+  } else if (conversation?.name === UNTITLED_CONVERSATION_NAME) {
+    conversation = conversationStoreFor(workspaceId).update(workspaceId, conversation.id, { name: conversationTitle(content) });
+    if (workspaceId === activeWorkspaceId && conversation.id === activeConversationId) activeConversation = toActiveConversation(conversation);
   }
 
   if (!context || !conversation) {
@@ -1593,49 +1705,60 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  // Commit draft attachments if present
-  let attachments: import("../shared/types.ts").MessageAttachment[] | undefined;
+  const clientMessageId = typeof input.clientMessageId === "string" ? input.clientMessageId.trim() : "";
   const draftAttachments = Array.isArray(input.draftAttachments)
     ? input.draftAttachments as Array<{ id: string; mimeType: string; filename: string; size: number }>
     : [];
 
-  if (draftAttachments.length > 0) {
-    // Enforce max files per message
-    if (draftAttachments.length > ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE) {
-      sendJson(res, 400, {
-        ok: false,
-        message: `Too many attachments (${draftAttachments.length}). Maximum is ${ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE}.`,
-      });
-      return;
+  await context.withMessageMutation(async () => {
+    if (clientMessageId) {
+      const existing = context.messages.findByClientMessageId(clientMessageId);
+      if (existing) {
+        sendJson(res, 200, { ok: true, messageId: existing.id, workspaceId, conversationId: conversation!.id, deduplicated: true });
+        return;
+      }
     }
-    try {
-      attachments = await attachmentStore.commitDrafts({
-        workspaceId: target.workspaceId,
-        conversationId: conversation.id,
-        draftAttachments,
-      });
-    } catch (error) {
-      // 草稿缺失/过期/校验失败：整条消息不发送，保留可恢复状态。
-      const message = error instanceof Error ? error.message : String(error);
-      sendJson(res, 400, { ok: false, message });
-      return;
+    // Commit draft attachments if present
+    let attachments: import("../shared/types.ts").MessageAttachment[] | undefined;
+    if (draftAttachments.length > 0) {
+      // Enforce max files per message
+      if (draftAttachments.length > ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE) {
+        sendJson(res, 400, {
+          ok: false,
+          message: `Too many attachments (${draftAttachments.length}). Maximum is ${ATTACHMENT_LIMITS.MAX_FILES_PER_MESSAGE}.`,
+        });
+        return;
+      }
+      try {
+        attachments = await attachmentStore.commitDrafts({
+          workspaceId,
+          conversationId: conversation!.id,
+          draftAttachments,
+        });
+      } catch (error) {
+        // 草稿缺失/过期/校验失败：整条消息不发送，保留可恢复状态。
+        const message = error instanceof Error ? error.message : String(error);
+        sendJson(res, 400, { ok: false, message });
+        return;
+      }
     }
-  }
 
-  // 模式快照：每条用户消息在发送时记录当轮 interaction mode，
-  // 后续员工运行、转交、监工检查都继承该值，不读取执行时的全局模式。
-  const userMessage = context.messages.add({
-    kind: "user",
-    content,
-    status: "sent",
-    attachments,
-    approvalMode,
-    interactionMode: conversation?.interactionMode ?? "direct",
+    // 模式快照：每条用户消息在发送时记录当轮 interaction mode，
+    // 后续员工运行、转交、监工检查都继承该值，不读取执行时的全局模式。
+    const userMessage = context.messages.add({
+      kind: "user",
+      ...(clientMessageId ? { clientMessageId } : {}),
+      content,
+      status: "sent",
+      attachments,
+      approvalMode,
+      interactionMode: conversation!.interactionMode ?? "direct",
+    });
+    eventBus.publish({ type: "message.created", workspaceId, conversationId: conversation!.id, message: userMessage });
+    context.messageRouter.process(userMessage);
+
+    sendJson(res, 200, { ok: true, messageId: userMessage.id, workspaceId, conversationId: conversation!.id });
   });
-  eventBus.publish({ type: "message.created", conversationId: conversation.id, message: userMessage });
-  context.messageRouter.process(userMessage);
-
-  sendJson(res, 200, { ok: true, messageId: userMessage.id });
 }
 
 const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
@@ -1798,13 +1921,13 @@ async function pickDirectory(): Promise<string> {
   }
 }
 
-async function handlePutAgents(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  if (!activeWorkspaceId) {
+async function handlePutAgents(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  const workspaceId = url.searchParams.get("workspaceId") || activeWorkspaceId;
+  if (!workspaceId || !workspaceStore.get(workspaceId)) {
     sendJson(res, 409, { ok: false, message: "Create or select a workspace before saving agents." });
     return;
   }
-  const ctx = getActiveContext();
-  if (ctx?.hasRunningAgent()) {
+  if ([...contextMap].some(([key, ctx]) => key.startsWith(`${workspaceId}:`) && ctx.hasRunningOrQueued())) {
     sendJson(res, 409, { ok: false, message: "Cannot save while an agent is running. Wait for it to finish." });
     return;
   }
@@ -1822,10 +1945,11 @@ async function handlePutAgents(req: http.IncomingMessage, res: http.ServerRespon
   }
 
   // modelState 是 GET 响应合并的运行时快照，保存前剥离，避免污染 agents.json。
-  allConfigs = input.map(({ modelState: _modelState, modelProbe: _modelProbe, ...config }) => config);
-  configStore.save(activeWorkspaceId, allConfigs);
-  refreshEnabledAgents();
-  sendJson(res, 200, configsWithModelState(activeWorkspaceId));
+  const configs = input.map(({ modelState: _modelState, modelProbe: _modelProbe, ...config }) => config);
+  configStore.save(workspaceId, configs);
+  refreshEnabledAgentsForWorkspace(workspaceId, configs);
+  if (workspaceId === activeWorkspaceId) allConfigs = configs;
+  sendJson(res, 200, configsWithModelState(workspaceId));
 }
 
 function shutdown(): void {

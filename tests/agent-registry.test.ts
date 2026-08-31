@@ -96,3 +96,78 @@ test("states include each agent runtime", () => {
 
   assert.equal(developer?.runtime, "codebuddy");
 });
+
+test("updatePreferredModel changes the preference in place without recreating the session", () => {
+  const profiles = createDefaultAgentProfiles(process.cwd());
+  const noopRuntime: AgentRuntime = {
+    kind: "claude-code",
+    run() { throw new Error("this test does not start runs"); },
+  };
+  const codexRuntime: AgentRuntime = { ...noopRuntime, kind: "codex" };
+  const codeBuddyRuntime: AgentRuntime = { ...noopRuntime, kind: "codebuddy" };
+  const registry = new AgentRegistry(
+    profiles,
+    new EventBus(),
+    createTempSessionStore(),
+    "conv-model-only",
+    new Map([
+      ["claude-code", noopRuntime],
+      ["codex", codexRuntime],
+      ["codebuddy", codeBuddyRuntime],
+    ]),
+  );
+
+  const session = registry.get("implementation");
+  assert.equal(session.preferredModel(), undefined);
+
+  assert.equal(registry.updatePreferredModel("implementation", "claude-opus-4"), true);
+  // 会话实例未变：仅模型变化时不应重建会话、不打断排队/运行中的任务。
+  assert.strictEqual(registry.get("implementation"), session);
+  assert.equal(session.preferredModel(), "claude-opus-4");
+  assert.equal(registry.profile("implementation")?.preferredModelId, "claude-opus-4");
+
+  // 清空偏好：整字段移除，而不是留空字符串。
+  assert.equal(registry.updatePreferredModel("implementation", "   "), true);
+  assert.equal(session.preferredModel(), undefined);
+  assert.equal("preferredModelId" in (registry.profile("implementation") ?? {}), false);
+
+  assert.equal(registry.updatePreferredModel("unknown-employee", "claude-opus-4"), false);
+});
+
+test("an updated preference reaches the runtime on the next run only", async () => {
+  const profiles = createDefaultAgentProfiles(process.cwd());
+  const seen: Array<string | undefined> = [];
+  const codexRuntime: AgentRuntime = {
+    kind: "codex",
+    run(options) {
+      seen.push(options.preferredModelId);
+      return {
+        process: { kill: () => {}, pid: 12345, interrupt: () => {} },
+        result: Promise.resolve("codex final"),
+        sessionId: Promise.resolve("codex-session"),
+      };
+    },
+  };
+  const noopRuntime: AgentRuntime = {
+    kind: "claude-code",
+    run() { throw new Error("only the codex employee runs in this test"); },
+  };
+  const registry = new AgentRegistry(
+    profiles,
+    new EventBus(),
+    createTempSessionStore(),
+    "conv-next-run",
+    new Map([
+      ["claude-code", noopRuntime],
+      ["codex", codexRuntime],
+      ["codebuddy", { ...noopRuntime, kind: "codebuddy" }],
+    ]),
+  );
+  registry.startAll();
+
+  await registry.get("requirements").send("run-1", "first");
+  registry.updatePreferredModel("requirements", "gpt-5-codex");
+  await registry.get("requirements").send("run-2", "second");
+
+  assert.deepEqual(seen, [undefined, "gpt-5-codex"]);
+});

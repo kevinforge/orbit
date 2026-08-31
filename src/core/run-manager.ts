@@ -64,6 +64,8 @@ export type ManagedRun = {
 
 export type RunManagerOptions = {
   conversationId: string;
+  /** Workspace scope for events; optional for standalone unit-test callers. */
+  workspaceId?: string;
   agents: AgentRunner;
   messages: MessageStore;
   eventBus: EventBus;
@@ -86,6 +88,14 @@ export class RunManager {
 
   constructor(private readonly options: RunManagerOptions) {
     this.unsubscribe = this.options.eventBus.subscribe((event) => this.handleRuntimeEvent(event));
+  }
+
+  private publish(event: RuntimeEvent): void {
+    this.options.eventBus.publish(
+      this.options.workspaceId && "conversationId" in event
+        ? { ...event, workspaceId: this.options.workspaceId }
+        : event,
+    );
   }
 
   dispose(): void {
@@ -167,7 +177,7 @@ export class RunManager {
       interactionMode: sourceMessage.interactionMode,
       approvalMode: sourceMessage.approvalMode ?? "ask",
     } satisfies NewChatMessage);
-    this.options.eventBus.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
+    this.publish({ type: "message.created", conversationId: this.options.conversationId, message: agentMessage });
 
     const run: ManagedRun = {
       id: runId,
@@ -245,7 +255,7 @@ export class RunManager {
       status: "cancelling",
       runStatus: "cancelling",
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "message.updated",
       conversationId: this.options.conversationId,
       message: updated,
@@ -282,7 +292,7 @@ export class RunManager {
       completedAt: run.completedAt,
       startedAt: run.startedAt,
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "message.updated",
       conversationId: this.options.conversationId,
       message: updated,
@@ -290,7 +300,7 @@ export class RunManager {
       // 无结算快照时不携带该字段，客户端保留实时活动、不剔除部分回答。
       ...(run.excludedAnswerGroup !== undefined ? { excludedAnswerGroup: run.excludedAnswerGroup } : {}),
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "run.cancelled",
       conversationId: this.options.conversationId,
       agentId: run.agentId,
@@ -328,7 +338,7 @@ export class RunManager {
       ...this.settleProcessFields(run),
       completedAt: run.completedAt,
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "message.updated",
       conversationId: this.options.conversationId,
       message: updated,
@@ -336,7 +346,7 @@ export class RunManager {
       // 无结算快照时不携带该字段，客户端保留实时活动、不剔除部分回答。
       ...(run.excludedAnswerGroup !== undefined ? { excludedAnswerGroup: run.excludedAnswerGroup } : {}),
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "run.cancelled",
       conversationId: this.options.conversationId,
       agentId: run.agentId,
@@ -485,7 +495,7 @@ export class RunManager {
       sessionId: runResult.sessionId,
       runIndex: runResult.runIndex,
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "message.updated",
       conversationId: this.options.conversationId,
       message: updated,
@@ -493,7 +503,7 @@ export class RunManager {
       // 无结算快照时不携带该字段，客户端保留实时活动、不剔除部分回答。
       ...(run.excludedAnswerGroup !== undefined ? { excludedAnswerGroup: run.excludedAnswerGroup } : {}),
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "run.completed",
       conversationId: this.options.conversationId,
       agentId: run.agentId,
@@ -537,7 +547,7 @@ export class RunManager {
       completedAt: run.completedAt,
       startedAt: run.startedAt,
     });
-    this.options.eventBus.publish({
+    this.publish({
       type: "message.updated",
       conversationId: this.options.conversationId,
       message: updated,
@@ -545,7 +555,7 @@ export class RunManager {
       // 无结算快照时不携带该字段，客户端保留实时活动、不剔除部分回答。
       ...(run.excludedAnswerGroup !== undefined ? { excludedAnswerGroup: run.excludedAnswerGroup } : {}),
     });
-    this.options.eventBus.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary, interactionMode: run.interactionMode });
+    this.publish({ type: "run.failed", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, error: errorSummary, interactionMode: run.interactionMode });
     this.startNext(run.agentId);
     this.releaseRun(run);
   }
@@ -563,7 +573,7 @@ export class RunManager {
       runStatus: "running",
       startedAt,
     });
-    this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+    this.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
     this.start(next);
   }
 
@@ -592,7 +602,7 @@ export class RunManager {
     } else {
       run.activity = appendTransientProcessActivity(run.activity, boundedActivity);
     }
-    this.options.eventBus.publish({ type: "run.activity", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, activity: boundedActivity });
+    this.publish({ type: "run.activity", conversationId: this.options.conversationId, agentId: run.agentId, runId: run.id, activity: boundedActivity });
   }
 
   /** 运行结算时随消息持久化的过程字段。工具/状态活动不落盘，仅在内存与实时流中。 */
@@ -643,6 +653,7 @@ export class RunManager {
 
   private handleRuntimeEvent(event: RuntimeEvent): void {
     // Only process events for our own conversation
+    if (this.options.workspaceId && "workspaceId" in event && event.workspaceId !== undefined && event.workspaceId !== this.options.workspaceId) return;
     if ("conversationId" in event && event.conversationId !== this.options.conversationId) return;
 
     if (event.type === "run.sessionId" && event.runId) {
@@ -651,7 +662,7 @@ export class RunManager {
         const updated = this.options.messages.update(run.resultMessageId, {
           sessionId: event.sessionId,
         });
-        this.options.eventBus.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
+        this.publish({ type: "message.updated", conversationId: this.options.conversationId, message: updated });
       }
       return;
     }
