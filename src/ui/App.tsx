@@ -143,6 +143,9 @@ export function App() {
   const [inputFocused, setInputFocused] = useState(false);
   const [cursorIndex, setCursorIndex] = useState(0);
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
+  // Esc 关闭候选菜单用独立标志，不复用 inputFocused：按 Esc 时输入框并未
+  // 真正失焦，onFocus 不会再次触发，复用会导致菜单再也无法重新唤起。
+  const [mentionDismissed, setMentionDismissed] = useState(false);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -478,14 +481,14 @@ export function App() {
   );
   const mentionDraft = useMemo(() => findMentionDraft(content, cursorIndex), [content, cursorIndex]);
   const mentionCandidates = useMemo(() => {
-    if (!inputFocused || !mentionDraft) {
+    if (!inputFocused || mentionDismissed || !mentionDraft) {
       return [];
     }
 
     const query = mentionDraft.query.toLowerCase();
     const matched = state.agents.filter((agent) => agent.label.toLocaleLowerCase().startsWith(query)).map((agent) => agent.id);
     return matched;
-  }, [agentIds, inputFocused, mentionDraft, state.agents]);
+  }, [agentIds, inputFocused, mentionDismissed, mentionDraft, state.agents]);
 
   useEffect(() => {
     if (!agentsById.has(selectedAgent) && agentIds[0]) {
@@ -520,6 +523,14 @@ export function App() {
   useEffect(() => {
     setSelectedMentionIndex(0);
   }, [mentionDraft?.query]);
+
+  // Esc 关闭的候选菜单在 @ 草稿消失（删掉 @ 或发出消息清空输入框）后允许
+  // 重新唤起；只改动查询词时保持关闭，避免继续打字被菜单打扰。
+  useEffect(() => {
+    if (!mentionDraft) {
+      setMentionDismissed(false);
+    }
+  }, [mentionDraft]);
 
   useEffect(() => {
     if (!openWorkspaceMenuId && !openConversationMenuId) return;
@@ -1364,7 +1375,7 @@ export function App() {
       return;
     }
 
-    if (event.key === "Enter" || event.key === "Tab") {
+    if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
       event.preventDefault();
       chooseMention(mentionCandidates[selectedMentionIndex] ?? mentionCandidates[0]);
       return;
@@ -1372,7 +1383,7 @@ export function App() {
 
     if (event.key === "Escape") {
       event.preventDefault();
-      setInputFocused(false);
+      setMentionDismissed(true);
     }
   }
 
@@ -1830,12 +1841,16 @@ export function App() {
                 if (isImeComposition(event)) {
                   return;
                 }
+                // @ 候选菜单打开时，Enter/Tab/方向键/Esc 优先交给候选菜单处理，
+                // 只有菜单关闭时 Enter 才是发送消息。
+                if (mentionCandidates.length > 0) {
+                  handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
+                  return;
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   sendMessage(event as unknown as FormEvent<HTMLFormElement>);
-                  return;
                 }
-                handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
               }}
               onKeyUp={updateCursorFromInput}
               placeholder={!hasWorkspace
