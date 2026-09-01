@@ -734,28 +734,39 @@ test("slash-command probe waits for an announcement that lands after session cre
 
 test("slash-command probe returns an empty list when the runtime announces nothing", async () => {
   const fake = fakeConnector();
-  const commands = await probeAcpCommands(
-    definition,
-    { agentId: "developer", cwd: "D:/workspace" },
-    fake.connector,
-    { announceGraceMs: 5 },
-  );
-
-  assert.deepEqual(commands, [], "不通告时返回空列表，UI 按“没有可用命令”展示");
-  assert.ok(fake.calls.some((call) => call.startsWith("destroy:")));
+  // 探测内部的宽限定时器 unref（生产上不阻止进程退出）：测试必须自己持有
+  // 事件循环，否则 Linux 上循环排空后 pending promise 被判 "already resolved"。
+  const keepAlive = setInterval(() => {}, 10);
+  try {
+    const commands = await probeAcpCommands(
+      definition,
+      { agentId: "developer", cwd: "D:/workspace" },
+      fake.connector,
+      { announceGraceMs: 5 },
+    );
+    assert.deepEqual(commands, [], "不通告时返回空列表，UI 按“没有可用命令”展示");
+    assert.ok(fake.calls.some((call) => call.startsWith("destroy:")));
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 test("slash-command probe rejects when the runtime never initializes", async () => {
   const fake = fakeConnector({ hangInitialize: true });
-  await assert.rejects(
-    probeAcpCommands(
-      definition,
-      { agentId: "developer", cwd: "D:/workspace" },
-      fake.connector,
-      { timeoutMs: 10, announceGraceMs: 5 },
-    ),
-    /slash-command discovery timed out/,
-  );
+  const keepAlive = setInterval(() => {}, 10);
+  try {
+    await assert.rejects(
+      probeAcpCommands(
+        definition,
+        { agentId: "developer", cwd: "D:/workspace" },
+        fake.connector,
+        { timeoutMs: 10, announceGraceMs: 5 },
+      ),
+      /slash-command discovery timed out/,
+    );
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 test("applies the preferred model after the session is established", async () => {
