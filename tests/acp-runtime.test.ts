@@ -13,6 +13,7 @@ import type {
 
 import {
   CANCEL_GRACE_MS,
+  probeAcpCommands,
   probeAcpModelState,
   runAcp,
   spawnAcpConnection,
@@ -683,6 +684,78 @@ test("probes model options without prompting and destroys the temporary connecti
   assert.equal(snapshot?.currentValueSource, "probe");
   assert.equal(fake.calls.some((call) => call.startsWith("session/prompt:")), false);
   assert.ok(fake.calls.some((call) => call.startsWith("destroy:")));
+});
+
+// ---- issue #160 收尾：斜杠命令主动探测（“输入 / 无反应”的冷启动修复） ----
+
+test("probes slash commands without prompting and keeps the latest announcement", async () => {
+  const fake = fakeConnector();
+  const pending = probeAcpCommands(
+    definition,
+    { agentId: "developer", cwd: "D:/workspace" },
+    fake.connector,
+    { announceGraceMs: 10 },
+  );
+  // 通告在 initialize 之后、newSession 响应前后都可能到达；先于等待发出。
+  fake.emitSessionUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: commandList([
+      { name: "init", description: "初始化项目" },
+      { name: "", description: "无名条目应被丢弃" },
+      { name: "review", description: "审查当前变更", input: { hint: "可选关注点" } },
+    ]),
+  }, "fake-session");
+
+  assert.deepEqual(await pending, [
+    { name: "init", description: "初始化项目" },
+    { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
+  ]);
+  assert.equal(fake.calls.some((call) => call.startsWith("session/prompt:")), false, "探测不得发送 prompt");
+  assert.ok(fake.calls.some((call) => call.startsWith("destroy:")), "临时连接用完即毁");
+});
+
+test("slash-command probe waits for an announcement that lands after session creation", async () => {
+  const fake = fakeConnector();
+  const pending = probeAcpCommands(
+    definition,
+    { agentId: "developer", cwd: "D:/workspace" },
+    fake.connector,
+    { announceGraceMs: 5_000 },
+  );
+  // newSession 已完成但通告未到：探测仍在宽限窗口内等待，通告到达即返回。
+  await new Promise((resolve) => setImmediate(resolve));
+  fake.emitSessionUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: commandList([{ name: "compact", description: "压缩上下文" }]),
+  }, "fake-session");
+
+  assert.deepEqual(await pending, [{ name: "compact", description: "压缩上下文" }]);
+});
+
+test("slash-command probe returns an empty list when the runtime announces nothing", async () => {
+  const fake = fakeConnector();
+  const commands = await probeAcpCommands(
+    definition,
+    { agentId: "developer", cwd: "D:/workspace" },
+    fake.connector,
+    { announceGraceMs: 5 },
+  );
+
+  assert.deepEqual(commands, [], "不通告时返回空列表，UI 按“没有可用命令”展示");
+  assert.ok(fake.calls.some((call) => call.startsWith("destroy:")));
+});
+
+test("slash-command probe rejects when the runtime never initializes", async () => {
+  const fake = fakeConnector({ hangInitialize: true });
+  await assert.rejects(
+    probeAcpCommands(
+      definition,
+      { agentId: "developer", cwd: "D:/workspace" },
+      fake.connector,
+      { timeoutMs: 10, announceGraceMs: 5 },
+    ),
+    /slash-command discovery timed out/,
+  );
 });
 
 test("applies the preferred model after the session is established", async () => {

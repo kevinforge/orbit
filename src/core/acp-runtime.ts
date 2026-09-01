@@ -459,6 +459,79 @@ export async function probeAcpModelState(
   }
 }
 
+const COMMAND_PROBE_TIMEOUT_MS = 15_000;
+const COMMAND_PROBE_ANNOUNCE_GRACE_MS = 1_500;
+
+/**
+ * 在不发送 prompt 的前提下获取 runtime 会话通告的斜杠命令（issue #160）。
+ * “输入 / 却毫无反应”的冷启动缺口（issue #160 收尾）：ACP 没有独立的命令
+ * 列表请求，命令由会话在建立时通过 `available_commands_update` 推送，因此
+ * 探测路径与模型探测一致——临时连接 + 临时 session，读取完成后销毁，不写入
+ * 员工的会话记录。通告可能在 session/new 响应前后到达，会话创建后再等一个
+ * 短宽限窗口；runtime 完全不通告时返回空数组（无法与“会话没有命令”区分，
+ * UI 统一按“没有可用命令”展示）。
+ */
+export async function probeAcpCommands(
+  definition: AcpRuntimeDefinition,
+  options: Pick<AcpRunOptions, "agentId" | "cwd" | "env">,
+  connector: AcpConnector = (runOptions, onSessionUpdate) =>
+    spawnAcpConnection(definition, runOptions, onSessionUpdate),
+  timing: { timeoutMs?: number; announceGraceMs?: number } = {},
+): Promise<AgentCommand[]> {
+  const timeoutMs = timing.timeoutMs ?? COMMAND_PROBE_TIMEOUT_MS;
+  const graceMs = timing.announceGraceMs ?? COMMAND_PROBE_ANNOUNCE_GRACE_MS;
+  const probeOptions: AcpRunOptions = {
+    ...options,
+    prompt: "",
+    approvalMode: "full-access",
+  };
+  let connection: AcpConnection | undefined;
+  let timeout: NodeJS.Timeout | undefined;
+  let graceTimer: NodeJS.Timeout | undefined;
+  try {
+    const probe = (async () => {
+      // 用属性容器规避闭包赋值的窄化问题；只保留最新一帧通告。
+      const found: { latest: AgentCommand[] | null } = { latest: null };
+      let notifyAnnounced: () => void = () => {};
+      const announcedOnce = new Promise<void>((resolve) => {
+        notifyAnnounced = resolve;
+      });
+      connection = connector(probeOptions, (notification) => {
+        if (notification.update.sessionUpdate !== "available_commands_update") return;
+        const raw = notification.update.availableCommands;
+        found.latest = toAgentCommands(Array.isArray(raw) ? raw : []);
+        notifyAnnounced();
+      });
+      const initialized = await connection.initialize(createAcpInitializeRequest());
+      validateInitializeResponse(initialized, definition.displayName);
+      await connection.newSession({
+        cwd: path.resolve(probeOptions.cwd),
+        mcpServers: [],
+      });
+      if (found.latest === null) {
+        const grace = new Promise<void>((resolve) => {
+          graceTimer = setTimeout(resolve, graceMs);
+          graceTimer.unref?.();
+        });
+        await Promise.race([announcedOnce, grace]);
+      }
+      return found.latest ?? [];
+    })();
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error(`${definition.displayName} slash-command discovery timed out.`)),
+        timeoutMs,
+      );
+      timeout.unref?.();
+    });
+    return await Promise.race([probe, deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (graceTimer) clearTimeout(graceTimer);
+    connection?.destroy?.();
+  }
+}
+
 /** 会话建立结果：sessionId 加上本次建立路径拿到的 config options 快照。 */
 export type AcpSessionSetup = {
   sessionId: string;

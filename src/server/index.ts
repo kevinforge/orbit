@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { configsToProfiles, INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
-import { disposeAcpConnectionPool, probeAcpModelState } from "../core/acp-runtime.ts";
+import { disposeAcpConnectionPool, probeAcpCommands, probeAcpModelState, type AcpRuntimeDefinition } from "../core/acp-runtime.ts";
 import { defaultAcpRunnerRegistry } from "../core/acp-runner-registry.ts";
 import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
 import { AgentModelStateStore, supervisorStorageKey } from "../core/agent-model-state-store.ts";
@@ -25,7 +25,7 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, NativeCommandDelivery, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo, AgentId } from "../shared/types.ts";
+import type { AgentCommandsSnapshot, AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, NativeCommandDelivery, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo, AgentId } from "../shared/types.ts";
 import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
@@ -87,6 +87,9 @@ let runtimeAvailability: Map<string, RuntimeProbeResult> = new Map();
 let probeTimer: ReturnType<typeof setInterval> | null = null;
 let shuttingDown = false;
 const modelProbeStates = new Map<string, Map<AgentConfig["runtime"], AgentModelProbeState>>();
+// 斜杠命令主动探测去重（issue #160 收尾）：多页面同时打开 "/" 菜单时只拉起
+// 一次 runtime 探测，同一会话同一员工的并发请求共享同一个 Promise。
+const commandProbeInFlight = new Map<string, Promise<AgentCommandsSnapshot>>();
 
 async function probeRuntimes(): Promise<void> {
   const results = await probeAllRuntimes();
@@ -206,6 +209,52 @@ function setModelProbeState(workspaceId: string, runtime: AgentConfig["runtime"]
   const states = modelProbeStates.get(workspaceId) ?? new Map<AgentConfig["runtime"], AgentModelProbeState>();
   states.set(runtime, state);
   modelProbeStates.set(workspaceId, states);
+}
+
+/**
+ * 为员工拉一次斜杠命令快照并按会话广播（issue #160 收尾）。会话里已有非空
+ * 快照时直接复用，不重复拉起 runtime 进程；探测失败同样以 error 快照广播，
+ * 让 UI 停在明确的失败态（可重试），而不是“输入 / 毫无反应”。
+ */
+async function probeAgentCommands(
+  ctx: ConversationContext | null,
+  workspaceId: string,
+  conversationId: string,
+  agentId: AgentId,
+  definition: AcpRuntimeDefinition,
+  workspacePath: string,
+): Promise<AgentCommandsSnapshot> {
+  const existing = ctx?.availableCommands()[agentId];
+  if (existing && existing.length > 0) {
+    return { status: "ready", commands: existing };
+  }
+  try {
+    const commands = await probeAcpCommands(definition, { agentId, cwd: workspacePath });
+    const snapshot: AgentCommandsSnapshot = { status: "ready", commands };
+    sseHub.publish({
+      type: "agent.commands.updated",
+      workspaceId,
+      conversationId,
+      agentId,
+      commands,
+      status: "ready",
+    });
+    return snapshot;
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    const message = raw.split("\n")[0]?.trim() || "获取斜杠命令失败。";
+    console.warn(`[orbit] slash-command discovery failed for ${definition.displayName}:`, raw);
+    sseHub.publish({
+      type: "agent.commands.updated",
+      workspaceId,
+      conversationId,
+      agentId,
+      commands: [],
+      status: "error",
+      message,
+    });
+    return { status: "error", commands: [], message };
+  }
 }
 
 function modelProbeStateFor(
@@ -764,7 +813,15 @@ const server = http.createServer(async (req, res) => {
         runtimeAvailability: getRuntimeAvailabilityArray(),
         pendingPermissions: ctx?.pendingPermissions() ?? [],
         pendingElicitations: ctx?.pendingElicitations() ?? [],
-        agentCommands: ctx?.availableCommands() ?? {},
+        // 斜杠命令快照（issue #160）：会话内存里的快照都是 runtime 通告的就绪帧。
+        agentCommands: ctx
+          ? Object.fromEntries(
+              Object.entries(ctx.availableCommands()).map(([agentId, commands]) => [
+                agentId,
+                { status: "ready" as const, commands } satisfies AgentCommandsSnapshot,
+              ]),
+            )
+          : {},
       });
       return;
     }
@@ -1063,6 +1120,40 @@ const server = http.createServer(async (req, res) => {
         };
       }
       sendJson(res, 200, response);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/agents/probe-commands") {
+      const target = resolveTarget(url);
+      const agentId = url.searchParams.get("agentId")?.trim();
+      if (!target?.conversationId || !agentId) {
+        sendJson(res, 400, { ok: false, message: "刷新斜杠命令时需要有效的会话与员工 ID。" });
+        return;
+      }
+      const workspace = workspaceStore.get(target.workspaceId);
+      const config = workspace ? configStore.load(target.workspaceId).find((c) => c.id === agentId && c.enabled) : undefined;
+      const registration = config ? defaultAcpRunnerRegistry.get(config.runtime) : undefined;
+      if (!workspace || !config || !registration) {
+        sendJson(res, 400, { ok: false, message: "该员工不存在、未启用或运行时不可用。" });
+        return;
+      }
+      const probeKey = `${target.workspaceId}:${target.conversationId}:${agentId}`;
+      let pending = commandProbeInFlight.get(probeKey);
+      if (!pending) {
+        pending = probeAgentCommands(
+          contextForTarget(target),
+          target.workspaceId,
+          target.conversationId,
+          agentId,
+          registration.definition,
+          workspace.path,
+        ).finally(() => {
+          commandProbeInFlight.delete(probeKey);
+        });
+        commandProbeInFlight.set(probeKey, pending);
+      }
+      const snapshot = await pending;
+      sendJson(res, 200, { ok: true, agentId, snapshot });
       return;
     }
 

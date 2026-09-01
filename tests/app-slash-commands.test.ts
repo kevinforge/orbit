@@ -3,8 +3,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { findSlashCommandDraft, resolveSlashCommandTarget, resolveSlashSendTarget } from "../src/ui/App.tsx";
-import type { AgentCommand, AgentId } from "../src/shared/types.ts";
+import {
+  filterSlashCommands,
+  findSlashCommandDraft,
+  resolveSlashCommandTarget,
+  resolveSlashSendTarget,
+  splitSlashCommandName,
+  SLASH_COMMAND_PREVIEW_LIMIT,
+} from "../src/ui/App.tsx";
+import type { AgentCommand, AgentCommandsSnapshot, AgentId } from "../src/shared/types.ts";
 
 const developer: AgentId = "developer";
 const reviewer: AgentId = "reviewer";
@@ -14,12 +21,16 @@ const agents = [
   { id: reviewer, label: "评审" },
 ];
 
-const commands: Record<AgentId, readonly AgentCommand[]> = {
-  [developer]: [
+function snapshot(commands: readonly AgentCommand[]): AgentCommandsSnapshot {
+  return { status: "ready", commands };
+}
+
+const commands: Record<AgentId, AgentCommandsSnapshot> = {
+  [developer]: snapshot([
     { name: "init", description: "初始化项目" },
     { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
-  ],
-  [reviewer]: [{ name: "plan", description: "生成计划" }],
+  ]),
+  [reviewer]: snapshot([{ name: "plan", description: "生成计划" }]),
 };
 
 test("slash send targets the last direct employee without a prefix in direct mode", () => {
@@ -114,6 +125,36 @@ test("slash command draft brackets the /command after an @员工: prefix", () =>
   assert.equal(findSlashCommandDraft("@开发: ", 5), null);
   // 参数阶段不弹菜单。
   assert.equal(findSlashCommandDraft("@开发: /init foo", 15), null);
+});
+
+test("filterSlashCommands previews a capped list for the bare slash query", () => {
+  const many: AgentCommand[] = Array.from({ length: 30 }, (_, index) => ({
+    name: `cmd${String(index).padStart(2, "0")}`,
+    description: `命令 ${index}`,
+  }));
+
+  // 空查询限量展示，total 保留完整命中数供底栏提示继续输入筛选。
+  const preview = filterSlashCommands(many, "");
+  assert.equal(preview.total, 30);
+  assert.equal(preview.shown.length, SLASH_COMMAND_PREVIEW_LIMIT);
+  assert.deepEqual(preview.shown[0], many[0]);
+
+  // 有关键词时展示全部命中，筛选结果不受预览上限约束。
+  const filtered = filterSlashCommands(many, "CMD");
+  assert.equal(filtered.total, 30);
+  assert.equal(filtered.shown.length, 30);
+  assert.deepEqual(filterSlashCommands(many, "cmd29").shown, [many[29]]);
+  assert.deepEqual(filterSlashCommands(many, "missing"), { shown: [], total: 0 });
+});
+
+test("splitSlashCommandName separates the namespace tag from the base name", () => {
+  assert.deepEqual(splitSlashCommandName("init"), { namespace: null, base: "init" });
+  assert.deepEqual(splitSlashCommandName("mcp:fetch"), { namespace: "mcp", base: "fetch" });
+  assert.deepEqual(splitSlashCommandName("$product-design:share"), { namespace: "$product-design", base: "share" });
+  // 命名空间内多级冒号保留完整前缀；冒号在开头或结尾时不拆分。
+  assert.deepEqual(splitSlashCommandName("a:b:c"), { namespace: "a:b", base: "c" });
+  assert.deepEqual(splitSlashCommandName(":lead"), { namespace: null, base: ":lead" });
+  assert.deepEqual(splitSlashCommandName("trail:"), { namespace: null, base: "trail:" });
 });
 
 describe("composer key wiring for the slash command menu", () => {

@@ -226,6 +226,19 @@ export type AgentCommand = {
 };
 
 /**
+ * 目标员工斜杠命令快照（issue #160）。`ready` 表示已拿到 runtime 会话的
+ * `available_commands_update`（commands 为空表示该员工当前没有可用命令）；
+ * `error` 表示主动探测失败（message 携带原因，可重试）。快照缺失表示尚未
+ * 获取过，UI 据此在菜单打开时自动触发一次探测，不再把“未获取”误显示为
+ * “没有命令”。
+ */
+export type AgentCommandsSnapshot = {
+  status: "ready" | "error";
+  commands: readonly AgentCommand[];
+  message?: string;
+};
+
+/**
  * 原生斜杠命令投递标记（issue #160）：客户端解析出明确目标员工与已通告
  * 命令后随消息携带，服务端把 `prompt`（`@员工:` 前缀之后的命令文本）原样
  * 发给该员工的 runtime 会话；频道历史仍保留用户输入的原文。
@@ -500,7 +513,8 @@ export type RuntimeEvent =
   | { type: "agent.model_state"; workspaceId: string; agentId: AgentId; modelState: AgentModelStateSnapshot; conversationId?: string }
   // 员工 runtime 会话的斜杠命令快照（issue #160）。命令属于具体会话里的
   // 后端 runtime 会话，因此是会话级事件；workspaceId 由发布方补齐。
-  | { type: "agent.commands.updated"; workspaceId?: string; conversationId: string; agentId: AgentId; commands: readonly AgentCommand[] }
+  // status/message 仅主动探测路径携带：失败时 commands 为空、status 为 error。
+  | { type: "agent.commands.updated"; workspaceId?: string; conversationId: string; agentId: AgentId; commands: readonly AgentCommand[]; status?: AgentCommandsSnapshot["status"]; message?: string }
   | { type: "events.gap"; workspaceId?: string; conversationId?: string };
 
 export type TerminalState = Record<string, string>;
@@ -600,5 +614,5 @@ export type AppState = {
   /** 各数字员工最新的模型快照（issue #142），供设置面板展示当前模型与可用列表。 */
   agentModelStates: Record<AgentId, AgentModelStateSnapshot>;
   /** 各数字员工 runtime 会话的斜杠命令快照（issue #160），供输入框 "/" 菜单使用。 */
-  agentCommands: Record<AgentId, readonly AgentCommand[]>;
+  agentCommands: Record<AgentId, AgentCommandsSnapshot>;
 };

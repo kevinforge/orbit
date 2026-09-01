@@ -2309,28 +2309,154 @@ button:active:not(:disabled) {
   letter-spacing: 0.02em;
 }
 
-/* 斜杠命令菜单（issue #160）：复用 mentionMenu 结构，命令描述换行展示。 */
+/* 斜杠命令面板（issue #160 收尾）：紧凑双行布局，整体高度受限、候选区独立
+   滚动，头尾固定；命名空间以弱化标签展示，避免长命令撑破行宽。 */
 .slashCommandMenu {
-  width: min(320px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: min(480px, 100%);
+  max-height: min(420px, 45vh);
+  padding: 0;
+  overflow: hidden;
 }
 
-.slashCommandMenu button {
-  align-items: flex-start;
+.slashCommandMenuHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
   padding: 8px 12px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.slashCommandMenuHeader strong {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.slashCommandMenuList {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.slashCommandMenu .slashCommandItem {
+  display: grid;
+  gap: 2px;
+  min-height: 0;
+  padding: 8px 10px;
   font-weight: 500;
+}
+
+.slashCommandItemName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
 }
 
 .slashCommandMenu .slashCommandName {
   color: var(--accent);
   font-weight: 650;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.slashCommandMenu small {
+.slashCommandNamespace {
+  flex: 0 1 auto;
+  max-width: 180px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slashCommandInputHint {
   flex: 1 1 auto;
   min-width: 0;
-  white-space: normal;
-  line-height: 1.35;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slashCommandItemDesc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.slashCommandMenuStatus {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-y: auto;
+}
+
+.slashCommandMenuStatus .slashCommandRetry {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  color: var(--accent);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.slashCommandMenuStatus .slashCommandRetry:hover {
+  background: var(--accent-subtle);
+}
+
+.slashCommandSpinner {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+.slashCommandMenuHint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 .primaryNavButton {
