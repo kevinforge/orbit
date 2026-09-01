@@ -2351,7 +2351,9 @@ button:active:not(:disabled) {
 .slashCommandMenu .slashCommandItem {
   display: grid;
   gap: 2px;
-  min-height: 0;
+  /* 覆盖 .mentionMenu button 的 38px;不能写 0——0 会把条目内部网格的
+     描述行轨道在 intrinsic sizing 下塌成 0px,内容溢出叠到相邻条目上。 */
+  min-height: auto;
   padding: 8px 10px;
   font-weight: 500;
 }
