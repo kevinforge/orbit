@@ -2523,8 +2523,8 @@ function MessageRow({
   const isQueued = message.runStatus === "queued";
   const isAgentRun = message.kind === "agent" && Boolean(message.runId);
   const isLiveRun = isAgentRun && (isRunning || isCancelling || isQueued);
-  // 仅在回合仍处于执行态时提前展示显式 final_answer；排队或取消中的
-  // 消息不能继续沿用已经收到的最终分片作为正文。
+  // 仅在回合仍处于执行态时提前展示最终回复；排队或取消中的消息不能继续
+  // 沿用已经收到的最终分片作为正文。
   const liveFinalAnswer = isRunning ? getLiveFinalAnswer(message.activity) : null;
   const handoffSummary = getAgentHandoffSummary(message, parentMessage, agentsById);
   const compactHandoffSource = parentMessage?.kind === "agent"
@@ -2619,14 +2619,14 @@ function MessageRow({
       {isAgentRun
         ? isLiveRun
           ? liveFinalAnswer
-            ? <SettledRunProcess message={message} hideFinalAnswer />
+            ? <SettledRunProcess message={message} hideFinalAnswer hideAnswerGroup={liveFinalAnswer.group} />
             : <LiveRunProcess message={message} isCancelling={isCancelling} />
           : <SettledRunProcess message={message} />
         : null}
       <div className="messageBody">
         {isProgressPlaceholder && !liveFinalAnswer ? (
           <span className="messageProgressText">{isCancelling ? "正在取消" : isQueued ? "等待处理" : "正在处理"}</span>
-        ) : message.kind === "agent" ? <MarkdownContent content={liveFinalAnswer ?? message.content} /> : <PlainText content={message.content} />}
+        ) : message.kind === "agent" ? <MarkdownContent content={liveFinalAnswer?.text ?? message.content} /> : <PlainText content={message.content} />}
         {message.attachments?.length ? (
           <div className="messageAttachments">
             {message.attachments.map((att) => (
@@ -2675,7 +2675,7 @@ type ProcessTimelineEntry =
 export function buildProcessTimeline(
   activity: AgentActivityEvent[] | undefined,
   persistedTimeline?: PersistedProcessTimelineEntry[] | null,
-  options?: { hideFinalAnswer?: boolean },
+  options?: { hideFinalAnswer?: boolean; hideAnswerGroup?: string },
 ): ProcessTimelineEntry[] {
   const timeline: ProcessTimelineEntry[] = [];
 
@@ -2683,6 +2683,9 @@ export function buildProcessTimeline(
     if (item.type === "process.text") {
       if (!item.text) continue;
       if (options?.hideFinalAnswer && item.isFinal) continue;
+      // 提前折叠时按 answer 分组剔除正文分片：显式 final 分片之外，静默启发式
+      // 选中的分组（Claude Code 等无阶段标记的运行时）同样不能重复出现在过程区。
+      if (options?.hideAnswerGroup !== undefined && (item.answerGroup ?? "") === options.hideAnswerGroup) continue;
       const stream = item.stream ?? "progress";
       const isFinal = item.isFinal === true;
       const previous = timeline.at(-1);
@@ -2761,8 +2764,11 @@ function PersistedToolActivityGroup({ count, failedCount }: { count: number; fai
   );
 }
 
-function ProcessTimeline({ message, live = false, hideFinalAnswer = false }: { message: ChatMessage; live?: boolean; hideFinalAnswer?: boolean }) {
-  const timeline = buildProcessTimeline(message.activity, message.processTimeline, { hideFinalAnswer });
+function ProcessTimeline(
+  { message, live = false, hideFinalAnswer = false, hideAnswerGroup }:
+  { message: ChatMessage; live?: boolean; hideFinalAnswer?: boolean; hideAnswerGroup?: string },
+) {
+  const timeline = buildProcessTimeline(message.activity, message.processTimeline, { hideFinalAnswer, hideAnswerGroup });
   if (timeline.length === 0) return null;
   return (
     <div className="processTimeline">
@@ -2800,10 +2806,12 @@ function LiveRunProcess({ message, isCancelling }: { message: ChatMessage; isCan
 }
 
 /** 运行结算后的折叠过程区；正文区只显示最终回复。 */
-function SettledRunProcess({ message, hideFinalAnswer = false }: { message: ChatMessage; hideFinalAnswer?: boolean }) {
+function SettledRunProcess(
+  { message, hideFinalAnswer = false, hideAnswerGroup }: { message: ChatMessage; hideFinalAnswer?: boolean; hideAnswerGroup?: string },
+) {
   const activity = message.activity ?? [];
   const plan = message.plan ?? undefined;
-  const timeline = buildProcessTimeline(activity, message.processTimeline, { hideFinalAnswer });
+  const timeline = buildProcessTimeline(activity, message.processTimeline, { hideFinalAnswer, hideAnswerGroup });
   if (!plan && timeline.length === 0) {
     return null;
   }
@@ -2832,25 +2840,59 @@ function SettledRunProcess({ message, hideFinalAnswer = false }: { message: Chat
         <ChevronRightIcon className="settledProcessChevron" aria-hidden="true" />
       </summary>
       <div className="settledProcessBody">
-        <ProcessTimeline message={message} hideFinalAnswer={hideFinalAnswer} />
+        <ProcessTimeline message={message} hideFinalAnswer={hideFinalAnswer} hideAnswerGroup={hideAnswerGroup} />
         {plan ? <PlanBoard plan={plan} /> : null}
       </div>
     </details>
   );
 }
 
-function getLiveFinalAnswer(activity: AgentActivityEvent[] | undefined): string | null {
-  const finalItems = (activity ?? [])
-    .filter((item): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
-      item.type === "process.text" && item.stream === "answer" && item.isFinal === true
-    ));
-  // 与服务端 selectFinalAnswer 保持一致：多个响应组存在时只展示最后一个 final 组。
-  const finalGroup = finalItems.at(-1)?.answerGroup ?? "";
-  const answer = finalItems
-    .filter((item) => (item.answerGroup ?? "") === finalGroup)
+/** 运行中提前展示的最终回复：正文文本加其 answer 分组（过程区据此剔除同组分片）。 */
+export type LiveFinalAnswer = { text: string; group: string };
+
+/**
+ * 运行中提前识别最终回复，让过程区在正文开始输出时就折叠：
+ * - 显式 final 分片（如 Codex 的 final_answer 阶段）照旧直接采用；
+ * - 没有显式信号的运行时（Claude Code / CodeBuddy 的回答分片不带阶段标记），
+ *   按静默启发式处理：最后一个工具事件之后到达的回答文本视为正文已开始。
+ *   启发式会自我纠正——若模型随后再次调用工具，这些文本自动回到过程时间线，
+ *   与结算时"最后一个非空分组胜出"的规则保持一致。
+ */
+export function getLiveFinalAnswer(activity: AgentActivityEvent[] | undefined): LiveFinalAnswer | null {
+  const items = activity ?? [];
+  const isAnswerText = (item: AgentActivityEvent): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
+    item.type === "process.text" && item.stream === "answer"
+  );
+  const finalItems = items.filter((item): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
+    item.type === "process.text" && item.stream === "answer" && item.isFinal === true
+  ));
+  if (finalItems.length > 0) {
+    // 与服务端 selectFinalAnswer 保持一致：多个响应组存在时只展示最后一个 final 组。
+    const finalGroup = finalItems.at(-1)?.answerGroup ?? "";
+    const text = finalItems
+      .filter((item) => (item.answerGroup ?? "") === finalGroup)
+      .map((item) => item.text)
+      .join("");
+    return text ? { text, group: finalGroup } : null;
+  }
+
+  let lastToolIndex = -1;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    if (item.type === "tool.started" || item.type === "tool.completed" || item.type === "tool.failed") {
+      lastToolIndex = index;
+    }
+  }
+  const trailingItems = items.filter((item, index): item is Extract<AgentActivityEvent, { type: "process.text" }> => (
+    index > lastToolIndex && isAnswerText(item)
+  ));
+  if (trailingItems.length === 0) return null;
+  const trailingGroup = trailingItems.at(-1)?.answerGroup ?? "";
+  const text = trailingItems
+    .filter((item) => (item.answerGroup ?? "") === trailingGroup)
     .map((item) => item.text)
     .join("");
-  return answer || null;
+  return text ? { text, group: trailingGroup } : null;
 }
 
 function PlanBoard({ plan }: { plan: AgentPlanSnapshot }) {

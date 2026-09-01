@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyEvent, buildProcessTimeline, mergeModelProbeResponse, mergeProbedConfigs, upsertMessage } from "../src/ui/App.tsx";
+import { applyEvent, buildProcessTimeline, getLiveFinalAnswer, mergeModelProbeResponse, mergeProbedConfigs, upsertMessage } from "../src/ui/App.tsx";
 import type { AgentActivityEvent, AgentCommand, AgentModelStateSnapshot, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
 
 const CONVERSATION = "conv1";
@@ -191,8 +191,9 @@ test("process timeline interleaves narration and consecutive tool groups", () =>
 });
 
 test("answer text stays in the live process timeline across later tool calls", () => {
-  // Issue #139：运行期间回答正文不提升到正文区，也不因后续工具调用被隐藏或降级。
-  // 到达顺序 text → tools → text 始终保留在过程时间线。
+  // Issue #139：运行期间回答正文留在过程时间线，不因后续工具调用被隐藏或降级。
+  // 到达顺序 text → tools → text 始终保留在过程时间线。（提前提升到正文区由
+  // getLiveFinalAnswer 的显式 final / 静默启发式单独决定，见下方用例。）
   const events: AgentActivityEvent[] = [
     { type: "process.text", text: "先给出判断", stream: "answer", answerGroup: "response-1", timestamp: "2026-01-01T00:00:01.000Z" },
     { type: "tool.started", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:02.000Z" },
@@ -309,6 +310,77 @@ test("final answer groups stay out of the expanded process view", () => {
 
   assert.deepEqual(timeline.map((entry) => entry.kind), ["text", "text"]);
   assert.deepEqual(hidden, [{ kind: "text", text: "过程说明", timestamp: "2026-01-01T00:00:00.000Z", stream: "progress" }]);
+});
+
+// ---- 运行中提前折叠过程区：显式 final 与静默启发式（Claude Code 无阶段标记）----
+
+test("explicit final chunks are promoted as the live final answer", () => {
+  // Codex 路径：final_answer 阶段分片带 isFinal，直接按最后一组采用。
+  const activity: AgentActivityEvent[] = [
+    { type: "process.text", text: "开头", timestamp: "2026-01-01T00:00:00.000Z", stream: "answer" as const, isFinal: true, answerGroup: "response-1" },
+    { type: "process.text", text: "续写", timestamp: "2026-01-01T00:00:01.000Z", stream: "answer" as const, isFinal: true, answerGroup: "response-1" },
+  ];
+  assert.deepEqual(getLiveFinalAnswer(activity), { text: "开头续写", group: "response-1" });
+  assert.equal(getLiveFinalAnswer([]), null);
+  assert.equal(getLiveFinalAnswer(undefined), null);
+});
+
+test("answer text after the last tool event folds the process section for runtimes without phase marks", () => {
+  // Claude Code / CodeBuddy 的回答分片没有 isFinal 标记：最后一个工具事件之后
+  // 到达的回答文本视为正文已开始，过程区提前折叠。
+  const events: AgentActivityEvent[] = [
+    { type: "process.text", text: "先给出判断", stream: "answer", answerGroup: "response-1", timestamp: "2026-01-01T00:00:01.000Z" },
+    { type: "tool.started", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:02.000Z" },
+    { type: "tool.completed", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:03.000Z" },
+    { type: "process.text", text: "最终", stream: "answer", answerGroup: "response-2", timestamp: "2026-01-01T00:00:04.000Z" },
+    { type: "process.text", text: "正文", stream: "answer", answerGroup: "response-2", timestamp: "2026-01-01T00:00:05.000Z" },
+  ];
+  assert.deepEqual(getLiveFinalAnswer(events), { text: "最终正文", group: "response-2" });
+
+  // 折叠视图按分组剔除正文分片：response-2 隐藏，先前的回答与工具明细保留。
+  const hidden = buildProcessTimeline(events, undefined, { hideFinalAnswer: true, hideAnswerGroup: "response-2" });
+  assert.deepEqual(hidden.map((entry) => entry.kind), ["text", "tools"]);
+  assert.equal(hidden[0]?.kind === "text" && hidden[0].text, "先给出判断");
+});
+
+test("a later tool event pulls the promoted answer back into the process timeline", () => {
+  // 启发式自我纠正：正文提升后模型继续调用工具，文本回到过程区，过程区重新展开。
+  const events: AgentActivityEvent[] = [
+    { type: "tool.started", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:01.000Z" },
+    { type: "tool.completed", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:02.000Z" },
+    { type: "process.text", text: "看起来正常", stream: "answer", answerGroup: "response-1", timestamp: "2026-01-01T00:00:03.000Z" },
+    { type: "tool.started", toolCallId: "tool-2", name: "Search", timestamp: "2026-01-01T00:00:04.000Z" },
+    { type: "process.text", text: "最终回复", stream: "answer", answerGroup: "response-2", timestamp: "2026-01-01T00:00:05.000Z" },
+  ];
+  assert.deepEqual(getLiveFinalAnswer(events), { text: "最终回复", group: "response-2" });
+
+  // 只有最后一个工具事件之后的分组被提升；此前的叙述性回答留在过程时间线。
+  const timeline = buildProcessTimeline(events, undefined, { hideFinalAnswer: true, hideAnswerGroup: "response-2" });
+  assert.deepEqual(timeline.map((entry) => entry.kind), ["tools", "text", "tools"]);
+  assert.equal(timeline[1]?.kind === "text" && timeline[1].text, "看起来正常");
+
+  // 工具失败同样重置静默判定：失败后没有新的回答文本时不提升。
+  const afterFailure: AgentActivityEvent[] = [
+    ...events,
+    { type: "tool.failed", toolCallId: "tool-3", name: "Edit", timestamp: "2026-01-01T00:00:06.000Z" },
+  ];
+  assert.equal(getLiveFinalAnswer(afterFailure), null);
+});
+
+test("progress narration and pre-tool answers never trigger the live fold", () => {
+  // 工具事件之后的进度叙述（stream=progress）不是正文。
+  const progressOnly: AgentActivityEvent[] = [
+    { type: "tool.completed", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:01.000Z" },
+    { type: "process.text", text: "模型切换提示", stream: "progress", answerGroup: "", timestamp: "2026-01-01T00:00:02.000Z" },
+  ];
+  assert.equal(getLiveFinalAnswer(progressOnly), null);
+
+  // 回答文本出现在工具事件之前（还没有工具执行）：不提升。
+  const beforeTool: AgentActivityEvent[] = [
+    { type: "process.text", text: "先叙述", stream: "answer", answerGroup: "response-1", timestamp: "2026-01-01T00:00:01.000Z" },
+    { type: "tool.started", toolCallId: "tool-1", name: "Read", timestamp: "2026-01-01T00:00:02.000Z" },
+  ];
+  assert.equal(getLiveFinalAnswer(beforeTool), null);
 });
 
 test("run.activity events from other conversations are ignored", () => {
