@@ -152,8 +152,8 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
     get spawnCount() {
       return spawnCount;
     },
-    emitSessionUpdate(update: SessionNotification["update"]) {
-      notifySessionUpdate?.({ sessionId: "fake-session", update });
+    emitSessionUpdate(update: SessionNotification["update"], sessionId = "fake-session") {
+      notifySessionUpdate?.({ sessionId, update });
     },
     releaseNewSession() {
       releaseNewSession?.();
@@ -384,6 +384,73 @@ test("slash commands announced in the session creation window are buffered and f
 
   assert.deepEqual(deliveries, [[{ name: "init", description: "初始化项目" }]], "会话建立后缓冲的命令帧必须恰好投递一次");
   assert.ok(fake.calls.includes("session/prompt:fake-session"), "缓冲不得干扰正常流程");
+});
+
+test("creation-window re-announcements replace the buffered frame and flush exactly once", async () => {
+  const deliveries: AgentCommand[][] = [];
+  const fake = fakeConnector({ hangNewSession: true, answerText: "hello" });
+  const handle = runAcp(
+    runOptions({ onSessionCommands: (commands: AgentCommand[]) => deliveries.push([...commands]) }),
+    definition,
+    fake.connector,
+  );
+
+  // 创建窗口内的重复通告：按会话只保留最新一帧，落定后不得逐帧补投。
+  fake.emitSessionUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: commandList([{ name: "init", description: "初始化项目" }]),
+  });
+  fake.emitSessionUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: commandList([
+      { name: "init", description: "初始化项目" },
+      { name: "compact", description: "压缩上下文" },
+    ]),
+  });
+  assert.equal(deliveries.length, 0, "会话 id 未落定前不得提前回调");
+
+  fake.releaseNewSession();
+  await handle.sessionId;
+  await handle.result;
+
+  assert.deepEqual(deliveries, [[
+    { name: "init", description: "初始化项目" },
+    { name: "compact", description: "压缩上下文" },
+  ]], "窗口期重复通告必须合并，落定后恰好投递一次最新快照");
+  assert.ok(fake.calls.includes("session/prompt:fake-session"), "缓冲不得干扰正常流程");
+});
+
+test("command frames from a non-current session id are dropped", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const deliveries: AgentCommand[][] = [];
+  const fake = fakeConnector({ hangPrompt: true });
+  const handle = runAcp(
+    runOptions({ onSessionCommands: (commands: AgentCommand[]) => deliveries.push([...commands]) }),
+    definition,
+    fake.connector,
+  );
+  await handle.sessionId;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  fake.emitSessionUpdate(
+    { sessionUpdate: "available_commands_update", availableCommands: commandList([{ name: "init", description: "初始化项目" }]) },
+    "other-session",
+  );
+  assert.equal(deliveries.length, 0, "非当前会话的命令帧不得进入当前员工的命令快照");
+
+  fake.emitSessionUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: commandList([{ name: "review", description: "审查当前变更" }]),
+  });
+  assert.deepEqual(
+    deliveries,
+    [[{ name: "review", description: "审查当前变更" }]],
+    "丢弃外来会话帧后，当前会话的命令通告必须照常投递",
+  );
+
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+  await assert.rejects(handle.result, AgentRunCancelledError);
 });
 
 test("a failing session/cancel request force-cancels immediately", async () => {

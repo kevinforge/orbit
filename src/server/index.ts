@@ -25,7 +25,7 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo, AgentId } from "../shared/types.ts";
+import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, NativeCommandDelivery, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo, AgentId } from "../shared/types.ts";
 import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
@@ -1714,6 +1714,12 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
   const delivery = parsedDelivery.delivery;
+  // 原生命令绕过指派直达 runtime 的 prompt 通道，没有承载附件的路径；
+  // 带附件时拒绝而不是丢弃附件，避免用户以为附件已随命令送达。
+  if (delivery && draftAttachments.length > 0) {
+    sendJson(res, 400, { ok: false, message: "原生命令消息不支持附件，请先移除附件再发送命令。" });
+    return;
+  }
 
   const workspaceParam = url.searchParams.get("workspaceId");
   const workspaceId = workspaceParam === null ? entryActiveWorkspaceId : workspaceParam.trim();
@@ -1769,7 +1775,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
       return;
     }
     const commands = context.availableCommands()[delivery.agentId] ?? [];
-    const commandName = nativeCommandName(content);
+    const commandName = nativeCommandName(delivery.prompt);
     if (!commandName || !commands.some((command) => command.name === commandName)) {
       sendJson(res, 400, { ok: false, message: "该数字员工当前未通告此命令，命令未发送。" });
       return;
@@ -1824,7 +1830,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     eventBus.publish({ type: "message.created", workspaceId, conversationId: conversation!.id, message: userMessage });
     // 原生斜杠命令（issue #160）：绕过指派路由直通员工；普通消息维持路由。
     if (delivery) {
-      context.runManager.enqueueNativeCommand(delivery.agentId, content, userMessage);
+      context.runManager.enqueueNativeCommand(delivery.agentId, delivery.prompt, userMessage);
     } else {
       context.messageRouter.process(userMessage);
     }
@@ -1837,8 +1843,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-type NativeCommandDelivery = { type: "acp_command"; agentId: AgentId };
-
 function parseNativeCommandDelivery(
   input: unknown,
 ): { ok: true; delivery: NativeCommandDelivery | null } | { ok: false; message: string } {
@@ -1849,7 +1853,13 @@ function parseNativeCommandDelivery(
   if (typeof input.agentId !== "string" || !input.agentId.trim()) {
     return { ok: false, message: "delivery.agentId 不能为空。" };
   }
-  return { ok: true, delivery: { type: "acp_command", agentId: input.agentId.trim() } };
+  if (typeof input.prompt !== "string" || !input.prompt.trim().startsWith("/")) {
+    return { ok: false, message: "delivery.prompt 必须是以 / 开头的命令文本。" };
+  }
+  return {
+    ok: true,
+    delivery: { type: "acp_command", agentId: input.agentId.trim(), prompt: input.prompt.trim() },
+  };
 }
 
 /** 从命令文本提取命令名（去掉前导 "/" 与参数），如 "/init src" → "init"。 */

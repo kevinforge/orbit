@@ -225,6 +225,17 @@ export type AgentCommand = {
   inputHint?: string;
 };
 
+/**
+ * 原生斜杠命令投递标记（issue #160）：客户端解析出明确目标员工与已通告
+ * 命令后随消息携带，服务端把 `prompt`（`@员工:` 前缀之后的命令文本）原样
+ * 发给该员工的 runtime 会话；频道历史仍保留用户输入的原文。
+ */
+export type NativeCommandDelivery = {
+  type: "acp_command";
+  agentId: AgentId;
+  prompt: string;
+};
+
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
 
 export type AgentState = {

@@ -794,7 +794,9 @@ function handleSessionUpdate(
   }
   if (update.sessionUpdate === "available_commands_update") {
     // 斜杠命令快照整体替换（issue #160）；空列表同样有效，表示会话没有命令。
-    options.onSessionCommands?.(toAgentCommands(update.availableCommands), notification.sessionId);
+    // 字段缺失或不是数组时按空列表处理，不让畸形帧打断会话。
+    const rawCommands = Array.isArray(update.availableCommands) ? update.availableCommands : [];
+    options.onSessionCommands?.(toAgentCommands(rawCommands), notification.sessionId);
     return;
   }
   if (update.sessionUpdate === "plan") {
