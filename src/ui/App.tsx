@@ -517,12 +517,6 @@ export function App() {
     }
     return [...filterSlashCommands(slashCommandSnapshot?.commands ?? [], slashCommandDraft.query).shown];
   }, [inputFocused, slashDismissed, slashCommandDraft, slashCommandTarget, slashCommandSnapshot]);
-  const slashMatchedTotal = useMemo(() => {
-    if (!slashCommandDraft || !slashCommandTarget) {
-      return 0;
-    }
-    return filterSlashCommands(slashCommandSnapshot?.commands ?? [], slashCommandDraft.query).total;
-  }, [slashCommandDraft, slashCommandTarget, slashCommandSnapshot]);
   // 菜单展开状态（issue #160 收尾）：候选列表之外还要呈现“正在获取 / 没有
   // 命令 / 获取失败”，不再把“尚未获取过命令”误显示成毫无反应。
   const slashMenuOpen = Boolean(inputFocused && !slashDismissed && slashCommandDraft && slashCommandTarget);
@@ -1526,6 +1520,19 @@ export function App() {
         return;
       }
 
+      // 命令上百时逐条移动太慢：PgUp/PgDn 按页跳动，钳在两端不回绕。
+      if (event.key === "PageDown") {
+        event.preventDefault();
+        setSelectedSlashIndex((index) => Math.min(index + SLASH_COMMAND_PAGE_SIZE, slashCommandCandidates.length - 1));
+        return;
+      }
+
+      if (event.key === "PageUp") {
+        event.preventDefault();
+        setSelectedSlashIndex((index) => Math.max(index - SLASH_COMMAND_PAGE_SIZE, 0));
+        return;
+      }
+
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
         chooseSlashCommand(slashCommandCandidates[selectedSlashIndex] ?? slashCommandCandidates[0]);
@@ -2069,7 +2076,7 @@ export function App() {
             ) : slashMenuOpen && slashCommandTarget ? (
               <SlashCommandMenu
                 commands={slashCommandCandidates}
-                matchedTotal={slashMatchedTotal}
+                filtering={Boolean(slashCommandDraft?.query.trim())}
                 targetLabel={agentsById.get(slashCommandTarget.agentId)?.label ?? slashCommandTarget.agentId}
                 phase={slashMenuPhase}
                 statusMessage={slashCommandSnapshot?.status === "error" ? slashCommandSnapshot.message : undefined}
@@ -2539,7 +2546,7 @@ function MentionMenu(props: {
  */
 function SlashCommandMenu(props: {
   commands: readonly AgentCommand[];
-  matchedTotal: number;
+  filtering: boolean;
   targetLabel: string;
   phase: "list" | "loading" | "empty" | "error";
   statusMessage?: string;
@@ -2549,7 +2556,7 @@ function SlashCommandMenu(props: {
 }) {
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  // 键盘上下切换时保持选中项在可视区域内。
+  // 键盘上下/翻页切换时保持选中项在可视区域内。
   useEffect(() => {
     itemRefs.current[props.selectedIndex]?.scrollIntoView({ block: "nearest" });
   }, [props.selectedIndex, props.commands]);
@@ -2561,30 +2568,36 @@ function SlashCommandMenu(props: {
         <span>发送给 {props.targetLabel}</span>
       </div>
       {props.phase === "list" ? (
-        <div className="slashCommandMenuList">
-          {props.commands.map((command, index) => {
-            const { namespace, base } = splitSlashCommandName(command.name);
-            return (
-              <button
-                key={command.name}
-                ref={(node) => { itemRefs.current[index] = node; }}
-                className={index === props.selectedIndex ? "slashCommandItem selected" : "slashCommandItem"}
-                type="button"
-                role="option"
-                aria-selected={index === props.selectedIndex}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => props.onSelect(command)}
-              >
-                <span className="slashCommandItemName">
-                  <span className="slashCommandName">/{base}</span>
-                  {namespace ? <span className="slashCommandNamespace">{namespace}</span> : null}
-                  {command.inputHint ? <span className="slashCommandInputHint">{command.inputHint}</span> : null}
-                </span>
-                <span className="slashCommandItemDesc">{command.description}</span>
-              </button>
-            );
-          })}
-        </div>
+        props.commands.length > 0 ? (
+          <div className="slashCommandMenuList">
+            {props.commands.map((command, index) => {
+              const { namespace, base } = splitSlashCommandName(command.name);
+              return (
+                <button
+                  key={command.name}
+                  ref={(node) => { itemRefs.current[index] = node; }}
+                  className={index === props.selectedIndex ? "slashCommandItem selected" : "slashCommandItem"}
+                  type="button"
+                  role="option"
+                  aria-selected={index === props.selectedIndex}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => props.onSelect(command)}
+                >
+                  <span className="slashCommandItemName">
+                    <span className="slashCommandName">/{base}</span>
+                    {namespace ? <span className="slashCommandNamespace">{namespace}</span> : null}
+                    {command.inputHint ? <span className="slashCommandInputHint">{command.inputHint}</span> : null}
+                  </span>
+                  <span className="slashCommandItemDesc">{command.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="slashCommandMenuStatus" role="status">
+            <span>没有匹配的命令，换个关键词试试。</span>
+          </div>
+        )
       ) : (
         <div className="slashCommandMenuStatus" role="status">
           {props.phase === "loading" ? (
@@ -2612,10 +2625,9 @@ function SlashCommandMenu(props: {
       <div className="slashCommandMenuHint">
         {props.phase === "list" ? (
           <>
-            <span>↑↓ 选择 · Enter/Tab 补全 · Esc 关闭</span>
+            <span>↑↓ 选择 · PgUp/PgDn 翻页 · Enter/Tab 补全 · Esc 关闭</span>
             <span>
-              {props.commands.length}/{props.matchedTotal}
-              {props.matchedTotal > props.commands.length ? " · 继续输入以筛选" : ""}
+              {props.filtering ? `${props.commands.length} 个匹配` : `${props.commands.length} 个命令 · 输入以筛选`}
             </span>
           </>
         ) : (
@@ -4378,23 +4390,37 @@ export function resolveSlashSendTarget(
   return available.some((command) => command.name === name) ? resolved : null;
 }
 
-/** 空查询时的候选预览上限：命令很多时面板只展示前几条，继续输入即可筛选。 */
-export const SLASH_COMMAND_PREVIEW_LIMIT = 8;
+/** PgUp/PgDn 的候选翻页步长：与面板可视行数同级，一次跳动一屏。 */
+export const SLASH_COMMAND_PAGE_SIZE = 8;
 
 /**
- * 按前缀筛选目标员工的斜杠命令（issue #160 收尾）。空查询只展示前若干条，
- * 避免几十条命令一次铺满面板；shown 与 total 的差值由面板底栏提示补齐。
+ * 筛选目标员工的斜杠命令（issue #160 收尾）。命令多的 runtime（百余条）
+ * 不再截断候选：完整列表交给面板独立滚动，翻页交给键盘；查询词按名称
+ * 前缀 → 名称包含 → 描述包含三档排序，描述也可作为搜索入口。
  */
 export function filterSlashCommands(
   commands: readonly AgentCommand[],
   query: string,
 ): { shown: readonly AgentCommand[]; total: number } {
   const keyword = query.trim().toLowerCase();
-  const matched = commands.filter((command) => command.name.toLowerCase().startsWith(keyword));
-  return {
-    shown: keyword ? matched : matched.slice(0, SLASH_COMMAND_PREVIEW_LIMIT),
-    total: matched.length,
-  };
+  if (!keyword) {
+    return { shown: commands, total: commands.length };
+  }
+  const byPrefix: AgentCommand[] = [];
+  const byName: AgentCommand[] = [];
+  const byDescription: AgentCommand[] = [];
+  for (const command of commands) {
+    const name = command.name.toLowerCase();
+    if (name.startsWith(keyword)) {
+      byPrefix.push(command);
+    } else if (name.includes(keyword)) {
+      byName.push(command);
+    } else if (command.description.toLowerCase().includes(keyword)) {
+      byDescription.push(command);
+    }
+  }
+  const matched = [...byPrefix, ...byName, ...byDescription];
+  return { shown: matched, total: matched.length };
 }
 
 /**

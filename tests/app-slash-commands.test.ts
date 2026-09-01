@@ -9,7 +9,6 @@ import {
   resolveSlashCommandTarget,
   resolveSlashSendTarget,
   splitSlashCommandName,
-  SLASH_COMMAND_PREVIEW_LIMIT,
 } from "../src/ui/App.tsx";
 import type { AgentCommand, AgentCommandsSnapshot, AgentId } from "../src/shared/types.ts";
 
@@ -127,24 +126,41 @@ test("slash command draft brackets the /command after an @员工: prefix", () =>
   assert.equal(findSlashCommandDraft("@开发: /init foo", 15), null);
 });
 
-test("filterSlashCommands previews a capped list for the bare slash query", () => {
-  const many: AgentCommand[] = Array.from({ length: 30 }, (_, index) => ({
+test("filterSlashCommands returns the full list for the bare slash query", () => {
+  // 命令上百时不再截断候选：完整列表交给面板独立滚动、键盘翻页。
+  const many: AgentCommand[] = Array.from({ length: 105 }, (_, index) => ({
     name: `cmd${String(index).padStart(2, "0")}`,
     description: `命令 ${index}`,
   }));
+  const bare = filterSlashCommands(many, "");
+  assert.equal(bare.total, 105);
+  assert.equal(bare.shown.length, 105);
+  assert.deepEqual(bare.shown[0], many[0]);
 
-  // 空查询限量展示，total 保留完整命中数供底栏提示继续输入筛选。
-  const preview = filterSlashCommands(many, "");
-  assert.equal(preview.total, 30);
-  assert.equal(preview.shown.length, SLASH_COMMAND_PREVIEW_LIMIT);
-  assert.deepEqual(preview.shown[0], many[0]);
-
-  // 有关键词时展示全部命中，筛选结果不受预览上限约束。
-  const filtered = filterSlashCommands(many, "CMD");
-  assert.equal(filtered.total, 30);
-  assert.equal(filtered.shown.length, 30);
   assert.deepEqual(filterSlashCommands(many, "cmd29").shown, [many[29]]);
   assert.deepEqual(filterSlashCommands(many, "missing"), { shown: [], total: 0 });
+});
+
+test("filterSlashCommands searches names and descriptions with prefix matches first", () => {
+  const mixed: AgentCommand[] = [
+    { name: "review", description: "审查当前变更" },
+    { name: "review-branch", description: "审查分支差异" },
+    { name: "mcp:review", description: "运行远端检查器" },
+    { name: "audit", description: "Review uncommitted changes" },
+    { name: "plan", description: "生成计划" },
+  ];
+
+  // 命中排序：名称前缀 → 名称包含 → 仅描述包含；大小写不敏感。
+  const hit = filterSlashCommands(mixed, "REV");
+  assert.deepEqual(hit.shown.map((command) => command.name), ["review", "review-branch", "mcp:review", "audit"]);
+  assert.equal(hit.total, 4);
+
+  // 中文关键词走描述搜索。
+  assert.deepEqual(
+    filterSlashCommands(mixed, "审查").shown.map((command) => command.name),
+    ["review", "review-branch"],
+    "描述包含关键词的命令都命中，保持通告顺序",
+  );
 });
 
 test("splitSlashCommandName separates the namespace tag from the base name", () => {
@@ -170,6 +186,7 @@ describe("composer key wiring for the slash command menu", () => {
     assert.ok(slashBranch, "the slash menu must get first crack at composer keys");
     assert.ok(slashBranch.includes("chooseSlashCommand("), "Enter/Tab must complete the command instead of sending");
     assert.ok(slashBranch.includes("setSlashDismissed(true)"), "Esc must dismiss via the dedicated flag so the menu can reopen");
+    assert.ok(slashBranch.includes('"PageDown"') && slashBranch.includes('"PageUp"'), "PgUp/PgDn must page through long command lists");
     assert.ok(
       !slashBranch.includes("setInputFocused(false)"),
       "Esc must not clear inputFocused: the textarea keeps DOM focus, so onFocus never refires and the menu could never reopen",
