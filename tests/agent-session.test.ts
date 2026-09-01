@@ -8,7 +8,7 @@ import { AgentSession } from "../src/core/agent-session.ts";
 import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
-import type { AgentModelStateSnapshot, MessageAttachment } from "../src/shared/types.ts";
+import type { AgentCommand, AgentModelStateSnapshot, MessageAttachment, RuntimeEvent } from "../src/shared/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-agent-session-test-"));
@@ -1040,6 +1040,97 @@ test("model preference and snapshot bridge reach the runtime run options", async
   const next = { ...lastSnapshot, currentValue: "model-b" };
   controlled.calls[0]!.onSessionConfig!(next);
   assert.deepEqual(updates, [next]);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---- issue #160：员工会话的斜杠命令快照 ----
+
+function commandsUpdatedEvents(events: RuntimeEvent[]): Array<Extract<RuntimeEvent, { type: "agent.commands.updated" }>> {
+  return events.filter((event): event is Extract<RuntimeEvent, { type: "agent.commands.updated" }> => event.type === "agent.commands.updated");
+}
+
+test("slash command announcements are cached and published as conversation events", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const controlled = controllableRuntime("ok", "sess-1");
+  const events: RuntimeEvent[] = [];
+  const eventBus = new EventBus();
+  eventBus.subscribe((event) => events.push(event));
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: controlled.runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "conv-commands",
+  });
+  session.start();
+
+  const result = await session.send("run-1", "hello");
+  assert.equal(result.content, "ok");
+  assert.deepEqual(session.availableCommands(), [], "会话未通告前不得有命令");
+
+  const commands: AgentCommand[] = [
+    { name: "init", description: "初始化项目" },
+    { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
+  ];
+  controlled.calls[0]!.onSessionCommands!(commands, "sess-1");
+
+  assert.deepEqual(session.availableCommands(), commands);
+  const published = commandsUpdatedEvents(events);
+  assert.equal(published.length, 1);
+  assert.equal(published[0]!.conversationId, "conv-commands");
+  assert.equal(published[0]!.agentId, "developer");
+  assert.deepEqual(published[0]!.commands, commands);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a replacement session id clears the cached command snapshot", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const events: RuntimeEvent[] = [];
+  const eventBus = new EventBus();
+  eventBus.subscribe((event) => events.push(event));
+  const calls: AgentRuntimeRunOptions[] = [];
+  let nextSessionId = "sess-1";
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: {
+      kind: "codebuddy",
+      run(options) {
+        calls.push(options);
+        return {
+          process: { kill() {}, pid: 12345, interrupt() {} },
+          result: Promise.resolve("ok"),
+          sessionId: Promise.resolve(nextSessionId),
+        };
+      },
+    },
+    eventBus,
+    sessionStore: store,
+    conversationId: "conv-commands",
+  });
+  session.start();
+
+  await session.send("run-1", "hello");
+  const commands: AgentCommand[] = [{ name: "init", description: "初始化项目" }];
+  calls[0]!.onSessionCommands!(commands, "sess-1");
+  assert.deepEqual(session.availableCommands(), commands);
+
+  // 恢复失败降级：新一轮落定不同的 runtime 会话 id，旧通告不再可信。
+  nextSessionId = "sess-2";
+  await session.send("run-2", "again");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(session.availableCommands(), [], "替换会话后命令缓存必须清空");
+  const published = commandsUpdatedEvents(events);
+  assert.equal(published.length, 2);
+  assert.deepEqual(published[1]!.commands, [], "清空必须以空列表广播给打开的页面");
 
   fs.rmSync(dir, { recursive: true, force: true });
 });

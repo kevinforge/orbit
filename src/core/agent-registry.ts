@@ -1,4 +1,4 @@
-import type { AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
+import type { AgentCommand, AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
 import { AgentSession, type AgentModelStateBridge } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { DEFAULT_AGENT_RUNTIMES } from "./acp-runner-registry.ts";
@@ -126,6 +126,15 @@ export class AgentRegistry {
 
   pendingElicitations(): PendingElicitation[] {
     return [...this.sessions.values()].flatMap((session) => session.pendingElicitations());
+  }
+
+  /** 各员工 runtime 会话当前通告的斜杠命令快照（issue #160）。 */
+  availableCommands(): Record<AgentId, readonly AgentCommand[]> {
+    const result: Record<AgentId, readonly AgentCommand[]> = {};
+    for (const agentId of this.allIds()) {
+      result[agentId] = this.sessions.get(agentId)?.availableCommands() ?? [];
+    }
+    return result;
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {

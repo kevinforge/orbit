@@ -4,7 +4,7 @@ import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentCommand, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
 import { canSendMessage } from "../shared/message-validation.ts";
 import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
@@ -62,6 +62,7 @@ const initialState: AppState = {
   pendingPermissions: [],
   pendingElicitations: [],
   agentModelStates: {},
+  agentCommands: {},
 };
 
 type ActiveView = "conversation" | "analysis";
@@ -146,6 +147,7 @@ export function App() {
   // Esc 关闭候选菜单用独立标志，不复用 inputFocused：按 Esc 时输入框并未
   // 真正失焦，onFocus 不会再次触发，复用会导致菜单再也无法重新唤起。
   const [mentionDismissed, setMentionDismissed] = useState(false);
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -489,6 +491,29 @@ export function App() {
     const matched = state.agents.filter((agent) => agent.label.toLocaleLowerCase().startsWith(query)).map((agent) => agent.id);
     return matched;
   }, [agentIds, inputFocused, mentionDismissed, mentionDraft, state.agents]);
+  /**
+   * 斜杠命令目标（issue #160）：命令直达一位员工的 runtime 会话。
+   * 普通对话发给当前直接对话员工（与无 @ 消息的走向一致）；简单协作要求
+   * 显式选择，取当前选中的员工；复杂协作的接收方是监工（内部员工），
+   * 不提供原生命令入口。
+   */
+  const slashCommandTarget = useMemo(() => {
+    if (interactionMode === "direct") return state.conversation.lastDirectAgentId ?? null;
+    if (interactionMode === "collaborative") return selectedAgent || null;
+    return null;
+  }, [interactionMode, selectedAgent, state.conversation.lastDirectAgentId]);
+  const slashCommandDraft = useMemo(
+    () => (mentionDraft ? null : findSlashCommandDraft(content, cursorIndex)),
+    [content, cursorIndex, mentionDraft],
+  );
+  const slashCommandCandidates = useMemo(() => {
+    if (!inputFocused || !slashCommandDraft || !slashCommandTarget) {
+      return [];
+    }
+    const available = state.agentCommands[slashCommandTarget] ?? [];
+    const query = slashCommandDraft.query.toLowerCase();
+    return available.filter((command) => command.name.toLowerCase().startsWith(query));
+  }, [inputFocused, slashCommandDraft, slashCommandTarget, state.agentCommands]);
 
   useEffect(() => {
     if (!agentsById.has(selectedAgent) && agentIds[0]) {
@@ -531,6 +556,10 @@ export function App() {
       setMentionDismissed(false);
     }
   }, [mentionDraft]);
+
+  useEffect(() => {
+    setSelectedSlashIndex(0);
+  }, [slashCommandDraft?.query]);
 
   useEffect(() => {
     if (!openWorkspaceMenuId && !openConversationMenuId) return;
@@ -670,7 +699,7 @@ export function App() {
       draftMessageIdRef.current = { id: crypto.randomUUID(), content: trimmed };
     }
     try {
-      const body: { content: string; approvalMode: ApprovalMode; clientMessageId: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
+      const body: { content: string; approvalMode: ApprovalMode; clientMessageId: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }>; delivery?: { type: "acp_command"; agentId: AgentId } } = {
         content: trimmed,
         approvalMode,
         clientMessageId: draftMessageIdRef.current.id,
@@ -682,6 +711,18 @@ export function App() {
           filename: a.filename,
           size: a.size,
         }));
+      }
+      // 原生斜杠命令（issue #160）：消息以已通告命令开头且有明确目标员工时，
+      // 标记为命令投递，服务端把原文直达该员工的 runtime 会话。
+      const slashTarget = resolveSlashSendTarget(
+        trimmed,
+        interactionMode,
+        state.conversation.lastDirectAgentId,
+        selectedAgent,
+        state.agentCommands,
+      );
+      if (slashTarget) {
+        body.delivery = { type: "acp_command", agentId: slashTarget };
       }
       const response = await fetch(withPageContext("/api/messages", requestedContext), {
         method: "POST",
@@ -1354,8 +1395,52 @@ export function App() {
     }, 0);
   }
 
+  function chooseSlashCommand(command: AgentCommand) {
+    if (!slashCommandDraft) {
+      return;
+    }
+
+    const nextContent = `/${command.name} ${content.slice(slashCommandDraft.end)}`;
+    const nextCursorIndex = command.name.length + 2;
+    setContent(nextContent);
+    setCursorIndex(nextCursorIndex);
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
+    }, 0);
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (isImeComposition(event)) {
+      return;
+    }
+
+    // 斜杠命令菜单与 @员工 菜单互斥（issue #160）："/" 草稿只在开头且
+    // @ 草稿不存在时出现，这里按菜单开放情况分流按键。
+    if (slashCommandCandidates.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSelectedSlashIndex((index) => (index + 1) % slashCommandCandidates.length);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSelectedSlashIndex((index) => (index - 1 + slashCommandCandidates.length) % slashCommandCandidates.length);
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        chooseSlashCommand(slashCommandCandidates[selectedSlashIndex] ?? slashCommandCandidates[0]);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setInputFocused(false);
+        return;
+      }
       return;
     }
 
@@ -1875,6 +1960,13 @@ export function App() {
                 selectedIndex={selectedMentionIndex}
                 onSelect={chooseMention}
               />
+            ) : slashCommandCandidates.length > 0 && slashCommandTarget ? (
+              <SlashCommandMenu
+                commands={slashCommandCandidates}
+                targetLabel={agentsById.get(slashCommandTarget)?.label ?? slashCommandTarget}
+                selectedIndex={selectedSlashIndex}
+                onSelect={chooseSlashCommand}
+              />
             ) : null}
             <div className="composerModeRow">
               <div className="attachmentControl">
@@ -2326,6 +2418,36 @@ function MentionMenu(props: {
         );
       })}
       <div className="mentionHint">↑↓ select · Tab/Enter confirm · Esc close</div>
+    </div>
+  );
+}
+
+/** 斜杠命令菜单（issue #160）：展示目标员工 runtime 会话通告的原生命令。 */
+function SlashCommandMenu(props: {
+  commands: readonly AgentCommand[];
+  targetLabel: string;
+  selectedIndex: number;
+  onSelect: (command: AgentCommand) => void;
+}) {
+  return (
+    <div className="mentionMenu slashCommandMenu" role="listbox" aria-label="斜杠命令">
+      {props.commands.map((command, index) => (
+        <button
+          key={command.name}
+          className={index === props.selectedIndex ? "selected" : ""}
+          type="button"
+          role="option"
+          aria-selected={index === props.selectedIndex}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => props.onSelect(command)}
+        >
+          <span className="mentionName">
+            <span className="slashCommandName">/{command.name}</span>
+          </span>
+          <small>{command.description}</small>
+        </button>
+      ))}
+      <div className="mentionHint">↑↓ select · Tab/Enter confirm · Esc close · 发送给 {props.targetLabel}</div>
     </div>
   );
 }
@@ -3863,6 +3985,15 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
+  // 员工 runtime 会话通告的斜杠命令快照（issue #160）：会话级事件，
+  // 已由上方过滤保证属于当前会话。
+  if (event.type === "agent.commands.updated") {
+    return {
+      ...state,
+      agentCommands: { ...state.agentCommands, [event.agentId]: event.commands },
+    };
+  }
+
   if (event.type === "permission.requested") {
     if (state.pendingPermissions.some((permission) => permission.id === event.permission.id)) {
       return state;
@@ -3987,6 +4118,7 @@ function normalizeState(nextState: AppState): AppState {
     pendingPermissions: nextState.pendingPermissions ?? [],
     pendingElicitations: nextState.pendingElicitations ?? [],
     agentModelStates: nextState.agentModelStates ?? {},
+    agentCommands: nextState.agentCommands ?? {},
   };
 }
 
@@ -4015,6 +4147,50 @@ function findMentionDraft(value: string, cursorIndex: number): { start: number; 
   const start = beforeCursor.length - query.length - 1;
   return {
     start,
+    end: cursorIndex,
+    query,
+  };
+}
+
+/**
+ * 判断待发送文本是否按原生斜杠命令投递（issue #160）：首个词是目标员工
+ * runtime 会话已通告的命令时返回目标员工，否则按普通消息走路由。复杂协作
+ * 的接收方是监工（内部员工），不提供原生命令入口。
+ */
+export function resolveSlashSendTarget(
+  trimmed: string,
+  interactionMode: InteractionMode,
+  lastDirectAgentId: string | undefined,
+  selectedAgent: AgentId | null,
+  agentCommands: Record<AgentId, readonly AgentCommand[]>,
+): AgentId | null {
+  if (!trimmed.startsWith("/") || interactionMode === "supervised") {
+    return null;
+  }
+  const target = interactionMode === "direct" ? lastDirectAgentId ?? null : selectedAgent || null;
+  if (!target) {
+    return null;
+  }
+  const name = trimmed.split(/\s+/)[0]?.slice(1) ?? "";
+  const available = agentCommands[target] ?? [];
+  return available.some((command) => command.name === name) ? target : null;
+}
+
+/**
+ * 斜杠命令草稿（issue #160）：仅当光标前文本整体是 "/命令名"（尚无空格）
+ * 时视为正在输入命令，因此不会与 @员工 草稿相互干扰，也不会在命令参数
+ * 阶段反复弹出。
+ */
+export function findSlashCommandDraft(value: string, cursorIndex: number): { start: number; end: number; query: string } | null {
+  const beforeCursor = value.slice(0, cursorIndex);
+  const match = /^\/([^\s]*)$/u.exec(beforeCursor);
+  if (!match) {
+    return null;
+  }
+
+  const query = match[1] ?? "";
+  return {
+    start: 0,
     end: cursorIndex,
     query,
   };

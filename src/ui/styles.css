@@ -2309,6 +2309,30 @@ button:active:not(:disabled) {
   letter-spacing: 0.02em;
 }
 
+/* 斜杠命令菜单（issue #160）：复用 mentionMenu 结构，命令描述换行展示。 */
+.slashCommandMenu {
+  width: min(320px, 100%);
+}
+
+.slashCommandMenu button {
+  align-items: flex-start;
+  padding: 8px 12px;
+  font-weight: 500;
+}
+
+.slashCommandMenu .slashCommandName {
+  color: var(--accent);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.slashCommandMenu small {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.35;
+}
+
 .primaryNavButton {
   display: flex;
   align-items: center;

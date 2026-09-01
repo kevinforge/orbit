@@ -51,6 +51,11 @@ export type ManagedRun = {
   suppressFollowupRouting?: boolean;
   /** Who initiated this run: a user message, an agent's @mention, or the supervisor. */
   origin?: RunOrigin;
+  /**
+   * 原生斜杠命令直通（issue #160）：prompt 即 ACP 原文，跳过 buildPrompt 的
+   * 上下文与历史组装。
+   */
+  nativePrompt?: boolean;
   /** 模式快照：继承自源消息，决定提示词规则与完成后的路由/监工行为，不受执行中切换全局模式影响。 */
   interactionMode?: InteractionMode;
   /**
@@ -154,6 +159,25 @@ export class RunManager {
   }
 
   enqueue(agentId: AgentId, prompt: string, sourceMessage: ChatMessage, origin?: RunOrigin): ManagedRun {
+    return this.createRun(agentId, prompt, sourceMessage, origin, {});
+  }
+
+  /**
+   * 原生斜杠命令入队（issue #160）：命令文本就是发给 runtime 的 ACP prompt，
+   * 不经过 buildPrompt 的上下文/历史组装，完成也不触发指派路由与监工；
+   * 仍走同一串行队列，原始用户消息已由常规接收路径留在会话历史中。
+   */
+  enqueueNativeCommand(agentId: AgentId, prompt: string, sourceMessage: ChatMessage): ManagedRun {
+    return this.createRun(agentId, prompt, sourceMessage, "user", { nativePrompt: true, suppressFollowupRouting: true });
+  }
+
+  private createRun(
+    agentId: AgentId,
+    prompt: string,
+    sourceMessage: ChatMessage,
+    origin: RunOrigin | undefined,
+    overrides: Pick<ManagedRun, "nativePrompt" | "suppressFollowupRouting">,
+  ): ManagedRun {
     const runId = createRunId(agentId);
     const resolvedOrigin: RunOrigin = origin ?? (sourceMessage.kind === "system" ? "supervisor" : sourceMessage.kind === "agent" ? "agent" : "user");
     // Supervisor runs are triggered by ChannelWatchService (already rate-limited
@@ -192,6 +216,7 @@ export class RunManager {
       origin: resolvedOrigin,
       interactionMode: sourceMessage.interactionMode,
       sourceAttachments: sourceMessage.attachments?.length ? sourceMessage.attachments : undefined,
+      ...overrides,
     };
     this.runs.set(run.id, run);
     this.appendActivity(run, isBusy ? "排队等待执行。" : "已接收任务，开始执行。");
@@ -445,7 +470,10 @@ export class RunManager {
     // Keep that source message in conversation history so the supervisor can see the
     // employee result or user request it is expected to coordinate.
     const excludedSourceMessageId = run.origin === "supervisor" ? undefined : run.sourceMessage.id;
-    const runtimePrompt = this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, run.sourceAttachments, run.interactionMode);
+    // 原生斜杠命令（issue #160）：命令文本原样直达 runtime，不拼 Orbit 上下文。
+    const runtimePrompt = run.nativePrompt
+      ? run.prompt
+      : this.options.buildPrompt(run.agentId, run.prompt, excludedSourceMessageId, run.sourceAttachments, run.interactionMode);
     let result: Promise<RunResult>;
     try {
       result = this.options.agents.get(run.agentId).send(

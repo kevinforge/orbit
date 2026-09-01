@@ -11,6 +11,7 @@ import {
   methods,
   ndJsonStream,
   type AgentCapabilities,
+  type AvailableCommand,
   type CreateElicitationRequest,
   type CreateElicitationResponse,
   type ContentBlock,
@@ -38,6 +39,7 @@ import {
 
 import type {
   AgentActivityEvent,
+  AgentCommand,
   AgentElicitationRequest,
   AgentId,
   AgentModelChoice,
@@ -220,8 +222,26 @@ export function runAcp(
       }
       : undefined,
   };
+  // 会话建立窗口期（session/new 请求已发出、响应未返回）通告的斜杠命令快照
+  // （issue #160）：activeSessionId 尚未落定，先按会话暂存最新一帧，落定后交付。
+  const pendingCommands = new Map<string, SessionNotification>();
+  const flushPendingCommands = (sessionId: string) => {
+    const pending = pendingCommands.get(sessionId);
+    if (!pending) return;
+    pendingCommands.delete(sessionId);
+    handleSessionUpdate(pending, answerState, turnState, toolStates, options, definition);
+  };
   const handleSessionUpdateNotification = (notification: SessionNotification) => {
-    if (!acceptingUpdates || notification.sessionId !== activeSessionId) {
+    if (notification.sessionId !== activeSessionId) {
+      // 命令快照在窗口期也要保留；其余会话更新照旧丢弃。
+      if (!acceptingUpdates && notification.update.sessionUpdate === "available_commands_update") {
+        pendingCommands.set(notification.sessionId, notification);
+      }
+      return;
+    }
+    // 斜杠命令通告不依赖回合门（issue #160）：prompt 尚未发出时 runtime 也可能
+    // 推送 available_commands_update；会话 ID 匹配即接收，其余更新维持原门控。
+    if (!acceptingUpdates && notification.update.sessionUpdate !== "available_commands_update") {
       return;
     }
     handleSessionUpdate(notification, answerState, turnState, toolStates, options, definition);
@@ -252,6 +272,7 @@ export function runAcp(
     if (closed) return;
     closed = true;
     if (cancelTimer) clearTimeout(cancelTimer);
+    pendingCommands.clear();
     if (destroy) connection.destroy?.();
     else connection.close();
   };
@@ -305,6 +326,8 @@ export function runAcp(
       );
       activeSessionId = session.sessionId;
       resolveSessionId(activeSessionId);
+      // 窗口期通告的命令快照现在可以安全交付（会话 ID 已匹配）。
+      flushPendingCommands(activeSessionId);
 
       // 会话建立后、prompt 前：先回调模型快照，再尽力应用员工首选模型
       // （issue #142）。切换失败只输出过程提示，绝不让运行失败。
@@ -769,6 +792,11 @@ function handleSessionUpdate(
     if (snapshot) options.onSessionConfig?.(snapshot);
     return;
   }
+  if (update.sessionUpdate === "available_commands_update") {
+    // 斜杠命令快照整体替换（issue #160）；空列表同样有效，表示会话没有命令。
+    options.onSessionCommands?.(toAgentCommands(update.availableCommands), notification.sessionId);
+    return;
+  }
   if (update.sessionUpdate === "plan") {
     emitActivity(options, {
       type: "plan.updated",
@@ -895,6 +923,22 @@ function toAgentPlanEntry(entry: {
     priority: entry.priority,
     status: entry.status,
   };
+}
+
+/** ACP AvailableCommand → Orbit AgentCommand；畸形条目（无名/无描述）直接丢弃。 */
+function toAgentCommands(commands: readonly AvailableCommand[]): AgentCommand[] {
+  const result: AgentCommand[] = [];
+  for (const command of commands) {
+    if (typeof command?.name !== "string" || !command.name.trim()) continue;
+    if (typeof command?.description !== "string" || !command.description.trim()) continue;
+    const hint = command.input?.hint;
+    result.push({
+      name: command.name,
+      description: command.description,
+      ...(typeof hint === "string" && hint.trim() ? { inputHint: hint } : {}),
+    });
+  }
+  return result;
 }
 
 function createAnswerState(): AnswerState {

@@ -25,7 +25,7 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo } from "../shared/types.ts";
+import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo, AgentId } from "../shared/types.ts";
 import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
@@ -764,6 +764,7 @@ const server = http.createServer(async (req, res) => {
         runtimeAvailability: getRuntimeAvailabilityArray(),
         pendingPermissions: ctx?.pendingPermissions() ?? [],
         pendingElicitations: ctx?.pendingElicitations() ?? [],
+        agentCommands: ctx?.availableCommands() ?? {},
       });
       return;
     }
@@ -1691,6 +1692,7 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     draftAttachments?: unknown;
     approvalMode?: unknown;
     clientMessageId?: unknown;
+    delivery?: unknown;
   };
   const content = typeof input.content === "string" ? input.content.trim() : "";
   const approvalMode: ApprovalMode = input.approvalMode === "full-access" ? "full-access" : "ask";
@@ -1703,6 +1705,15 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     sendJson(res, 400, { ok: false, message: "Message cannot be empty." });
     return;
   }
+
+  // 原生斜杠命令投递标记（issue #160）：携带 delivery 的请求把命令文本原样
+  // 发给指定员工，跳过指派路由；格式非法时整条消息拒绝，避免误当成普通消息。
+  const parsedDelivery = parseNativeCommandDelivery(input.delivery);
+  if (!parsedDelivery.ok) {
+    sendJson(res, 400, { ok: false, message: parsedDelivery.message });
+    return;
+  }
+  const delivery = parsedDelivery.delivery;
 
   const workspaceParam = url.searchParams.get("workspaceId");
   const workspaceId = workspaceParam === null ? entryActiveWorkspaceId : workspaceParam.trim();
@@ -1747,6 +1758,22 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
   if (!context || !conversation) {
     sendJson(res, 500, { ok: false, message: "Conversation context was not initialized." });
     return;
+  }
+
+  // 原生斜杠命令的语义校验（issue #160）：目标必须是当前会话已启用的普通
+  // 员工，且命令名在该员工 runtime 会话通告的列表中。
+  if (delivery) {
+    const profile = context.agents.profile(delivery.agentId);
+    if (!profile || profile.internal) {
+      sendJson(res, 400, { ok: false, message: "目标数字员工不存在或未启用。" });
+      return;
+    }
+    const commands = context.availableCommands()[delivery.agentId] ?? [];
+    const commandName = nativeCommandName(content);
+    if (!commandName || !commands.some((command) => command.name === commandName)) {
+      sendJson(res, 400, { ok: false, message: "该数字员工当前未通告此命令，命令未发送。" });
+      return;
+    }
   }
 
   const clientMessageId = typeof input.clientMessageId === "string" ? input.clientMessageId.trim() : "";
@@ -1795,7 +1822,12 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
       interactionMode: conversation!.interactionMode ?? "direct",
     });
     eventBus.publish({ type: "message.created", workspaceId, conversationId: conversation!.id, message: userMessage });
-    context.messageRouter.process(userMessage);
+    // 原生斜杠命令（issue #160）：绕过指派路由直通员工；普通消息维持路由。
+    if (delivery) {
+      context.runManager.enqueueNativeCommand(delivery.agentId, content, userMessage);
+    } else {
+      context.messageRouter.process(userMessage);
+    }
 
     sendJson(res, 200, { ok: true, messageId: userMessage.id, workspaceId, conversationId: conversation!.id });
   });
@@ -1803,6 +1835,29 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+type NativeCommandDelivery = { type: "acp_command"; agentId: AgentId };
+
+function parseNativeCommandDelivery(
+  input: unknown,
+): { ok: true; delivery: NativeCommandDelivery | null } | { ok: false; message: string } {
+  if (input === undefined || input === null) return { ok: true, delivery: null };
+  if (!isRecord(input) || input.type !== "acp_command") {
+    return { ok: false, message: "delivery 格式不正确。" };
+  }
+  if (typeof input.agentId !== "string" || !input.agentId.trim()) {
+    return { ok: false, message: "delivery.agentId 不能为空。" };
+  }
+  return { ok: true, delivery: { type: "acp_command", agentId: input.agentId.trim() } };
+}
+
+/** 从命令文本提取命令名（去掉前导 "/" 与参数），如 "/init src" → "init"。 */
+function nativeCommandName(content: string): string | null {
+  const firstToken = content.trim().split(/\s+/)[0] ?? "";
+  if (!firstToken.startsWith("/")) return null;
+  const name = firstToken.slice(1);
+  return name || null;
 }
 
 function parseElicitationResponse(input: unknown): ElicitationResponse | null {

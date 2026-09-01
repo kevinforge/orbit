@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import type {
   AgentActivityEvent,
+  AgentCommand,
   AgentId,
   AgentModelStateSnapshot,
   AgentPermissionRequest,
@@ -51,6 +52,11 @@ export type AgentRuntimeRunOptions = {
   lastSessionConfig?: AgentModelStateSnapshot;
   /** 模型快照回调：runtime 返回或切换后携带最新模型列表与当前值。 */
   onSessionConfig?: (snapshot: AgentModelStateSnapshot) => void;
+  /**
+   * 斜杠命令回调（issue #160）：runtime 会话通告 ACP
+   * `available_commands_update` 时携带完整命令列表与会话 ID。
+   */
+  onSessionCommands?: (commands: readonly AgentCommand[], sessionId: string) => void;
 };
 
 export type AgentRuntimeRunHandle = {

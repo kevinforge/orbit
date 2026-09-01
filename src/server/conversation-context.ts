@@ -13,6 +13,7 @@ import { MessageRouter } from "../core/message-router.ts";
 import { ChannelWatchService } from "../core/channel-watch.ts";
 import {
   type ElicitationResponse,
+  type AgentCommand,
   type AgentId,
   type AgentProfile,
   type GlobalRuntimeConfig,
@@ -180,6 +181,11 @@ export class ConversationContext {
 
   pendingElicitations(): PendingElicitation[] {
     return this.agents.pendingElicitations();
+  }
+
+  /** 各员工 runtime 会话当前通告的斜杠命令（issue #160）。 */
+  availableCommands(): Record<AgentId, readonly AgentCommand[]> {
+    return this.agents.availableCommands();
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {

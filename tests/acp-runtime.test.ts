@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
+  AvailableCommand,
   InitializeResponse,
   PromptResponse,
   SessionConfigOption,
@@ -20,7 +21,7 @@ import {
   type AcpRuntimeDefinition,
 } from "../src/core/acp-runtime.ts";
 import { AgentRunCancelledError } from "../src/core/agent-runtime.ts";
-import type { AgentActivityEvent, AgentModelStateSnapshot } from "../src/shared/types.ts";
+import type { AgentActivityEvent, AgentCommand, AgentModelStateSnapshot } from "../src/shared/types.ts";
 
 // Issue #136：公共 ACP 取消生命周期。优雅取消走 session/cancel；runtime 无视
 // 取消且 prompt 永不结算时，宽限期后强制销毁连接并收口结果。超时用假定时器
@@ -48,6 +49,8 @@ type FakeConnectionControls = {
   setConfigOptionConfigOptions?: Array<SessionConfigOption>;
   /** PR #147：initialize 返回的 Agent 能力（如 promptCapabilities.image）。 */
   capabilities?: AgentCapabilities;
+  /** issue #160：让 newSession 挂起，模拟 session/new 响应前的创建窗口。 */
+  hangNewSession?: boolean;
 };
 
 function fakeConnector(controls: FakeConnectionControls = {}) {
@@ -55,6 +58,12 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
   const prompts: unknown[] = [];
   let spawnCount = 0;
   let notifySessionUpdate: ((notification: SessionNotification) => void) | null = null;
+  let releaseNewSession: (() => void) | null = null;
+  const newSessionGate = controls.hangNewSession
+    ? new Promise<void>((resolve) => {
+        releaseNewSession = resolve;
+      })
+    : null;
   const connector: AcpConnector = (_options, notify) => {
     spawnCount += 1;
     calls.push(`spawn:${spawnCount}`);
@@ -77,6 +86,9 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
       },
       async newSession() {
         calls.push(`session/new:${connectionSpawn}`);
+        if (newSessionGate) {
+          await newSessionGate;
+        }
         return {
           sessionId: connectionSpawn === 1 ? "fake-session" : `fake-session-${connectionSpawn}`,
           ...(controls.sessionConfigOptions ? { configOptions: controls.sessionConfigOptions } : {}),
@@ -143,6 +155,9 @@ function fakeConnector(controls: FakeConnectionControls = {}) {
     emitSessionUpdate(update: SessionNotification["update"]) {
       notifySessionUpdate?.({ sessionId: "fake-session", update });
     },
+    releaseNewSession() {
+      releaseNewSession?.();
+    },
   };
 }
 
@@ -153,6 +168,11 @@ function runOptions(overrides: Record<string, unknown> = {}) {
     prompt: "hello",
     ...overrides,
   };
+}
+
+/** 构造 available_commands_update 帧的条目列表（含故意的畸形条目）。 */
+function commandList(commands: AvailableCommand[]): AvailableCommand[] {
+  return commands;
 }
 
 test("graceful cancel settles the turn through session/cancel", async () => {
@@ -252,6 +272,118 @@ test("session updates arriving after a forced cancel are ignored", async (t) => 
     content: { type: "text", text: "晚到文本" },
   });
   assert.deepEqual(activities, [], "强制收口后的会话更新不得进入活动流");
+});
+
+// ---- issue #160：ACP 原生斜杠命令通告 ----
+
+test("delivers slash commands announced while the run is live", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const deliveries: AgentCommand[][] = [];
+  const fake = fakeConnector({ hangPrompt: true });
+  const handle = runAcp(
+    runOptions({ onSessionCommands: (commands: AgentCommand[]) => deliveries.push([...commands]) }),
+    definition,
+    fake.connector,
+  );
+  await handle.sessionId;
+  // sessionId 落定时 turn 还在 prompt 的 await 上，让出宏任务确保通告通路就绪。
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  fake.emitSessionUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: commandList([
+      { name: "init", description: "初始化项目" },
+      { name: "review", description: "审查当前变更", input: { hint: "可选关注点" } },
+    ]),
+  });
+
+  assert.deepEqual(deliveries, [
+    [
+      { name: "init", description: "初始化项目" },
+      { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
+    ],
+  ], "命令帧必须转换为 AgentCommand 列表并回调一次");
+
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+  await assert.rejects(handle.result, AgentRunCancelledError);
+});
+
+test("slash command entries without a name or description are dropped", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const deliveries: AgentCommand[][] = [];
+  const fake = fakeConnector({ hangPrompt: true });
+  const handle = runAcp(
+    runOptions({ onSessionCommands: (commands: AgentCommand[]) => deliveries.push([...commands]) }),
+    definition,
+    fake.connector,
+  );
+  await handle.sessionId;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  fake.emitSessionUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: commandList([
+      { name: "", description: "无名命令" },
+      { name: "review", description: "   " },
+      { name: "compact", description: "压缩上下文", input: { hint: "   " } },
+      { name: "plan", description: "生成计划", input: { hint: "聚焦测试" } },
+    ]),
+  });
+
+  assert.deepEqual(deliveries, [[
+    { name: "compact", description: "压缩上下文" },
+    { name: "plan", description: "生成计划", inputHint: "聚焦测试" },
+  ]], "空名称/空描述的条目必须丢弃，空白提示语不得成为 inputHint");
+
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+  await assert.rejects(handle.result, AgentRunCancelledError);
+});
+
+test("an empty command list clears the snapshot through the callback", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const deliveries: AgentCommand[][] = [];
+  const fake = fakeConnector({ hangPrompt: true });
+  const handle = runAcp(
+    runOptions({ onSessionCommands: (commands: AgentCommand[]) => deliveries.push([...commands]) }),
+    definition,
+    fake.connector,
+  );
+  await handle.sessionId;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  fake.emitSessionUpdate({ sessionUpdate: "available_commands_update", availableCommands: commandList([]) });
+
+  assert.deepEqual(deliveries, [[]], "空通告也必须回调，让上层清空缓存的命令快照");
+
+  handle.process.interrupt();
+  t.mock.timers.tick(CANCEL_GRACE_MS);
+  await assert.rejects(handle.result, AgentRunCancelledError);
+});
+
+test("slash commands announced in the session creation window are buffered and flushed once", async () => {
+  const deliveries: AgentCommand[][] = [];
+  const fake = fakeConnector({ hangNewSession: true, answerText: "hello" });
+  const handle = runAcp(
+    runOptions({ onSessionCommands: (commands: AgentCommand[]) => deliveries.push([...commands]) }),
+    definition,
+    fake.connector,
+  );
+
+  // 创建窗口：activeSessionId 尚未落定，命令帧先按 sessionId 缓冲。
+  fake.emitSessionUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: commandList([{ name: "init", description: "初始化项目" }]),
+  });
+  assert.equal(deliveries.length, 0, "会话 id 未落定前不得提前回调");
+
+  fake.releaseNewSession();
+  await handle.sessionId;
+  await handle.result;
+
+  assert.deepEqual(deliveries, [[{ name: "init", description: "初始化项目" }]], "会话建立后缓冲的命令帧必须恰好投递一次");
+  assert.ok(fake.calls.includes("session/prompt:fake-session"), "缓冲不得干扰正常流程");
 });
 
 test("a failing session/cancel request force-cancels immediately", async () => {

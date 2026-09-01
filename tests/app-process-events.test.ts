@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { applyEvent, buildProcessTimeline, mergeModelProbeResponse, mergeProbedConfigs, upsertMessage } from "../src/ui/App.tsx";
-import type { AgentActivityEvent, AgentModelStateSnapshot, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
+import type { AgentActivityEvent, AgentCommand, AgentModelStateSnapshot, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
 
 const CONVERSATION = "conv1";
 
@@ -25,7 +25,7 @@ function state(messages: ChatMessage[]): AppState {
     messages,
     messageHistory: { hasOlderMessages: false, olderCursor: null },
     agents: [], terminal: {}, runningSummaries: [], runtimeAvailability: [], pendingPermissions: [], pendingElicitations: [],
-    agentModelStates: {},
+    agentModelStates: {}, agentCommands: {},
   };
 }
 
@@ -364,6 +364,51 @@ test("agent.model_state snapshots are stored per agent without conversation gati
     modelState: { ...snapshot, currentValue: "opus" },
   });
   assert.equal(otherWorkspace.agentModelStates.implementation, snapshot, "其他工作区的快照不得覆盖当前状态");
+});
+
+// ---- issue #160：斜杠命令快照事件进入 UI 状态 ----
+
+test("agent.commands.updated snapshots are stored per agent and gated by page scope", () => {
+  const commands: AgentCommand[] = [
+    { name: "init", description: "初始化项目" },
+    { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
+  ];
+  const updated = applyEvent(state([agentMessage()]), {
+    type: "agent.commands.updated",
+    workspaceId: "ws1",
+    conversationId: CONVERSATION,
+    agentId: "implementation",
+    commands,
+  });
+  assert.deepEqual(updated.agentCommands.implementation, commands);
+
+  // 空通告同样生效：替换会话后的清空必须到达页面。
+  const cleared = applyEvent(updated, {
+    type: "agent.commands.updated",
+    workspaceId: "ws1",
+    conversationId: CONVERSATION,
+    agentId: "implementation",
+    commands: [],
+  });
+  assert.deepEqual(cleared.agentCommands.implementation, []);
+
+  // 其他会话/其他工作区的同名员工不得覆盖当前页面。
+  const otherConversation = applyEvent(updated, {
+    type: "agent.commands.updated",
+    workspaceId: "ws1",
+    conversationId: "conv2",
+    agentId: "implementation",
+    commands: [],
+  });
+  assert.deepEqual(otherConversation.agentCommands.implementation, commands, "其他会话的清空不得影响当前页面");
+  const otherWorkspace = applyEvent(updated, {
+    type: "agent.commands.updated",
+    workspaceId: "ws2",
+    conversationId: CONVERSATION,
+    agentId: "implementation",
+    commands: [],
+  });
+  assert.deepEqual(otherWorkspace.agentCommands.implementation, commands, "其他工作区的清空不得影响当前页面");
 });
 
 test("model probe responses preserve unsaved local employee configuration", () => {

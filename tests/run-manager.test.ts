@@ -225,6 +225,91 @@ test("propagates the source approval mode to the agent run and result message", 
   assert.equal(messages.get(run.resultMessageId)?.approvalMode, "full-access");
 });
 
+test("native commands reach the runtime as raw text without prompt assembly or follow-up routing", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const pending = deferred();
+  let buildPromptCalls = 0;
+  let onRunCompletedCalls = 0;
+  const prompts: string[] = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(_runId: string, prompt: string) {
+            prompts.push(prompt);
+            return pending.promise;
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) {
+      buildPromptCalls++;
+      return `context\n${prompt}`;
+    },
+    onRunCompleted() { onRunCompletedCalls++; },
+  });
+
+  manager.enqueueNativeCommand("developer", "/init", createSourceMessage());
+
+  assert.deepEqual(prompts, ["/init"], "runtime must receive the raw command text unchanged");
+  assert.equal(buildPromptCalls, 0, "native command delivery must skip prompt assembly");
+  const [resultMessage] = messages.list();
+  assert.equal(resultMessage?.kind, "agent", "命令投递仍产生常规的员工结果消息");
+
+  pending.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(messages.get(resultMessage!.id)?.status, "done", "命令运行正常结算");
+  assert.equal(onRunCompletedCalls, 0, "native commands must not trigger follow-up routing");
+});
+
+test("native commands share the same serialized slot as regular runs", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+  const prompts: string[] = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(_runId: string, prompt: string) {
+            prompts.push(prompt);
+            return pending.shift()?.promise ?? Promise.reject(new Error("unexpected run"));
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  manager.enqueue("developer", "regular task", createSourceMessage());
+  manager.enqueueNativeCommand("developer", "/init", createSourceMessage());
+
+  assert.deepEqual(prompts, ["regular task"], "native command must wait for the active run to settle");
+
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(prompts, ["regular task", "/init"]);
+
+  second.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
 test("keeps the latest bounded plan snapshot live and persists it only at settlement", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

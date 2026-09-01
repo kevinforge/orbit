@@ -820,6 +820,7 @@ function taskToolStart(toolCallId: string, toolName: "TaskCreate" | "TaskUpdate"
     update: {
       sessionUpdate: "tool_call" as const,
       toolCallId,
+      title: toolName,
       kind: "think" as const,
       status: "in_progress" as const,
       _meta: {
