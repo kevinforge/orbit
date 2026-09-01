@@ -128,13 +128,28 @@ export class AgentRegistry {
     return [...this.sessions.values()].flatMap((session) => session.pendingElicitations());
   }
 
-  /** 各员工 runtime 会话当前通告的斜杠命令快照（issue #160）。 */
+  /**
+   * 已通告命令快照的员工（issue #160 收尾）。快照缺失与“快照为空”是两种
+   * 语义：未通告的员工不出现在结果里，前端据此触发主动探测；/api/state、
+   * 探测短路和发送校验都走本方法，保证命令快照只有一个权威来源。
+   */
   availableCommands(): Record<AgentId, readonly AgentCommand[]> {
     const result: Record<AgentId, readonly AgentCommand[]> = {};
     for (const agentId of this.allIds()) {
-      result[agentId] = this.sessions.get(agentId)?.availableCommands() ?? [];
+      const session = this.sessions.get(agentId);
+      if (session?.commandsAnnounced()) {
+        result[agentId] = session.availableCommands();
+      }
     }
     return result;
+  }
+
+  /** 把主动探测得到的命令写回员工会话缓存（issue #160 收尾）。 */
+  adoptProbedCommands(agentId: AgentId, commands: readonly AgentCommand[]): boolean {
+    const session = this.sessions.get(agentId);
+    if (!session) return false;
+    session.adoptProbedCommands(commands);
+    return true;
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {

@@ -188,6 +188,11 @@ export class ConversationContext {
     return this.agents.availableCommands();
   }
 
+  /** 把主动探测得到的命令写回员工会话缓存（issue #160 收尾）。 */
+  adoptProbedCommands(agentId: AgentId, commands: readonly AgentCommand[]): boolean {
+    return this.agents.adoptProbedCommands(agentId, commands);
+  }
+
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
     return this.agents.resolvePermission(requestId, decision);
   }

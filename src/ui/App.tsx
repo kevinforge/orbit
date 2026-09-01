@@ -3,6 +3,7 @@ import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
+import { matchAssignmentPrefix } from "../core/mention-router.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
 import { type AgentActivityEvent, type AgentCommand, type AgentCommandsSnapshot, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type NativeCommandDelivery, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
@@ -520,7 +521,8 @@ export function App() {
   // 菜单展开状态（issue #160 收尾）：候选列表之外还要呈现“正在获取 / 没有
   // 命令 / 获取失败”，不再把“尚未获取过命令”误显示成毫无反应。
   const slashMenuOpen = Boolean(inputFocused && !slashDismissed && slashCommandDraft && slashCommandTarget);
-  const slashMenuPhase: "list" | "loading" | "empty" | "error" = slashCommandTarget && commandProbePending[slashCommandTarget.agentId]
+  const slashMenuPhase: "list" | "loading" | "empty" | "error" = slashCommandTarget
+    && commandProbePending[commandProbeKey(state.workspace.id, state.conversation.id, slashCommandTarget.agentId)]
     ? "loading"
     : !slashCommandSnapshot
       ? "loading"
@@ -537,16 +539,22 @@ export function App() {
    * 失败停在 error 快照上，由菜单提供重试，不再表现成“输入 / 无反应”。
    */
   async function requestAgentCommands(agentId: AgentId) {
-    if (!state.workspace.id || !state.conversation.id || commandProbePending[agentId]) {
+    if (!state.workspace.id || !state.conversation.id) {
       return;
     }
-    setCommandProbePending((current) => ({ ...current, [agentId]: true }));
     const requestedContext = currentPageContext();
+    const pendingKey = commandProbeKey(requestedContext.workspaceId, requestedContext.conversationId, agentId);
+    if (commandProbePending[pendingKey]) {
+      return;
+    }
+    setCommandProbePending((current) => ({ ...current, [pendingKey]: true }));
+    // 探测期间用户可能切到其他页面：快照事件按发起请求时的页面落地，
+    // applyEvent 的页面门控会丢弃不属于当前页的落地，不污染新页快照。
     const applySnapshot = (snapshot: AgentCommandsSnapshot) => {
       setState((current) => applyEvent(current, {
         type: "agent.commands.updated",
-        workspaceId: current.workspace.id,
-        conversationId: current.conversation.id,
+        workspaceId: requestedContext.workspaceId,
+        conversationId: requestedContext.conversationId,
         agentId,
         commands: snapshot.commands,
         status: snapshot.status,
@@ -555,8 +563,8 @@ export function App() {
     };
     try {
       const params = new URLSearchParams({
-        workspaceId: state.workspace.id,
-        conversationId: state.conversation.id,
+        workspaceId: requestedContext.workspaceId,
+        conversationId: requestedContext.conversationId,
         agentId,
       });
       const response = await fetch(withPageContext(`/api/agents/probe-commands?${params.toString()}`, requestedContext), {
@@ -574,7 +582,7 @@ export function App() {
         message: error instanceof Error ? error.message : "获取斜杠命令失败。",
       });
     } finally {
-      setCommandProbePending((current) => ({ ...current, [agentId]: false }));
+      setCommandProbePending((current) => ({ ...current, [pendingKey]: false }));
     }
   }
 
@@ -1547,8 +1555,13 @@ export function App() {
       return;
     }
 
-    // 菜单处于状态行（获取中/无命令/失败）时没有候选可补全，只拦 Esc 关闭；
-    // 其余按键照常，Enter 会把文本按普通消息发送。
+    // 菜单处于状态行（获取中/无命令/失败）时没有候选可补全：Esc 关闭菜单，
+    // Enter/Tab 吞掉，避免把未完成的 / 草稿当普通消息发出；其余按键照常。
+    if (slashMenuOpen && (event.key === "Enter" || event.key === "Tab")) {
+      event.preventDefault();
+      return;
+    }
+
     if (slashMenuOpen && event.key === "Escape") {
       event.preventDefault();
       setSlashDismissed(true);
@@ -2038,8 +2051,10 @@ export function App() {
                   return;
                 }
                 // @ 候选菜单或斜杠命令菜单打开时，Enter/Tab/方向键/Esc 优先
-                // 交给候选菜单处理，只有菜单关闭时 Enter 才是发送消息。
-                if (mentionCandidates.length > 0 || slashCommandCandidates.length > 0) {
+                // 交给候选菜单处理；斜杠菜单只有候选、没有候选的状态行都算
+                // 打开，否则状态行阶段的 Esc 关不掉、Enter 会把未完成的
+                // / 草稿当普通消息发出。只有菜单关闭时 Enter 才是发送消息。
+                if (mentionCandidates.length > 0 || slashMenuOpen) {
                   handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
                   return;
                 }
@@ -4356,12 +4371,14 @@ export function resolveSlashCommandTarget(
   lastDirectAgentId: string | undefined,
   agents: readonly { id: AgentId; label: string }[],
 ): { agentId: AgentId; commandText: string } | null {
-  const prefix = /^@([^:\s]+):[ \t]*/u.exec(trimmed);
+  // 与指派路由共用同一套标记语义（mention-router）：全角冒号也算标记结束，
+  // 名称匹配忽略大小写；前缀必须唯一命中已启用员工才提供命令入口。
+  const prefix = matchAssignmentPrefix(trimmed);
   if (prefix) {
-    const label = prefix[1] ?? "";
-    const matches = agents.filter((agent) => agent.label === label);
+    const label = prefix.name.toLocaleLowerCase();
+    const matches = agents.filter((agent) => agent.label.toLocaleLowerCase() === label);
     return matches.length === 1
-      ? { agentId: matches[0]!.id, commandText: trimmed.slice(prefix[0].length) }
+      ? { agentId: matches[0]!.id, commandText: trimmed.slice(prefix.end) }
       : null;
   }
   if (interactionMode !== "direct" || !lastDirectAgentId) {
@@ -4392,6 +4409,14 @@ export function resolveSlashSendTarget(
 
 /** PgUp/PgDn 的候选翻页步长：与面板可视行数同级，一次跳动一屏。 */
 export const SLASH_COMMAND_PAGE_SIZE = 8;
+
+/**
+ * 探测进行中的标记按 页面+员工 维度记（issue #160 收尾）：探测请求可能跨
+ * 页面发出，同一个员工在不同会话里的探测互不干扰，也不互相误判进行中。
+ */
+export function commandProbeKey(workspaceId: string, conversationId: string, agentId: AgentId): string {
+  return `${workspaceId}:${conversationId}:${agentId}`;
+}
 
 /**
  * 筛选目标员工的斜杠命令（issue #160 收尾）。命令多的 runtime（百余条）
@@ -4442,8 +4467,9 @@ export function splitSlashCommandName(name: string): { namespace: string | null;
  */
 export function findSlashCommandDraft(value: string, cursorIndex: number): { start: number; end: number; query: string } | null {
   const beforeCursor = value.slice(0, cursorIndex);
-  const prefix = /^@[^:\s]+:[ \t]*/u.exec(beforeCursor);
-  const body = prefix ? beforeCursor.slice(prefix[0].length) : beforeCursor;
+  // 前缀识别与目标解析、指派路由同一语义（matchAssignmentPrefix）。
+  const prefix = matchAssignmentPrefix(beforeCursor);
+  const body = prefix ? beforeCursor.slice(prefix.end) : beforeCursor;
   const match = /^\/([^\s]*)$/u.exec(body);
   if (!match) {
     return null;
@@ -4451,7 +4477,7 @@ export function findSlashCommandDraft(value: string, cursorIndex: number): { sta
 
   const query = match[1] ?? "";
   return {
-    start: prefix ? prefix[0].length : 0,
+    start: prefix ? prefix.end : 0,
     end: cursorIndex,
     query,
   };

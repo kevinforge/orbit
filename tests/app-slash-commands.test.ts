@@ -64,6 +64,31 @@ test("an explicit @员工: prefix routes the command to that employee in every m
   );
 });
 
+test("the prefix shares the routing marker semantics: fullwidth colon and case-insensitive labels", () => {
+  assert.deepEqual(
+    resolveSlashSendTarget("@开发： /init", "supervised", reviewer, agents, commands),
+    { agentId: developer, commandText: "/init" },
+    "全角冒号与半角冒号等价，与指派路由共用同一套标记语义",
+  );
+  // 前缀标签匹配忽略大小写（与指派路由 byName 一致）。
+  const casedAgents = [
+    { id: developer, label: "Ops" },
+    { id: reviewer, label: "评审" },
+  ];
+  const casedCommands: Record<AgentId, AgentCommandsSnapshot> = {
+    [developer]: snapshot([{ name: "run", description: "运行检查" }]),
+    [reviewer]: snapshot([{ name: "plan", description: "生成计划" }]),
+  };
+  assert.deepEqual(
+    resolveSlashSendTarget("@ops: /run", "direct", developer, casedAgents, casedCommands),
+    { agentId: developer, commandText: "/run" },
+  );
+  assert.deepEqual(resolveSlashCommandTarget("@OPS： /run", "direct", developer, casedAgents), {
+    agentId: developer,
+    commandText: "/run",
+  });
+});
+
 test("slash send falls back to normal routing without a target or an announced command", () => {
   // 尚未确定目标员工。
   assert.equal(resolveSlashSendTarget("/init", "direct", undefined, agents, commands), null);
@@ -119,6 +144,12 @@ test("slash command draft brackets the /command after an @员工: prefix", () =>
     "草稿从前缀之后开始，补全时保留 @员工: 前缀",
   );
   assert.deepEqual(findSlashCommandDraft("@开发: /", 6), { start: 5, end: 6, query: "" });
+  // 全角冒号前缀与半角等价：草稿同样从前缀之后开始。
+  const fullwidth = "@开发： /";
+  assert.deepEqual(
+    findSlashCommandDraft(fullwidth, fullwidth.length),
+    { start: 5, end: fullwidth.length, query: "" },
+  );
   // 光标还在前缀内、尚未输入 "/" 时不弹命令菜单。
   assert.equal(findSlashCommandDraft("@开", 2), null);
   assert.equal(findSlashCommandDraft("@开发: ", 5), null);
@@ -226,6 +257,72 @@ describe("composer key wiring for the slash command menu", () => {
     assert.ok(
       fnBody.includes("content.slice(slashCommandDraft.end)"),
       "completion must keep any trailing text after the cursor",
+    );
+  });
+
+  test("the status phase stays keyboard-reachable: the outer guard admits a candidate-less menu", () => {
+    assert.ok(
+      appSource.includes("mentionCandidates.length > 0 || slashMenuOpen"),
+      "状态行（获取中/无命令/失败）没有候选，外层守卫必须按菜单开放而不是候选数分流，否则 Esc 关不掉、Enter 把未完成的 / 草稿当普通消息发出",
+    );
+    const handler = appSource.match(/function handleComposerKeyDown\([\s\S]*?\n  \}/)?.[0] ?? "";
+    assert.ok(handler, "handleComposerKeyDown must exist in App.tsx");
+    const candidatesBranch = handler.match(/if \(slashCommandCandidates\.length > 0\) \{[\s\S]*?\n    \}/)?.[0] ?? "";
+    assert.ok(candidatesBranch, "the candidates branch must exist first");
+    const statusBranch = handler.slice((handler.indexOf(candidatesBranch)) + candidatesBranch.length);
+    assert.match(
+      statusBranch,
+      /if \(slashMenuOpen && \(event\.key === "Enter" \|\| event\.key === "Tab"\)\) \{\s*event\.preventDefault\(\);\s*return;/,
+      "状态行阶段 Enter/Tab 必须被吞掉，不得把未完成的 / 草稿当普通消息发出",
+    );
+    assert.match(
+      statusBranch,
+      /if \(slashMenuOpen && event\.key === "Escape"\) \{\s*event\.preventDefault\(\);\s*setSlashDismissed\(true\);/,
+      "状态行阶段 Esc 必须能关闭菜单",
+    );
+  });
+});
+
+describe("probe lifecycle for the slash command menu", () => {
+  const appSource = fs.readFileSync(
+    path.resolve(import.meta.dirname, "../src/ui/App.tsx"),
+    "utf-8",
+  );
+
+  test("probe responses land with the requesting page context and pending state is per page+employee", () => {
+    const probe = appSource.match(/async function requestAgentCommands\([\s\S]*?\n  \}/)?.[0] ?? "";
+    assert.ok(probe, "requestAgentCommands must exist in App.tsx");
+    assert.ok(
+      probe.includes("const requestedContext = currentPageContext();"),
+      "探测请求必须绑定发起时的页面上下文",
+    );
+    assert.ok(
+      probe.includes("commandProbeKey(requestedContext.workspaceId, requestedContext.conversationId, agentId)"),
+      "在途标记必须按 页面+员工 记，跨页探测互不干扰",
+    );
+    const applySnapshot = probe.match(/const applySnapshot = \(snapshot: AgentCommandsSnapshot\) => \{[\s\S]*?\n    \};/)?.[0] ?? "";
+    assert.ok(applySnapshot, "快照落地函数必须存在");
+    assert.ok(
+      applySnapshot.includes("workspaceId: requestedContext.workspaceId")
+        && applySnapshot.includes("conversationId: requestedContext.conversationId"),
+      "探测响应必须按发起请求时的页面落地：applyEvent 的页面门控会丢弃不属于当前页的落地，不污染切换后的新页快照",
+    );
+  });
+
+  test("snapshot absence triggers one probe per page and the loading phase reads the matching pending flag", () => {
+    const phase = appSource.match(/const slashMenuPhase[\s\S]*?: "empty";/)?.[0] ?? "";
+    assert.ok(phase, "slashMenuPhase must exist in App.tsx");
+    assert.ok(
+      phase.includes("commandProbeKey(state.workspace.id, state.conversation.id"),
+      "状态行必须读当前页面的在途标记，跨页探测不得误判本页进行中",
+    );
+    const effect = appSource.match(
+      /useEffect\(\(\) => \{\s*if \(!slashMenuOpen \|\| !slashCommandTarget\) return;[\s\S]*?\}, \[slashMenuOpen/,
+    );
+    assert.ok(effect, "菜单打开而快照未知时必须自动探测一次");
+    assert.ok(
+      effect?.[0].includes("state.agentCommands[slashCommandTarget.agentId]"),
+      "已有快照（含空列表与失败态）时不得重复探测：失败由用户显式重试，避免反复拉起 runtime 进程",
     );
   });
 });

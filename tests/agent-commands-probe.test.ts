@@ -11,7 +11,8 @@ import path from "node:path";
  * tests/message-native-command.test.ts 的源码结构断言手法覆盖：
  * - 探测与模型探测同构：临时连接 + 临时会话，不发 prompt，用完即毁；
  * - 路由校验目标并按会话+员工去重并发探测，避免重复拉起 runtime 进程；
- * - 会话里已有非空快照直接复用；失败同样以 error 快照广播，UI 可重试；
+ * - 会话里已有通告（runtime 通告或探测写回，含空列表）直接复用；探测成功
+ *   写回权威缓存后广播，失败同样以 error 快照广播，UI 可重试；
  * - /api/state 把会话内存快照映射为 ready 快照供页面初始化。
  */
 
@@ -46,12 +47,18 @@ describe("slash-command probe wiring", () => {
     assert.ok(route.includes("probeAgentCommands("), "the route must delegate to the shared probe helper");
   });
 
-  test("an existing snapshot short-circuits the probe and failures broadcast an error snapshot", () => {
+  test("an announced snapshot short-circuits the probe, and probe results write back before broadcasting", () => {
     const helper = serverSource.match(/async function probeAgentCommands\([\s\S]*?\n\}/)?.[0] ?? "";
     assert.ok(helper, "probeAgentCommands must exist in server/index.ts");
     assert.ok(
-      helper.includes("existing && existing.length > 0"),
-      "已有快照时不得重复拉起 runtime 进程",
+      helper.includes("const existing = ctx?.availableCommands()[agentId];") && helper.includes("if (existing) {"),
+      "已有通告（runtime 通告或探测写回，含空列表）时不得重复拉起 runtime 进程",
+    );
+    const writeBack = helper.indexOf("ctx?.adoptProbedCommands(agentId, commands)");
+    assert.ok(writeBack > -1, "探测结果必须写回权威缓存：/api/state、探测短路和发送校验共用同一份快照");
+    assert.ok(
+      writeBack < helper.indexOf('type: "agent.commands.updated"'),
+      "写回必须发生在广播之前：广播只通知已打开页面，权威状态在写回时已就位",
     );
     assert.ok(helper.includes('type: "agent.commands.updated"'), "探测结果必须按会话广播");
     assert.ok(helper.includes('status: "error"'), "失败也要以 error 快照广播，UI 才能停在可重试的失败态");
@@ -61,6 +68,12 @@ describe("slash-command probe wiring", () => {
     assert.ok(
       serverSource.includes("satisfies AgentCommandsSnapshot"),
       "/api/state 必须把命令列表映射为共享快照类型",
+    );
+    const stateMapping = serverSource.match(/agentCommands: ctx\s*\?[\s\S]*?\}\s*,\s*\n {6}\}: \{\},/)?.[0]
+      ?? serverSource.match(/agentCommands: ctx[\s\S]*?satisfies AgentCommandsSnapshot/)?.[0] ?? "";
+    assert.ok(
+      stateMapping.includes("ctx.availableCommands()"),
+      "/api/state 必须直接读权威快照（ctx.availableCommands），不得伪造从未通告员工的 ready 空列表",
     );
   });
 });

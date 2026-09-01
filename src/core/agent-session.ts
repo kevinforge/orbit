@@ -75,6 +75,13 @@ type SessionCommands = {
 
 const DEFAULT_INTERACTION_TIMEOUT_MS = 30 * 60 * 1000;
 
+/**
+ * 探测写回命令时使用的会话哨兵（issue #160 收尾）：主动探测用临时会话，拿
+ * 不到员工正式会话的 ID；正式会话落定后 reconcileCommands 按 ID 不匹配自然
+ * 使其失效，命令由正式会话重新通告。
+ */
+const PROBED_COMMANDS_SESSION_ID = "__probe__";
+
 export class AgentSession {
   private status: AgentStatus = "stopped";
   private activeRun: ActiveRun | null = null;
@@ -203,6 +210,24 @@ export class AgentSession {
    */
   availableCommands(): readonly AgentCommand[] {
     return this.sessionCommands?.commands ?? [];
+  }
+
+  /** 是否已有快照（runtime 通告或探测写回，含空列表）；null 表示从未通告。 */
+  commandsAnnounced(): boolean {
+    return this.sessionCommands !== null;
+  }
+
+  /**
+   * 主动探测得到的命令写回缓存（issue #160 收尾）：/api/state、探测短路和
+   * 发送校验共用这一份权威快照，探测出的命令才能直接发送。已有正式会话的
+   * 通告时不覆盖，避免探测竞态冲掉真实数据；写回不广播——探测结果由服务端
+   * 探测路径自己按会话广播。
+   */
+  adoptProbedCommands(commands: readonly AgentCommand[]): void {
+    if (this.sessionCommands !== null && this.sessionCommands.sessionId !== PROBED_COMMANDS_SESSION_ID) {
+      return;
+    }
+    this.sessionCommands = { sessionId: PROBED_COMMANDS_SESSION_ID, commands: [...commands] };
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {

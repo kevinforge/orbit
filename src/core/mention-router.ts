@@ -8,7 +8,23 @@ export type MentionRouteResult =
 
 type AssignmentMarker = { name: string; start: number; end: number; agentId?: AgentId };
 
-export const assignmentPattern = /@([^\s@:]+)\s*(?::|：)/gu;
+const assignmentMarkerSource = "@([^\\s@:]+)\\s*(?::|：)";
+
+export const assignmentPattern = new RegExp(assignmentMarkerSource, "gu");
+
+/** 消息开头的指派标记：与 assignmentPattern 同一套标记语义，含标记后的空格/制表符。 */
+const assignmentPrefixPattern = new RegExp(`^${assignmentMarkerSource}[ \\t]*`, "u");
+
+/**
+ * 解析消息开头的 `@名称:` 指派前缀（issue #160 收尾）：半角/全角冒号等价、
+ * 名称匹配由调用方 toLocaleLowerCase，输入框的斜杠命令目标解析与正式指派
+ * 路由共用本语义。没有前缀时返回 null。
+ */
+export function matchAssignmentPrefix(content: string): { name: string; end: number } | null {
+  const match = assignmentPrefixPattern.exec(content);
+  if (!match) return null;
+  return { name: match[1] ?? "", end: match[0].length };
+}
 
 export function routeMention(
   content: string,

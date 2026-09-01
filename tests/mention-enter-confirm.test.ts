@@ -21,7 +21,7 @@ describe("mention menu Enter confirm", () => {
   test("composer dispatches to either candidate menu before the Enter-send branch", () => {
     const guardIndex = appSource.indexOf("if (isImeComposition(event)) {");
     const dispatchGuardIndex = appSource.indexOf(
-      "if (mentionCandidates.length > 0 || slashCommandCandidates.length > 0) {",
+      "if (mentionCandidates.length > 0 || slashMenuOpen) {",
     );
     const dispatchIndex = appSource.indexOf(
       "handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);",
@@ -29,7 +29,10 @@ describe("mention menu Enter confirm", () => {
     const sendIndex = appSource.indexOf("sendMessage(event as unknown as FormEvent<HTMLFormElement>)");
 
     assert.ok(guardIndex > 0, "composer onKeyDown must keep the composition guard");
-    assert.ok(dispatchGuardIndex > 0, "the dispatch guard must cover both candidate menus");
+    assert.ok(
+      dispatchGuardIndex > 0,
+      "the dispatch guard must cover both menus: mention candidates and the slash menu in every phase (candidates or status line)",
+    );
     assert.ok(dispatchGuardIndex > guardIndex, "menu dispatch must come after the composition guard");
     assert.ok(dispatchIndex > dispatchGuardIndex, "menu dispatch must be gated by open candidates of either menu");
     assert.ok(sendIndex > dispatchIndex, "Enter-send must run only when both menus are closed");

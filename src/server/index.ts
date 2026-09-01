@@ -212,9 +212,11 @@ function setModelProbeState(workspaceId: string, runtime: AgentConfig["runtime"]
 }
 
 /**
- * 为员工拉一次斜杠命令快照并按会话广播（issue #160 收尾）。会话里已有非空
- * 快照时直接复用，不重复拉起 runtime 进程；探测失败同样以 error 快照广播，
- * 让 UI 停在明确的失败态（可重试），而不是“输入 / 毫无反应”。
+ * 为员工拉一次斜杠命令快照并按会话广播（issue #160 收尾）。会话里已有通告
+ * （runtime 通告或上次探测写回，含空列表）时直接复用，不重复拉起 runtime
+ * 进程；探测成功写回会话缓存——/api/state、探测短路和发送校验共用这一份
+ * 权威快照，探测出的命令才能直接发送。探测失败同样以 error 快照广播，让
+ * UI 停在明确的失败态（可重试），而不是“输入 / 毫无反应”。
  */
 async function probeAgentCommands(
   ctx: ConversationContext | null,
@@ -225,11 +227,12 @@ async function probeAgentCommands(
   workspacePath: string,
 ): Promise<AgentCommandsSnapshot> {
   const existing = ctx?.availableCommands()[agentId];
-  if (existing && existing.length > 0) {
+  if (existing) {
     return { status: "ready", commands: existing };
   }
   try {
     const commands = await probeAcpCommands(definition, { agentId, cwd: workspacePath });
+    ctx?.adoptProbedCommands(agentId, commands);
     const snapshot: AgentCommandsSnapshot = { status: "ready", commands };
     sseHub.publish({
       type: "agent.commands.updated",
@@ -813,7 +816,8 @@ const server = http.createServer(async (req, res) => {
         runtimeAvailability: getRuntimeAvailabilityArray(),
         pendingPermissions: ctx?.pendingPermissions() ?? [],
         pendingElicitations: ctx?.pendingElicitations() ?? [],
-        // 斜杠命令快照（issue #160）：会话内存里的快照都是 runtime 通告的就绪帧。
+        // 斜杠命令快照（issue #160）：只含已通告（runtime 通告或探测写回）的
+        // 员工；未通告的员工缺 key，前端据此在菜单打开时主动探测一次。
         agentCommands: ctx
           ? Object.fromEntries(
               Object.entries(ctx.availableCommands()).map(([agentId, commands]) => [
