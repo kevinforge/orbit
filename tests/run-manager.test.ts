@@ -288,6 +288,86 @@ test("keeps the latest bounded plan snapshot live and persists it only at settle
   assert.equal(settled?.activity, undefined);
 });
 
+test("keeps the slot busy until a delayed runtime settles, then persists the latest codebuddy plan", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const pending = deferred();
+  const calls: string[] = [];
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string) {
+            calls.push(runId);
+            return calls.length === 1 ? pending.promise : Promise.resolve({ content: "second done" });
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  manager.enqueue("codebuddy-worker", "first", createSourceMessage());
+  manager.enqueue("codebuddy-worker", "second", createSourceMessage());
+  const running = messages.list()[0]!;
+  assert.ok(running.runId, "the agent message must carry the active run id");
+  const publish = (activity: AgentActivityEvent) => eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "codebuddy-worker",
+    runId: running.runId!,
+    activity,
+  });
+
+  const ts = () => new Date().toISOString();
+  publish({
+    type: "plan.updated",
+    plan: {
+      id: "codebuddy-tasks",
+      format: "items",
+      entries: [{ content: "实现修改", priority: "medium", status: "in_progress" }],
+    },
+    timestamp: ts(),
+  });
+  publish({ type: "process.text", text: "最终回复", stream: "answer", answerGroup: "codebuddy-response-1", timestamp: ts() });
+
+  // 延迟期间（prompt response 未返回）：消息仍 running、计划不落盘、下一条任务不启动。
+  assert.equal(messages.get(running.id)?.status, "running");
+  assert.equal(messages.get(running.id)?.plan, undefined);
+  assert.deepEqual(calls, [running.runId!]);
+
+  // 运行中收到的最新快照整体替换。
+  publish({
+    type: "plan.updated",
+    plan: {
+      id: "codebuddy-tasks",
+      format: "items",
+      entries: [{ content: "实现修改", priority: "medium", status: "completed" }],
+    },
+    timestamp: ts(),
+  });
+
+  pending.resolve({ content: "最终回复" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const settled = messages.get(running.id);
+  assert.equal(settled?.status, "done");
+  assert.equal(settled?.content, "最终回复");
+  // 结算后最新计划快照随消息持久化，可从消息历史恢复。
+  assert.deepEqual(settled?.plan, {
+    id: "codebuddy-tasks",
+    format: "items",
+    entries: [{ content: "实现修改", priority: "medium", status: "completed" }],
+  });
+  // 执行槽在前一运行结算后才释放给排队任务。
+  assert.equal(calls.length, 2);
+});
+
 test("settlement explicitly clears an absent process timeline and a removed plan", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();

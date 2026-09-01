@@ -110,6 +110,12 @@ export type AcpTurnState = {
   inModelResponse: boolean;
 };
 
+/** 工具调用帧（tool_call / tool_call_update）的收窄类型。 */
+export type AcpToolCallUpdate = Extract<
+  SessionNotification["update"],
+  { sessionUpdate: "tool_call" | "tool_call_update" }
+>;
+
 export type AcpRuntimeDefinition = {
   kind: AgentRuntimeKind;
   displayName: string;
@@ -126,6 +132,13 @@ export type AcpRuntimeDefinition = {
    * 其余组的文本在结算时归入过程文本（process.text 快照）。
    */
   answerGroupKey?: (update: SessionNotification["update"], turn: AcpTurnState) => string | undefined;
+  /**
+   * 工具成功完成后的 runtime 专属投影（issue #161）。共享层先发出原
+   * tool.completed，再调用该钩子并发出其返回的活动，保持事件顺序；返回
+   * undefined 表示本次完成不投影（工具不在投影范围或数据不完整——消费方
+   * 必须保留既有状态，不得清空）。
+   */
+  projectToolCompletion?: (update: AcpToolCallUpdate) => AgentActivityEvent | undefined;
 };
 
 const acpConnectionPool = new AcpConnectionPool(spawnAcpConnection);
@@ -858,6 +871,8 @@ function handleSessionUpdate(
       ...(update.rawOutput === undefined ? {} : { summary: formatValue(update.rawOutput) }),
       timestamp: new Date().toISOString(),
     });
+    const projected = definition.projectToolCompletion?.(update);
+    if (projected) emitActivity(options, projected);
   }
   if (status === "failed" && previous?.status !== "failed") {
     emitActivity(options, {

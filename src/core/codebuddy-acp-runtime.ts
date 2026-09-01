@@ -20,6 +20,7 @@ import {
   type AcpTurnState,
 } from "./acp-runtime.ts";
 import type { AgentRuntime, AgentRuntimeRunHandle } from "./agent-runtime.ts";
+import type { AgentActivityEvent, AgentPlanEntry } from "../shared/types.ts";
 
 export type CodeBuddyAcpRunOptions = AcpRunOptions;
 export type CodeBuddyAcpConnection = AcpConnection;
@@ -88,6 +89,70 @@ export function codeBuddyAnswerGroupKey(
   return `codebuddy-response-${turn.modelResponseIndex}`;
 }
 
+/** CodeBuddy Task 工具投影出的计划快照固定 id（issue #161）。 */
+export const CODEBUDDY_TASKS_PLAN_ID = "codebuddy-tasks";
+
+/**
+ * 把 TaskCreate/TaskUpdate 成功完成事件投影为完整计划快照（issue #161）。
+ * CodeBuddy 在这类完成事件的 `_meta["codebuddy.ai/rawResponse"].todos` 中携带
+ * 操作后的完整任务列表，删除亦不例外，因此投影始终整体替换、无需猜测状态：
+ * - pending/in_progress/completed 原样映射；deleted 条目视为已删除，从快照消失；
+ * - in_progress 内容优先 activeForm，缺失或空白时回退 content；
+ * - 任务没有优先级概念，固定映射为 medium（显式 high/low 保留）；
+ * - plan.id 固定为 "codebuddy-tasks"。
+ * 严格校验：todos 缺失、非数组或元素结构不完整时返回 undefined，保留运行中
+ * 已有计划，绝不因扩展字段畸形清空计划或让运行失败。非 Task 工具、未完成的
+ * 工具帧（共享层只在成功完成时调用本钩子）一律不投影。
+ */
+export function projectCodeBuddyToolCompletion(
+  update: Parameters<NonNullable<AcpRuntimeDefinition["projectToolCompletion"]>>[0],
+): AgentActivityEvent | undefined {
+  const toolName = readCodeBuddyMetaString(update._meta, "codebuddy.ai/toolName");
+  if (toolName !== "TaskCreate" && toolName !== "TaskUpdate") return undefined;
+  const entries = toCodeBuddyPlanEntries(readCodeBuddyRawTodos(update._meta));
+  if (!entries) return undefined;
+  return {
+    type: "plan.updated",
+    plan: { id: CODEBUDDY_TASKS_PLAN_ID, format: "items", entries },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function readCodeBuddyMetaString(meta: unknown, key: string): string | undefined {
+  if (!meta || typeof meta !== "object") return undefined;
+  const value = (meta as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function readCodeBuddyRawTodos(meta: unknown): readonly unknown[] | undefined {
+  if (!meta || typeof meta !== "object") return undefined;
+  const rawResponse = (meta as Record<string, unknown>)["codebuddy.ai/rawResponse"];
+  if (!rawResponse || typeof rawResponse !== "object") return undefined;
+  const todos = (rawResponse as Record<string, unknown>).todos;
+  return Array.isArray(todos) ? todos : undefined;
+}
+
+function toCodeBuddyPlanEntries(todos: readonly unknown[] | undefined): AgentPlanEntry[] | undefined {
+  if (!todos) return undefined;
+  const entries: AgentPlanEntry[] = [];
+  for (const todo of todos) {
+    if (!todo || typeof todo !== "object") return undefined;
+    const { content, activeForm, priority, status } = todo as Record<string, unknown>;
+    if (status === "deleted") continue;
+    if (status !== "pending" && status !== "in_progress" && status !== "completed") return undefined;
+    if (typeof content !== "string" || !content.trim()) return undefined;
+    entries.push({
+      content:
+        status === "in_progress" && typeof activeForm === "string" && activeForm.trim()
+          ? activeForm
+          : content,
+      priority: priority === "high" || priority === "low" ? priority : "medium",
+      status,
+    });
+  }
+  return entries;
+}
+
 export const CODEBUDDY_ACP: AcpRuntimeDefinition = {
   kind: "codebuddy",
   displayName: "CodeBuddy",
@@ -97,6 +162,7 @@ export const CODEBUDDY_ACP: AcpRuntimeDefinition = {
   classifyAnswerChunk: classifyCodeBuddyAnswerChunk,
   observeSessionUpdate: observeCodeBuddySessionUpdate,
   answerGroupKey: codeBuddyAnswerGroupKey,
+  projectToolCompletion: projectCodeBuddyToolCompletion,
 };
 
 export function createCodeBuddyAcpRuntime(
