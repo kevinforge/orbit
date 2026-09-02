@@ -12,6 +12,7 @@
  */
 
 import { validateLicenseAsync, generateMachineId, getHardwareInfo, ensureOrbitHomeDir } from "./license/index.ts";
+import { isVersionRequest, getOrbitVersion } from "./cli-flags.ts";
 import path from "node:path";
 
 async function main() {
@@ -21,12 +22,19 @@ async function main() {
     console.log("Usage:");
     console.log("  orbit              Start Orbit");
     console.log("  orbit --help       Show this help");
+    console.log("  orbit --version    Print the Orbit version");
     console.log("  orbit --machine-id Print a machine id for private licensed builds");
     console.log("  orbit --hardware-info Print hardware info for diagnostics");
     console.log("");
     console.log("Environment:");
     console.log("  ORBIT_PORT=4317");
     console.log("  ORBIT_UI_DIR=/path/to/dist/ui");
+    process.exit(0);
+  }
+
+  // Handle --version / -v flag
+  if (isVersionRequest(process.argv)) {
+    console.log(getOrbitVersion());
     process.exit(0);
   }
 
