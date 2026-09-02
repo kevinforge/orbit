@@ -10,6 +10,42 @@ No notable changes yet.
 
 ---
 
+## v1.3.0 — 2026-09-02
+
+### New things you can do
+
+- **Attach files to a conversation.** Upload images, PDFs, text, Markdown, and
+  common source/config files from the composer, then preview or download them
+  from message history. Images are delivered natively when the runtime supports
+  them; other files are shared as local ACP resource links.
+- **Use each runtime's native slash commands.** Type `/` in direct mode or after
+  an explicit employee marker to discover, filter, page through, and complete
+  commands announced over ACP.
+- **Choose the supervisor runtime and model.** Each conversation can configure
+  which supported runtime and model powers the supervisor without changing the
+  digital employee team.
+- **Visit the Orbit product website.** The repository now includes a dedicated
+  landing page and GitHub Pages deployment workflow.
+
+### Improvements & fixes
+
+- Conversation page context is isolated so late events and async responses from
+  a previous page cannot overwrite the active conversation.
+- Attachment storage now includes bounded drafts, filename recovery, safe
+  download handling, retention cleanup, and image-only message routing.
+- CodeBuddy task snapshots appear in the existing plan board, while native
+  command discovery handles cold starts, retries, large command lists, and
+  announcement/probe races.
+- Mention and slash-command menus now preserve IME composition, Enter/Tab
+  completion, Shift+Enter newlines, Esc dismissal, and keyboard paging.
+- Streamed final answers no longer flash between the process timeline and reply
+  body while runtime settlement is still pending.
+- Website build dependencies were refreshed, including React, Vite, Vinext,
+  Wrangler, and the Cloudflare and React Server Components Vite plugins; the
+  Vinext update removes the vulnerable `image-size` transitive dependency.
+
+---
+
 ## v1.2.0 — 2026-08-21
 
 ### New things you can do
