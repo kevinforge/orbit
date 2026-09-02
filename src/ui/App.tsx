@@ -556,15 +556,23 @@ export function App() {
     // 探测期间用户可能切到其他页面：快照事件按发起请求时的页面落地，
     // applyEvent 的页面门控会丢弃不属于当前页的落地，不污染新页快照。
     const applySnapshot = (snapshot: AgentCommandsSnapshot) => {
-      setState((current) => applyEvent(current, {
-        type: "agent.commands.updated",
-        workspaceId: requestedContext.workspaceId,
-        conversationId: requestedContext.conversationId,
-        agentId,
-        commands: snapshot.commands,
-        status: snapshot.status,
-        ...(snapshot.message ? { message: snapshot.message } : {}),
-      }));
+      setState((current) => {
+        // HTTP 响应与 SSE 通告的到达顺序无法保证：正式通告先落地（ready）时，
+        // 迟到的探测响应必须让位（probeSnapshotLands），不得覆盖真实命令，
+        // 也不得把失败态盖回就绪态；用户已切页时 applyEvent 的门控照常丢弃。
+        if (!probeSnapshotLands(current.agentCommands[agentId])) {
+          return current;
+        }
+        return applyEvent(current, {
+          type: "agent.commands.updated",
+          workspaceId: requestedContext.workspaceId,
+          conversationId: requestedContext.conversationId,
+          agentId,
+          commands: snapshot.commands,
+          status: snapshot.status,
+          ...(snapshot.message ? { message: snapshot.message } : {}),
+        });
+      });
     };
     try {
       const params = new URLSearchParams({
@@ -4352,6 +4360,17 @@ function findMentionDraft(value: string, cursorIndex: number): { start: number; 
     end: cursorIndex,
     query,
   };
+}
+
+/**
+ * HTTP 探测响应的落地守卫（探测竞态收尾）：探测响应与 SSE 通告走不同连接，
+ * 客户端到达顺序无法保证。正式通告（ready）先落地时，迟到的 HTTP 探测结果
+ * 必须让位——既不得用探测命令覆盖真实命令，也不得把失败态盖回就绪态；快照
+ * 缺失或处于 error 态时照常落地（ready 是探测的常规结果，error 落地支持
+ * 失败后重试）。SSE 事件不受此守卫约束：后到的真实通告必须仍能整体替换。
+ */
+export function probeSnapshotLands(current: AgentCommandsSnapshot | undefined): boolean {
+  return current?.status !== "ready";
 }
 
 /** PgUp/PgDn 的候选翻页步长：与面板可视行数同级，一次跳动一屏。 */

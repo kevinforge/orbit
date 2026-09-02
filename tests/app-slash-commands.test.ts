@@ -4,15 +4,17 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  applyEvent,
   filterSlashCommands,
   findSlashCommandDraft,
+  probeSnapshotLands,
   splitSlashCommandName,
 } from "../src/ui/App.tsx";
 import {
   resolveSlashCommandTarget,
   resolveSlashSendTarget,
 } from "../src/core/native-commands.ts";
-import type { AgentCommand, AgentId } from "../src/shared/types.ts";
+import type { AgentCommand, AgentCommandsSnapshot, AgentId, AppState } from "../src/shared/types.ts";
 
 const developer: AgentId = "developer";
 const reviewer: AgentId = "reviewer";
@@ -122,6 +124,80 @@ test("slash command target resolution mirrors the send target without the comman
     commandText: "你好",
   });
   assert.equal(resolveSlashCommandTarget("你好", "collaborative", reviewer, agents), null);
+});
+
+const probeOrderState: AppState = {
+  workspace: { id: "ws1", name: "Workspace", path: "D:/project" },
+  conversation: { id: "conv1", name: "conv1" },
+  messages: [],
+  messageHistory: { hasOlderMessages: false, olderCursor: null },
+  agents: [], terminal: {}, runningSummaries: [], runtimeAvailability: [], pendingPermissions: [], pendingElicitations: [],
+  agentModelStates: {}, agentCommands: {},
+};
+
+/** 复现 requestAgentCommands.applySnapshot 的落地决策：守卫通过才走 applyEvent。 */
+function landHttpProbeSnapshot(current: AppState, snapshot: AgentCommandsSnapshot): AppState {
+  if (!probeSnapshotLands(current.agentCommands[developer])) {
+    return current;
+  }
+  return applyEvent(current, {
+    type: "agent.commands.updated",
+    workspaceId: current.workspace.id,
+    conversationId: current.conversation.id,
+    agentId: developer,
+    commands: snapshot.commands,
+    status: snapshot.status,
+    ...(snapshot.message ? { message: snapshot.message } : {}),
+  });
+}
+
+function sseAnnounce(current: AppState, commands: readonly AgentCommand[]): AppState {
+  // 正式通告走 applyEvent 无条件替换：后到的真实通告必须仍能整体覆盖。
+  return applyEvent(current, {
+    type: "agent.commands.updated",
+    workspaceId: current.workspace.id,
+    conversationId: current.conversation.id,
+    agentId: developer,
+    commands,
+  });
+}
+
+test("a late HTTP probe response never overwrites a ready snapshot landed earlier via SSE", () => {
+  // 评审要求的落地顺序：HTTP 探测响应生成 → SSE 正式通告落地 → HTTP 响应落地。
+  // HTTP 与 SSE 走不同连接，客户端到达顺序无法保证，最终必须保持 SSE 真实命令。
+  const probed: readonly AgentCommand[] = [{ name: "review", description: "探测结果" }];
+  const real: readonly AgentCommand[] = [{ name: "init", description: "正式通告" }];
+
+  // 1) 探测响应先到（快照缺失，正常落地）。
+  const withProbe = landHttpProbeSnapshot(probeOrderState, { status: "ready", commands: probed });
+  assert.deepEqual(withProbe.agentCommands[developer]?.commands, probed);
+
+  // 2) 正式会话通告经 SSE 落地，覆盖探测结果。
+  const withReal = sseAnnounce(withProbe, real);
+  assert.deepEqual(withReal.agentCommands[developer]?.commands, real);
+
+  // 3) 迟到的 HTTP 探测响应（ready 或 error）都不得覆盖真实命令。
+  const afterLateReady = landHttpProbeSnapshot(withReal, { status: "ready", commands: probed });
+  assert.deepEqual(
+    afterLateReady.agentCommands[developer],
+    { status: "ready", commands: real },
+    "迟到的探测 ready 不得把 SSE 真实命令覆盖回探测结果",
+  );
+  const afterLateError = landHttpProbeSnapshot(withReal, { status: "error", commands: [], message: "boom" });
+  assert.deepEqual(
+    afterLateError.agentCommands[developer],
+    { status: "ready", commands: real },
+    "迟到的探测失败不得把就绪态盖回失败态",
+  );
+});
+
+test("the landing guard admits missing and error snapshots so probes and retries still land", () => {
+  // 快照缺失：探测结果照常落地。
+  assert.equal(probeSnapshotLands(undefined), true);
+  // error 态：重试的成功或失败结果都要能替换旧失败态。
+  assert.equal(probeSnapshotLands({ status: "error", commands: [], message: "first failure" }), true);
+  // ready 态：HTTP 探测响应让位给已就绪的快照。
+  assert.equal(probeSnapshotLands({ status: "ready", commands: [] }), false);
 });
 
 test("slash command draft only matches a bare /command under the cursor", () => {
@@ -305,6 +381,10 @@ describe("probe lifecycle for the slash command menu", () => {
       applySnapshot.includes("workspaceId: requestedContext.workspaceId")
         && applySnapshot.includes("conversationId: requestedContext.conversationId"),
       "探测响应必须按发起请求时的页面落地：applyEvent 的页面门控会丢弃不属于当前页的落地，不污染切换后的新页快照",
+    );
+    assert.ok(
+      applySnapshot.includes("probeSnapshotLands(current.agentCommands[agentId])"),
+      "HTTP 探测响应落地必须经过 ready 守卫：SSE 先到的正式通告不得被迟到的响应覆盖",
     );
   });
 
