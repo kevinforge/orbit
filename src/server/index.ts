@@ -25,13 +25,15 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo } from "../shared/types.ts";
+import type { AgentCommandsSnapshot, AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo, AgentId } from "../shared/types.ts";
 import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { buildAttachmentHeaders } from "./attachment-response.ts";
 import { canSendMessage } from "../shared/message-validation.ts";
+import { resolveSlashSendTarget } from "../core/native-commands.ts";
 import { ConversationContext } from "./conversation-context.ts";
+import { probeAgentCommands } from "./command-probe.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { readJson, RequestBodyTooLargeError } from "./read-json.ts";
 import {
@@ -87,6 +89,9 @@ let runtimeAvailability: Map<string, RuntimeProbeResult> = new Map();
 let probeTimer: ReturnType<typeof setInterval> | null = null;
 let shuttingDown = false;
 const modelProbeStates = new Map<string, Map<AgentConfig["runtime"], AgentModelProbeState>>();
+// 斜杠命令主动探测去重（issue #160 收尾）：多页面同时打开 "/" 菜单时只拉起
+// 一次 runtime 探测，同一会话同一员工的并发请求共享同一个 Promise。
+const commandProbeInFlight = new Map<string, Promise<AgentCommandsSnapshot>>();
 
 async function probeRuntimes(): Promise<void> {
   const results = await probeAllRuntimes();
@@ -764,6 +769,16 @@ const server = http.createServer(async (req, res) => {
         runtimeAvailability: getRuntimeAvailabilityArray(),
         pendingPermissions: ctx?.pendingPermissions() ?? [],
         pendingElicitations: ctx?.pendingElicitations() ?? [],
+        // 斜杠命令快照（issue #160）：只含已通告（runtime 通告或探测写回）的
+        // 员工；未通告的员工缺 key，前端据此在菜单打开时主动探测一次。
+        agentCommands: ctx
+          ? Object.fromEntries(
+              Object.entries(ctx.availableCommands()).map(([agentId, commands]) => [
+                agentId,
+                { status: "ready" as const, commands } satisfies AgentCommandsSnapshot,
+              ]),
+            )
+          : {},
       });
       return;
     }
@@ -1062,6 +1077,43 @@ const server = http.createServer(async (req, res) => {
         };
       }
       sendJson(res, 200, response);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/agents/probe-commands") {
+      const target = resolveTarget(url);
+      const agentId = url.searchParams.get("agentId")?.trim();
+      if (!target?.conversationId || !agentId) {
+        sendJson(res, 400, { ok: false, message: "刷新斜杠命令时需要有效的会话与员工 ID。" });
+        return;
+      }
+      const workspace = workspaceStore.get(target.workspaceId);
+      const config = workspace ? configStore.load(target.workspaceId).find((c) => c.id === agentId && c.enabled) : undefined;
+      const registration = config ? defaultAcpRunnerRegistry.get(config.runtime) : undefined;
+      if (!workspace || !config || !registration) {
+        sendJson(res, 400, { ok: false, message: "该员工不存在、未启用或运行时不可用。" });
+        return;
+      }
+      const probeKey = `${target.workspaceId}:${target.conversationId}:${agentId}`;
+      let pending = commandProbeInFlight.get(probeKey);
+      if (!pending) {
+        // 探测逻辑在 command-probe.ts：写回被拒（正式通告先到）时由它保证
+        // 不广播探测结果、响应改答权威快照。
+        pending = probeAgentCommands(
+          contextForTarget(target),
+          target.workspaceId,
+          target.conversationId,
+          agentId,
+          registration.definition,
+          workspace.path,
+          { publish: (event) => sseHub.publish(event) },
+        ).finally(() => {
+          commandProbeInFlight.delete(probeKey);
+        });
+        commandProbeInFlight.set(probeKey, pending);
+      }
+      const snapshot = await pending;
+      sendJson(res, 200, { ok: true, agentId, snapshot });
       return;
     }
 
@@ -1749,6 +1801,25 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
+  // 原生斜杠命令（issue #160 + review）：是否按命令投递、投递给谁、发什么
+  // 文本，全部由服务端从消息原文推导——协作模式、@员工: 前缀与权威命令
+  // 快照共同决定，客户端不提交投递标记。这样频道历史保留的 content 与
+  // runtime 实际执行的命令文本同源，审计上不可能再分叉；命令词不在目标
+  // 员工通告列表里时按普通消息走路由。
+  const delivery = resolveSlashSendTarget(
+    content,
+    conversation.interactionMode ?? "direct",
+    conversation.lastDirectAgentId,
+    context.agents.states().map((state) => ({ id: state.id, label: state.label })),
+    context.availableCommands(),
+  );
+  // 命令直达 runtime 的 prompt 通道，没有承载附件的路径；带附件时拒绝
+  // 而不是丢弃附件，避免用户以为附件已随命令送达。
+  if (delivery && draftAttachments.length > 0) {
+    sendJson(res, 400, { ok: false, message: "原生命令消息不支持附件，请先移除附件再发送命令。" });
+    return;
+  }
+
   const clientMessageId = typeof input.clientMessageId === "string" ? input.clientMessageId.trim() : "";
   await context.withMessageMutation(async () => {
     if (clientMessageId) {
@@ -1795,7 +1866,13 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
       interactionMode: conversation!.interactionMode ?? "direct",
     });
     eventBus.publish({ type: "message.created", workspaceId, conversationId: conversation!.id, message: userMessage });
-    context.messageRouter.process(userMessage);
+    // 原生斜杠命令（issue #160）：绕过指派路由直通员工，下发的是从 content
+    // 推导出的命令文本；普通消息维持路由。
+    if (delivery) {
+      context.runManager.enqueueNativeCommand(delivery.agentId, delivery.commandText, userMessage);
+    } else {
+      context.messageRouter.process(userMessage);
+    }
 
     sendJson(res, 200, { ok: true, messageId: userMessage.id, workspaceId, conversationId: conversation!.id });
   });

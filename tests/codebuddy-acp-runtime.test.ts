@@ -782,3 +782,343 @@ test("sends native images when CodeBuddy advertises image capability", async () 
   assert.equal(prompt.prompt[1]?.type, "image");
   assert.equal(prompt.prompt[1]?.mimeType, "image/png");
 });
+
+// ---- issue #161：CodeBuddy TaskCreate/TaskUpdate → plan.updated 完整快照投影 ----
+
+type TaskTodo = {
+  id: string;
+  content: string;
+  status: string;
+  activeForm?: string;
+  priority?: string;
+};
+
+function taskToolUpdate(
+  toolCallId: string,
+  toolName: "TaskCreate" | "TaskUpdate",
+  todos: TaskTodo[],
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    sessionId: "new-session",
+    update: {
+      sessionUpdate: "tool_call_update" as const,
+      toolCallId,
+      status: "completed" as const,
+      _meta: {
+        "codebuddy.ai/toolName": toolName,
+        "codebuddy.ai/rawResponse": { todos },
+      },
+      ...overrides,
+    },
+  };
+}
+
+function taskToolStart(toolCallId: string, toolName: "TaskCreate" | "TaskUpdate", todos: TaskTodo[]) {
+  return {
+    sessionId: "new-session",
+    update: {
+      sessionUpdate: "tool_call" as const,
+      toolCallId,
+      title: toolName,
+      kind: "think" as const,
+      status: "in_progress" as const,
+      _meta: {
+        "codebuddy.ai/toolName": toolName,
+        "codebuddy.ai/rawResponse": { todos },
+      },
+    },
+  };
+}
+
+function codebuddyPhaseUpdate(sessionId: string, agentPhase: string) {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "session_info_update" as const,
+      _meta: { "codebuddy.ai/agentPhase": { phase: agentPhase, startedAt: Date.now() } },
+    },
+  };
+}
+
+function codebuddyTextUpdate(sessionId: string, messageId: string, text: string) {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "agent_message_chunk" as const,
+      messageId,
+      content: { type: "text" as const, text },
+    },
+  };
+}
+
+/** 把 prompt 结算延迟到测试手动释放；分片/工具事件仍在 prompt 调用时同步流出。 */
+function holdPrompt(fake: ReturnType<typeof fakeConnector>) {
+  let release!: (response: { stopReason: "end_turn" }) => void;
+  const held = new Promise<{ stopReason: "end_turn" }>((resolve) => {
+    release = resolve;
+  });
+  const base = fake.connector;
+  const connector: CodeBuddyAcpConnector = (options, notify) => {
+    const connection = base(options, notify);
+    return {
+      ...connection,
+      async prompt(request) {
+        await connection.prompt(request);
+        return held;
+      },
+    };
+  };
+  return { connector, releasePrompt: () => release({ stopReason: "end_turn" }) };
+}
+
+async function waitForActivities(activities: AgentActivityEvent[], count: number): Promise<void> {
+  for (let attempt = 0; attempt < 200 && activities.length < count; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.ok(activities.length >= count, `expected at least ${count} activities, saw ${activities.length}`);
+}
+
+test("projects TaskCreate and TaskUpdate completions into full codebuddy-tasks plan snapshots", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const todos: TaskTodo[] = [
+    { id: "1", content: "梳理需求", status: "completed" },
+    { id: "2", content: "实现修改", activeForm: "正在实现修改", status: "in_progress" },
+    { id: "3", content: "验证结果", status: "pending" },
+  ];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      // 开始帧不投影：只有成功完成事件才产生 plan.updated。
+      notify(taskToolStart("task-1", "TaskCreate", todos));
+      notify(taskToolUpdate("task-1", "TaskCreate", todos));
+      notify(taskToolUpdate("task-2", "TaskUpdate", [
+        { id: "1", content: "梳理需求", status: "completed" },
+        { id: "2", content: "实现修改", status: "completed" },
+        { id: "3", content: "验证结果", status: "pending" },
+      ]));
+      notify(codebuddyTextUpdate("new-session", "m1", "done"));
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  await runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) })).result;
+
+  const plans = activities.filter((activity) => activity.type === "plan.updated");
+  assert.equal(plans.length, 2, "only completed Task frames project plan snapshots");
+  // 事件顺序：共享层先发 tool.completed，投影紧随其后。
+  assert.deepEqual(
+    activities.map((activity) => activity.type).filter((type) => type === "tool.completed" || type === "plan.updated"),
+    ["tool.completed", "plan.updated", "tool.completed", "plan.updated"],
+  );
+
+  assert.ok(plans[0]?.type === "plan.updated" && plans[0].plan.format === "items");
+  if (plans[0]?.type === "plan.updated" && plans[0].plan.format === "items") {
+    assert.equal(plans[0].plan.id, "codebuddy-tasks");
+    assert.deepEqual(plans[0].plan.entries, [
+      { content: "梳理需求", priority: "medium", status: "completed" },
+      { content: "正在实现修改", priority: "medium", status: "in_progress" },
+      { content: "验证结果", priority: "medium", status: "pending" },
+    ]);
+  }
+  assert.ok(plans[1]?.type === "plan.updated" && plans[1].plan.format === "items");
+  if (plans[1]?.type === "plan.updated" && plans[1].plan.format === "items") {
+    assert.deepEqual(plans[1].plan.entries, [
+      { content: "梳理需求", priority: "medium", status: "completed" },
+      { content: "实现修改", priority: "medium", status: "completed" },
+      { content: "验证结果", priority: "medium", status: "pending" },
+    ]);
+  }
+});
+
+test("drops deleted tasks from the snapshot and preserves the full list order", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify(taskToolUpdate("task-1", "TaskUpdate", [
+        { id: "1", content: "第一项", status: "completed" },
+        { id: "2", content: "已删除项", status: "deleted" },
+        { id: "3", content: "第三项", status: "pending" },
+        { id: "4", content: "第四项", activeForm: "正在执行第四项", status: "in_progress" },
+      ]));
+      notify(codebuddyTextUpdate("new-session", "m1", "done"));
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  await runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) })).result;
+
+  const plan = activities.find((activity) => activity.type === "plan.updated");
+  assert.ok(plan?.type === "plan.updated" && plan.plan.format === "items");
+  if (plan?.type === "plan.updated" && plan.plan.format === "items") {
+    assert.deepEqual(plan.plan.entries.map((entry) => entry.content), ["第一项", "第三项", "正在执行第四项"]);
+    assert.deepEqual(plan.plan.entries.map((entry) => entry.status), ["completed", "pending", "in_progress"]);
+  }
+});
+
+test("keeps the existing plan when CodeBuddy task metadata is malformed", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const validTodos: TaskTodo[] = [{ id: "1", content: "有效任务", status: "pending" }];
+  const malformedFrames = [
+    // 缺失 rawResponse
+    taskToolUpdate("t1", "TaskUpdate", validTodos, {
+      _meta: { "codebuddy.ai/toolName": "TaskUpdate" },
+    }),
+    // rawResponse 缺失 todos
+    taskToolUpdate("t2", "TaskUpdate", validTodos, {
+      _meta: { "codebuddy.ai/toolName": "TaskUpdate", "codebuddy.ai/rawResponse": {} },
+    }),
+    // todos 不是数组
+    taskToolUpdate("t3", "TaskUpdate", validTodos, {
+      _meta: { "codebuddy.ai/toolName": "TaskUpdate", "codebuddy.ai/rawResponse": { todos: "all" } },
+    }),
+    // 元素不是对象
+    taskToolUpdate("t4", "TaskUpdate", validTodos, {
+      _meta: { "codebuddy.ai/toolName": "TaskUpdate", "codebuddy.ai/rawResponse": { todos: [null] } },
+    }),
+    // 未知状态
+    taskToolUpdate("t5", "TaskUpdate", validTodos, {
+      _meta: {
+        "codebuddy.ai/toolName": "TaskUpdate",
+        "codebuddy.ai/rawResponse": { todos: [{ id: "1", content: "x", status: "cancelled" }] },
+      },
+    }),
+    // 缺失 content
+    taskToolUpdate("t6", "TaskUpdate", validTodos, {
+      _meta: {
+        "codebuddy.ai/toolName": "TaskUpdate",
+        "codebuddy.ai/rawResponse": { todos: [{ id: "1", status: "pending" }] },
+      },
+    }),
+    // 非 Task 工具即使携带 todos 也不投影
+    taskToolUpdate("t7", "TaskUpdate", validTodos, {
+      _meta: { "codebuddy.ai/toolName": "Read", "codebuddy.ai/rawResponse": { todos: validTodos } },
+    }),
+  ];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify(taskToolUpdate("valid-1", "TaskCreate", validTodos));
+      for (const frame of malformedFrames) notify(frame);
+      notify(codebuddyTextUpdate("new-session", "m1", "done"));
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  // 畸形元数据不得让运行失败。
+  await runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) })).result;
+
+  const plans = activities.filter((activity) => activity.type === "plan.updated");
+  assert.equal(plans.length, 1, "malformed snapshots must not replace or clear the existing plan");
+  assert.ok(plans[0]?.type === "plan.updated" && plans[0].plan.format === "items");
+  if (plans[0]?.type === "plan.updated" && plans[0].plan.format === "items") {
+    assert.deepEqual(plans[0].plan.entries, [{ content: "有效任务", priority: "medium", status: "pending" }]);
+  }
+});
+
+test("delayed end_turn keeps the turn unsettled with no final marker until the prompt response lands", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify(codebuddyPhaseUpdate("new-session", "model_requesting"));
+      notify(codebuddyTextUpdate("new-session", "m1", "最终答案"));
+    },
+  });
+  const held = holdPrompt(fake);
+  const runtime = createCodeBuddyAcpRuntime(held.connector);
+  const handle = runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) }));
+
+  // 延迟期间：候选正文已流出，但回合未结算，没有任何提前的 final 信号。
+  await waitForActivities(activities, 1);
+  assert.equal(await Promise.race([handle.result.then(() => "settled"), Promise.resolve("pending")]), "pending");
+  assert.ok(!activities.some((activity) => activity.type === "process.text" && activity.snapshot));
+  assert.ok(
+    !activities.some((activity) => activity.type === "process.text" && activity.isFinal === true),
+    "CodeBuddy must never emit a speculative isFinal marker (issue #161 red line)",
+  );
+
+  held.releasePrompt();
+  assert.equal(await handle.result, "最终答案");
+  const snapshot = activities.at(-1);
+  assert.ok(snapshot?.type === "process.text" && snapshot.snapshot);
+  assert.equal(
+    snapshot.type === "process.text" ? snapshot.excludedAnswerGroup : undefined,
+    "codebuddy-response-1",
+  );
+  assert.ok(
+    !activities.some((activity) => activity.type === "process.text" && activity.isFinal === true),
+  );
+});
+
+test("a tool call arriving during the delay keeps candidate text in the process timeline without promotion", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      notify(codebuddyPhaseUpdate("new-session", "model_requesting"));
+      notify(codebuddyTextUpdate("new-session", "m1", "初步判断。"));
+      notify(codebuddyPhaseUpdate("new-session", "model_done"));
+      notify(codebuddyPhaseUpdate("new-session", "tool_executing"));
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Run tests",
+          kind: "execute",
+          status: "in_progress",
+        },
+      });
+      notify({
+        sessionId: "new-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "completed",
+        },
+      });
+    },
+  });
+  const held = holdPrompt(fake);
+  const runtime = createCodeBuddyAcpRuntime(held.connector);
+  const handle = runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) }));
+
+  await waitForActivities(activities, 3);
+  assert.equal(await Promise.race([handle.result.then(() => "settled"), Promise.resolve("pending")]), "pending");
+  // 延迟期间的候选正文留在过程时间线（text → tools 顺序），无任何正文提升。
+  assert.deepEqual(activities.map((activity) => activity.type), ["process.text", "tool.started", "tool.completed"]);
+  assert.ok(!activities.some((activity) => activity.type === "process.text" && activity.snapshot));
+
+  held.releasePrompt();
+  // 正文不闪入主体、也不回退：最终答案仍是延迟前的候选正文。
+  assert.equal(await handle.result, "初步判断。");
+  const snapshot = activities.at(-1);
+  assert.ok(snapshot?.type === "process.text" && snapshot.snapshot);
+  assert.equal(snapshot.type === "process.text" ? snapshot.text : undefined, "");
+});
+
+test("a Stop-Hook continuation round settles on the last response group and moves the earlier one to the process area", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({
+    onPrompt(notify) {
+      // 第一组正文结束后 Stop Hook 续回合：新的 model_requesting 开启第二组。
+      notify(codebuddyPhaseUpdate("new-session", "model_requesting"));
+      notify(codebuddyTextUpdate("new-session", "m1", "第一组回复"));
+      notify(codebuddyPhaseUpdate("new-session", "model_done"));
+      notify(codebuddyPhaseUpdate("new-session", "idle"));
+      notify(codebuddyPhaseUpdate("new-session", "model_requesting"));
+      notify(codebuddyTextUpdate("new-session", "m1", "第二组回复"));
+      notify(codebuddyPhaseUpdate("new-session", "model_done"));
+      notify(codebuddyPhaseUpdate("new-session", "idle"));
+    },
+  });
+  const held = holdPrompt(fake);
+  const runtime = createCodeBuddyAcpRuntime(held.connector);
+  const handle = runtime.run(runOptions({ onActivity: (activity: AgentActivityEvent) => activities.push(activity) }));
+
+  await waitForActivities(activities, 2);
+  held.releasePrompt();
+  assert.equal(await handle.result, "第二组回复");
+
+  const snapshot = activities.at(-1);
+  assert.ok(snapshot?.type === "process.text" && snapshot.snapshot);
+  assert.equal(snapshot.type === "process.text" ? snapshot.text : undefined, "第一组回复");
+  assert.equal(
+    snapshot.type === "process.text" ? snapshot.excludedAnswerGroup : undefined,
+    "codebuddy-response-2",
+  );
+});

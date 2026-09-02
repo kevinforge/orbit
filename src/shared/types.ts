@@ -214,6 +214,30 @@ export type AgentModelProbeResponse = {
   };
 };
 
+/**
+ * runtime 会话通过 ACP `available_commands_update` 通告的一条原生斜杠命令
+ * （issue #160）。name 不含前导 "/"；inputHint 对应 ACP 的
+ * UnstructuredCommandInput.hint，缺失表示该命令不接收输入。
+ */
+export type AgentCommand = {
+  name: string;
+  description: string;
+  inputHint?: string;
+};
+
+/**
+ * 目标员工斜杠命令快照（issue #160）。`ready` 表示已拿到 runtime 会话的
+ * `available_commands_update`（commands 为空表示该员工当前没有可用命令）；
+ * `error` 表示主动探测失败（message 携带原因，可重试）。快照缺失表示尚未
+ * 获取过，UI 据此在菜单打开时自动触发一次探测，不再把“未获取”误显示为
+ * “没有命令”。
+ */
+export type AgentCommandsSnapshot = {
+  status: "ready" | "error";
+  commands: readonly AgentCommand[];
+  message?: string;
+};
+
 export type AgentStatus = "starting" | "idle" | "running" | "error" | "stopped";
 
 export type AgentState = {
@@ -476,6 +500,10 @@ export type RuntimeEvent =
   // 监工是内部保留 ID，多个会话共享 agentId "supervisor"，不带会话维度会把
   // 一个会话的监工状态广播给同工作区的其他页面。
   | { type: "agent.model_state"; workspaceId: string; agentId: AgentId; modelState: AgentModelStateSnapshot; conversationId?: string }
+  // 员工 runtime 会话的斜杠命令快照（issue #160）。命令属于具体会话里的
+  // 后端 runtime 会话，因此是会话级事件；workspaceId 由发布方补齐。
+  // status/message 仅主动探测路径携带：失败时 commands 为空、status 为 error。
+  | { type: "agent.commands.updated"; workspaceId?: string; conversationId: string; agentId: AgentId; commands: readonly AgentCommand[]; status?: AgentCommandsSnapshot["status"]; message?: string }
   | { type: "events.gap"; workspaceId?: string; conversationId?: string };
 
 export type TerminalState = Record<string, string>;
@@ -574,4 +602,6 @@ export type AppState = {
   pendingElicitations: PendingElicitation[];
   /** 各数字员工最新的模型快照（issue #142），供设置面板展示当前模型与可用列表。 */
   agentModelStates: Record<AgentId, AgentModelStateSnapshot>;
+  /** 各数字员工 runtime 会话的斜杠命令快照（issue #160），供输入框 "/" 菜单使用。 */
+  agentCommands: Record<AgentId, AgentCommandsSnapshot>;
 };

@@ -1,4 +1,5 @@
 import type {
+  AgentCommand,
   AgentElicitationRequest,
   AgentId,
   AgentModelStateSnapshot,
@@ -66,7 +67,20 @@ type PendingElicitationState = {
   timer: NodeJS.Timeout;
 };
 
+/** 员工 runtime 会话最近一次通告的斜杠命令快照（issue #160）。 */
+type SessionCommands = {
+  sessionId: string;
+  commands: readonly AgentCommand[];
+};
+
 const DEFAULT_INTERACTION_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * 探测写回命令时使用的会话哨兵（issue #160 收尾）：主动探测用临时会话，拿
+ * 不到员工正式会话的 ID；正式会话落定后 reconcileCommands 按 ID 不匹配自然
+ * 使其失效，命令由正式会话重新通告。
+ */
+const PROBED_COMMANDS_SESSION_ID = "__probe__";
 
 export class AgentSession {
   private status: AgentStatus = "stopped";
@@ -77,6 +91,8 @@ export class AgentSession {
   private runCount = 0;
   /** 首选模型可在会话运行期间更新（issue #153），下一次运行开始时生效。 */
   private preferredModelId?: string;
+  /** 斜杠命令缓存（issue #160）：只存内存，命令属于活的后端会话，不落盘。 */
+  private sessionCommands: SessionCommands | null = null;
 
   constructor(private readonly options: AgentSessionOptions) {
     this.preferredModelId = options.preferredModelId;
@@ -187,6 +203,40 @@ export class AgentSession {
     return [...this.pendingElicitationStates.values()].map((pending) => pending.elicitation);
   }
 
+  /**
+   * 该员工 runtime 会话当前通告的斜杠命令（issue #160）。只反映内存中最新
+   * 快照：命令由后端会话在 `available_commands_update` 里整体推送，会话
+   * 尚未建立或 runtime 不通告时返回空列表。
+   */
+  availableCommands(): readonly AgentCommand[] {
+    return this.sessionCommands?.commands ?? [];
+  }
+
+  /** 是否已有快照（runtime 通告或探测写回，含空列表）；null 表示从未通告。 */
+  commandsAnnounced(): boolean {
+    return this.sessionCommands !== null;
+  }
+
+  /**
+   * 主动探测得到的命令写回缓存（issue #160 收尾）：/api/state、探测短路和
+   * 发送校验共用这一份权威快照，探测出的命令才能直接发送。已有正式会话的
+   * 通告时拒绝写回并返回 false，让调用方放弃广播探测结果（探测竞态：
+   * 正式通告必须赢过迟到的探测帧）；写回不广播——探测结果由服务端探测
+   * 路径自己按会话广播。
+   */
+  adoptProbedCommands(commands: readonly AgentCommand[]): boolean {
+    if (this.hasRuntimeSessionCommands()) {
+      return false;
+    }
+    this.sessionCommands = { sessionId: PROBED_COMMANDS_SESSION_ID, commands: [...commands] };
+    return true;
+  }
+
+  /** 当前快照是否来自员工的正式 runtime 会话（探测写回的哨兵不算）。 */
+  hasRuntimeSessionCommands(): boolean {
+    return this.sessionCommands !== null && this.sessionCommands.sessionId !== PROBED_COMMANDS_SESSION_ID;
+  }
+
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
     const pending = this.pendingPermissionStates.get(requestId);
     if (!pending) return false;
@@ -251,6 +301,7 @@ export class AgentSession {
       onSessionConfig: this.options.modelState
         ? (snapshot) => this.options.modelState!.update(snapshot)
         : undefined,
+      onSessionCommands: (commands, sessionId) => this.rememberCommands(sessionId, commands),
       requestPermission: (request) => this.requestPermission(runId, request),
       requestElicitation: (request) => this.requestElicitation(runId, request),
       onOutput: (text) => {
@@ -283,6 +334,7 @@ export class AgentSession {
           runId,
           sessionId,
         });
+        this.reconcileCommands(sessionId);
       }
     });
 
@@ -329,6 +381,36 @@ export class AgentSession {
 
         throw error;
       });
+  }
+
+  /**
+   * 缓存 runtime 会话最新通告的命令快照并广播（issue #160）。快照整体替换，
+   * 空列表同样有效（会话没有命令）。
+   */
+  private rememberCommands(sessionId: string, commands: readonly AgentCommand[]): void {
+    this.sessionCommands = { sessionId, commands };
+    this.publish({
+      type: "agent.commands.updated",
+      conversationId: this.options.conversationId,
+      agentId: this.id,
+      commands,
+    });
+  }
+
+  /**
+   * 会话 ID 落定后核对命令缓存（issue #160）：恢复失败降级到新会话时，旧
+   * 会话通告的命令不再可信，清空并广播；命令随后由新会话重新通告补齐。
+   */
+  private reconcileCommands(sessionId: string): void {
+    const cached = this.sessionCommands;
+    if (!cached || cached.sessionId === sessionId) return;
+    this.sessionCommands = null;
+    this.publish({
+      type: "agent.commands.updated",
+      conversationId: this.options.conversationId,
+      agentId: this.id,
+      commands: [],
+    });
   }
 
   private requestPermission(runId: string, request: AgentPermissionRequest): Promise<PermissionDecision> {

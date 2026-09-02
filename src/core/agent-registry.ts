@@ -1,4 +1,4 @@
-import type { AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
+import type { AgentCommand, AgentId, AgentProfile, AgentState, ElicitationResponse, PendingElicitation, PendingPermission, PermissionDecision } from "../shared/types.ts";
 import { AgentSession, type AgentModelStateBridge } from "./agent-session.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { DEFAULT_AGENT_RUNTIMES } from "./acp-runner-registry.ts";
@@ -126,6 +126,34 @@ export class AgentRegistry {
 
   pendingElicitations(): PendingElicitation[] {
     return [...this.sessions.values()].flatMap((session) => session.pendingElicitations());
+  }
+
+  /**
+   * 已通告命令快照的员工（issue #160 收尾）。快照缺失与“快照为空”是两种
+   * 语义：未通告的员工不出现在结果里，前端据此触发主动探测；/api/state、
+   * 探测短路和发送校验都走本方法，保证命令快照只有一个权威来源。
+   */
+  availableCommands(): Record<AgentId, readonly AgentCommand[]> {
+    const result: Record<AgentId, readonly AgentCommand[]> = {};
+    for (const agentId of this.allIds()) {
+      const session = this.sessions.get(agentId);
+      if (session?.commandsAnnounced()) {
+        result[agentId] = session.availableCommands();
+      }
+    }
+    return result;
+  }
+
+  /** 把主动探测得到的命令写回员工会话缓存；正式通告已存在时拒绝并返回 false。 */
+  adoptProbedCommands(agentId: AgentId, commands: readonly AgentCommand[]): boolean {
+    const session = this.sessions.get(agentId);
+    if (!session) return false;
+    return session.adoptProbedCommands(commands);
+  }
+
+  /** 该员工当前快照是否来自正式 runtime 会话的通告（探测写回不算）。 */
+  hasRuntimeSessionCommands(agentId: AgentId): boolean {
+    return this.sessions.get(agentId)?.hasRuntimeSessionCommands() ?? false;
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {

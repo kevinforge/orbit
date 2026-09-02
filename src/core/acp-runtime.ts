@@ -11,6 +11,7 @@ import {
   methods,
   ndJsonStream,
   type AgentCapabilities,
+  type AvailableCommand,
   type CreateElicitationRequest,
   type CreateElicitationResponse,
   type ContentBlock,
@@ -38,6 +39,7 @@ import {
 
 import type {
   AgentActivityEvent,
+  AgentCommand,
   AgentElicitationRequest,
   AgentId,
   AgentModelChoice,
@@ -110,6 +112,12 @@ export type AcpTurnState = {
   inModelResponse: boolean;
 };
 
+/** 工具调用帧（tool_call / tool_call_update）的收窄类型。 */
+export type AcpToolCallUpdate = Extract<
+  SessionNotification["update"],
+  { sessionUpdate: "tool_call" | "tool_call_update" }
+>;
+
 export type AcpRuntimeDefinition = {
   kind: AgentRuntimeKind;
   displayName: string;
@@ -126,6 +134,13 @@ export type AcpRuntimeDefinition = {
    * 其余组的文本在结算时归入过程文本（process.text 快照）。
    */
   answerGroupKey?: (update: SessionNotification["update"], turn: AcpTurnState) => string | undefined;
+  /**
+   * 工具成功完成后的 runtime 专属投影（issue #161）。共享层先发出原
+   * tool.completed，再调用该钩子并发出其返回的活动，保持事件顺序；返回
+   * undefined 表示本次完成不投影（工具不在投影范围或数据不完整——消费方
+   * 必须保留既有状态，不得清空）。
+   */
+  projectToolCompletion?: (update: AcpToolCallUpdate) => AgentActivityEvent | undefined;
 };
 
 const acpConnectionPool = new AcpConnectionPool(spawnAcpConnection);
@@ -207,8 +222,26 @@ export function runAcp(
       }
       : undefined,
   };
+  // 会话建立窗口期（session/new 请求已发出、响应未返回）通告的斜杠命令快照
+  // （issue #160）：activeSessionId 尚未落定，先按会话暂存最新一帧，落定后交付。
+  const pendingCommands = new Map<string, SessionNotification>();
+  const flushPendingCommands = (sessionId: string) => {
+    const pending = pendingCommands.get(sessionId);
+    if (!pending) return;
+    pendingCommands.delete(sessionId);
+    handleSessionUpdate(pending, answerState, turnState, toolStates, options, definition);
+  };
   const handleSessionUpdateNotification = (notification: SessionNotification) => {
-    if (!acceptingUpdates || notification.sessionId !== activeSessionId) {
+    if (notification.sessionId !== activeSessionId) {
+      // 命令快照在窗口期也要保留；其余会话更新照旧丢弃。
+      if (!acceptingUpdates && notification.update.sessionUpdate === "available_commands_update") {
+        pendingCommands.set(notification.sessionId, notification);
+      }
+      return;
+    }
+    // 斜杠命令通告不依赖回合门（issue #160）：prompt 尚未发出时 runtime 也可能
+    // 推送 available_commands_update；会话 ID 匹配即接收，其余更新维持原门控。
+    if (!acceptingUpdates && notification.update.sessionUpdate !== "available_commands_update") {
       return;
     }
     handleSessionUpdate(notification, answerState, turnState, toolStates, options, definition);
@@ -239,6 +272,7 @@ export function runAcp(
     if (closed) return;
     closed = true;
     if (cancelTimer) clearTimeout(cancelTimer);
+    pendingCommands.clear();
     if (destroy) connection.destroy?.();
     else connection.close();
   };
@@ -292,6 +326,8 @@ export function runAcp(
       );
       activeSessionId = session.sessionId;
       resolveSessionId(activeSessionId);
+      // 窗口期通告的命令快照现在可以安全交付（会话 ID 已匹配）。
+      flushPendingCommands(activeSessionId);
 
       // 会话建立后、prompt 前：先回调模型快照，再尽力应用员工首选模型
       // （issue #142）。切换失败只输出过程提示，绝不让运行失败。
@@ -419,6 +455,79 @@ export async function probeAcpModelState(
     return await Promise.race([probe, deadline]);
   } finally {
     if (timeout) clearTimeout(timeout);
+    connection?.destroy?.();
+  }
+}
+
+const COMMAND_PROBE_TIMEOUT_MS = 15_000;
+const COMMAND_PROBE_ANNOUNCE_GRACE_MS = 1_500;
+
+/**
+ * 在不发送 prompt 的前提下获取 runtime 会话通告的斜杠命令（issue #160）。
+ * “输入 / 却毫无反应”的冷启动缺口（issue #160 收尾）：ACP 没有独立的命令
+ * 列表请求，命令由会话在建立时通过 `available_commands_update` 推送，因此
+ * 探测路径与模型探测一致——临时连接 + 临时 session，读取完成后销毁，不写入
+ * 员工的会话记录。通告可能在 session/new 响应前后到达，会话创建后再等一个
+ * 短宽限窗口；runtime 完全不通告时返回空数组（无法与“会话没有命令”区分，
+ * UI 统一按“没有可用命令”展示）。
+ */
+export async function probeAcpCommands(
+  definition: AcpRuntimeDefinition,
+  options: Pick<AcpRunOptions, "agentId" | "cwd" | "env">,
+  connector: AcpConnector = (runOptions, onSessionUpdate) =>
+    spawnAcpConnection(definition, runOptions, onSessionUpdate),
+  timing: { timeoutMs?: number; announceGraceMs?: number } = {},
+): Promise<AgentCommand[]> {
+  const timeoutMs = timing.timeoutMs ?? COMMAND_PROBE_TIMEOUT_MS;
+  const graceMs = timing.announceGraceMs ?? COMMAND_PROBE_ANNOUNCE_GRACE_MS;
+  const probeOptions: AcpRunOptions = {
+    ...options,
+    prompt: "",
+    approvalMode: "full-access",
+  };
+  let connection: AcpConnection | undefined;
+  let timeout: NodeJS.Timeout | undefined;
+  let graceTimer: NodeJS.Timeout | undefined;
+  try {
+    const probe = (async () => {
+      // 用属性容器规避闭包赋值的窄化问题；只保留最新一帧通告。
+      const found: { latest: AgentCommand[] | null } = { latest: null };
+      let notifyAnnounced: () => void = () => {};
+      const announcedOnce = new Promise<void>((resolve) => {
+        notifyAnnounced = resolve;
+      });
+      connection = connector(probeOptions, (notification) => {
+        if (notification.update.sessionUpdate !== "available_commands_update") return;
+        const raw = notification.update.availableCommands;
+        found.latest = toAgentCommands(Array.isArray(raw) ? raw : []);
+        notifyAnnounced();
+      });
+      const initialized = await connection.initialize(createAcpInitializeRequest());
+      validateInitializeResponse(initialized, definition.displayName);
+      await connection.newSession({
+        cwd: path.resolve(probeOptions.cwd),
+        mcpServers: [],
+      });
+      if (found.latest === null) {
+        const grace = new Promise<void>((resolve) => {
+          graceTimer = setTimeout(resolve, graceMs);
+          graceTimer.unref?.();
+        });
+        await Promise.race([announcedOnce, grace]);
+      }
+      return found.latest ?? [];
+    })();
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error(`${definition.displayName} slash-command discovery timed out.`)),
+        timeoutMs,
+      );
+      timeout.unref?.();
+    });
+    return await Promise.race([probe, deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (graceTimer) clearTimeout(graceTimer);
     connection?.destroy?.();
   }
 }
@@ -756,6 +865,13 @@ function handleSessionUpdate(
     if (snapshot) options.onSessionConfig?.(snapshot);
     return;
   }
+  if (update.sessionUpdate === "available_commands_update") {
+    // 斜杠命令快照整体替换（issue #160）；空列表同样有效，表示会话没有命令。
+    // 字段缺失或不是数组时按空列表处理，不让畸形帧打断会话。
+    const rawCommands = Array.isArray(update.availableCommands) ? update.availableCommands : [];
+    options.onSessionCommands?.(toAgentCommands(rawCommands), notification.sessionId);
+    return;
+  }
   if (update.sessionUpdate === "plan") {
     emitActivity(options, {
       type: "plan.updated",
@@ -858,6 +974,8 @@ function handleSessionUpdate(
       ...(update.rawOutput === undefined ? {} : { summary: formatValue(update.rawOutput) }),
       timestamp: new Date().toISOString(),
     });
+    const projected = definition.projectToolCompletion?.(update);
+    if (projected) emitActivity(options, projected);
   }
   if (status === "failed" && previous?.status !== "failed") {
     emitActivity(options, {
@@ -880,6 +998,22 @@ function toAgentPlanEntry(entry: {
     priority: entry.priority,
     status: entry.status,
   };
+}
+
+/** ACP AvailableCommand → Orbit AgentCommand；畸形条目（无名/无描述）直接丢弃。 */
+function toAgentCommands(commands: readonly AvailableCommand[]): AgentCommand[] {
+  const result: AgentCommand[] = [];
+  for (const command of commands) {
+    if (typeof command?.name !== "string" || !command.name.trim()) continue;
+    if (typeof command?.description !== "string" || !command.description.trim()) continue;
+    const hint = command.input?.hint;
+    result.push({
+      name: command.name,
+      description: command.description,
+      ...(typeof hint === "string" && hint.trim() ? { inputHint: hint } : {}),
+    });
+  }
+  return result;
 }
 
 function createAnswerState(): AnswerState {

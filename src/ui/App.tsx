@@ -3,8 +3,10 @@ import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
+import { matchAssignmentPrefix } from "../core/mention-router.ts";
+import { resolveSlashCommandTarget } from "../core/native-commands.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentCommand, type AgentCommandsSnapshot, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
 import { canSendMessage } from "../shared/message-validation.ts";
 import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
@@ -62,6 +64,7 @@ const initialState: AppState = {
   pendingPermissions: [],
   pendingElicitations: [],
   agentModelStates: {},
+  agentCommands: {},
 };
 
 type ActiveView = "conversation" | "analysis";
@@ -146,6 +149,11 @@ export function App() {
   // Esc 关闭候选菜单用独立标志，不复用 inputFocused：按 Esc 时输入框并未
   // 真正失焦，onFocus 不会再次触发，复用会导致菜单再也无法重新唤起。
   const [mentionDismissed, setMentionDismissed] = useState(false);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
+  // 斜杠命令探测的在途标记（issue #160 收尾）：按员工去重，探测结果落在
+  // agentCommands 快照里（ready/error），在途期间菜单显示“正在获取”。
+  const [commandProbePending, setCommandProbePending] = useState<Record<string, boolean>>({});
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -489,6 +497,124 @@ export function App() {
     const matched = state.agents.filter((agent) => agent.label.toLocaleLowerCase().startsWith(query)).map((agent) => agent.id);
     return matched;
   }, [agentIds, inputFocused, mentionDismissed, mentionDraft, state.agents]);
+  /**
+   * 斜杠命令目标（issue #160）：显式 `@员工:` 前缀唯一命中时命令直达该
+   * 员工（任意模式）；无前缀时只有直接协作沿用最近直接对话员工，简单/
+   * 复杂协作没有默认接收方，不展示原生命令菜单。
+   */
+  const slashCommandTarget = useMemo(
+    () => resolveSlashCommandTarget(content.trim(), interactionMode, state.conversation.lastDirectAgentId, state.agents),
+    [content, interactionMode, state.agents, state.conversation.lastDirectAgentId],
+  );
+  const slashCommandDraft = useMemo(
+    () => (mentionDraft ? null : findSlashCommandDraft(content, cursorIndex)),
+    [content, cursorIndex, mentionDraft],
+  );
+  const slashCommandSnapshot = slashCommandTarget
+    ? state.agentCommands[slashCommandTarget.agentId]
+    : undefined;
+  const slashCommandCandidates = useMemo(() => {
+    if (!inputFocused || slashDismissed || !slashCommandDraft || !slashCommandTarget) {
+      return [];
+    }
+    return [...filterSlashCommands(slashCommandSnapshot?.commands ?? [], slashCommandDraft.query).shown];
+  }, [inputFocused, slashDismissed, slashCommandDraft, slashCommandTarget, slashCommandSnapshot]);
+  // 菜单展开状态（issue #160 收尾）：候选列表之外还要呈现“正在获取 / 没有
+  // 命令 / 获取失败”，不再把“尚未获取过命令”误显示成毫无反应。
+  const slashMenuOpen = Boolean(inputFocused && !slashDismissed && slashCommandDraft && slashCommandTarget);
+  // 快照优先于在途标记（探测竞态收尾）：探测期间正式通告可能先经 SSE 到达，
+  // ready 快照必须立即呈现，不得停在“正在获取”；在途标记只决定快照未知或
+  // 失败重试时的 loading 表现。
+  const slashProbePending = Boolean(slashCommandTarget
+    && commandProbePending[commandProbeKey(state.workspace.id, state.conversation.id, slashCommandTarget.agentId)]);
+  const slashMenuPhase: "list" | "loading" | "empty" | "error" = slashCommandSnapshot?.status === "ready"
+    ? slashCommandSnapshot.commands.length > 0
+      ? "list"
+      : "empty"
+    : slashProbePending
+      ? "loading"
+      : slashCommandSnapshot?.status === "error"
+        ? "error"
+        : "loading";
+
+  /**
+   * 主动获取员工斜杠命令（issue #160 收尾）：ACP 没有独立的命令列表请求，
+   * 命令由 runtime 会话建立时推送，因此服务端探测端点会为员工拉起一次临时
+   * 会话。快照缺失时菜单自动调用这里补齐，结果统一落回 agentCommands 快照；
+   * 失败停在 error 快照上，由菜单提供重试，不再表现成“输入 / 无反应”。
+   */
+  async function requestAgentCommands(agentId: AgentId) {
+    if (!state.workspace.id || !state.conversation.id) {
+      return;
+    }
+    const requestedContext = currentPageContext();
+    const pendingKey = commandProbeKey(requestedContext.workspaceId, requestedContext.conversationId, agentId);
+    if (commandProbePending[pendingKey]) {
+      return;
+    }
+    setCommandProbePending((current) => ({ ...current, [pendingKey]: true }));
+    // 探测期间用户可能切到其他页面：快照事件按发起请求时的页面落地，
+    // applyEvent 的页面门控会丢弃不属于当前页的落地，不污染新页快照。
+    const applySnapshot = (snapshot: AgentCommandsSnapshot) => {
+      setState((current) => {
+        // HTTP 响应与 SSE 通告的到达顺序无法保证：正式通告先落地（ready）时，
+        // 迟到的探测响应必须让位（probeSnapshotLands），不得覆盖真实命令，
+        // 也不得把失败态盖回就绪态；用户已切页时 applyEvent 的门控照常丢弃。
+        if (!probeSnapshotLands(current.agentCommands[agentId])) {
+          return current;
+        }
+        return applyEvent(current, {
+          type: "agent.commands.updated",
+          workspaceId: requestedContext.workspaceId,
+          conversationId: requestedContext.conversationId,
+          agentId,
+          commands: snapshot.commands,
+          status: snapshot.status,
+          ...(snapshot.message ? { message: snapshot.message } : {}),
+        });
+      });
+    };
+    try {
+      const params = new URLSearchParams({
+        workspaceId: requestedContext.workspaceId,
+        conversationId: requestedContext.conversationId,
+        agentId,
+      });
+      const response = await fetch(withPageContext(`/api/agents/probe-commands?${params.toString()}`, requestedContext), {
+        method: "POST",
+      });
+      const body = await response.json().catch(() => ({})) as { ok?: boolean; snapshot?: AgentCommandsSnapshot; message?: string };
+      if (!response.ok || !body.snapshot) {
+        throw new Error(body.message ?? `获取斜杠命令失败（${response.status}）。`);
+      }
+      applySnapshot(body.snapshot);
+    } catch (error) {
+      applySnapshot({
+        status: "error",
+        commands: [],
+        message: error instanceof Error ? error.message : "获取斜杠命令失败。",
+      });
+    } finally {
+      setCommandProbePending((current) => ({ ...current, [pendingKey]: false }));
+    }
+  }
+
+  // 菜单打开而快照未知时自动探测一次；ready/error 之后不再自动重复，
+  // error 由用户显式重试，避免失败时反复拉起 runtime 进程。
+  useEffect(() => {
+    if (!slashMenuOpen || !slashCommandTarget) return;
+    if (state.agentCommands[slashCommandTarget.agentId]) return;
+    void requestAgentCommands(slashCommandTarget.agentId);
+  }, [slashMenuOpen, slashCommandTarget?.agentId, state.agentCommands]);
+
+  // 输入框隐式提示（issue #160 收尾）：直接协作目标员工的命令快照已知且非空时，
+  // 占位文案提示可输入 “/” 使用命令；快照未知时不提示也不主动探测，避免纯
+  // 浏览会话就拉起 runtime 进程。
+  const lastDirectCommandsSnapshot = state.conversation.lastDirectAgentId
+    ? state.agentCommands[state.conversation.lastDirectAgentId]
+    : undefined;
+  const composerCommandHint = lastDirectCommandsSnapshot?.status === "ready"
+    && lastDirectCommandsSnapshot.commands.length > 0;
 
   useEffect(() => {
     if (!agentsById.has(selectedAgent) && agentIds[0]) {
@@ -531,6 +657,18 @@ export function App() {
       setMentionDismissed(false);
     }
   }, [mentionDraft]);
+
+  useEffect(() => {
+    setSelectedSlashIndex(0);
+  }, [slashCommandDraft?.query]);
+
+  // Esc 关闭的斜杠菜单在草稿消失（删掉 / 或发出消息清空输入框）后允许
+  // 重新唤起；只改动查询词时保持关闭，避免继续打字被菜单打扰。
+  useEffect(() => {
+    if (!slashCommandDraft) {
+      setSlashDismissed(false);
+    }
+  }, [slashCommandDraft]);
 
   useEffect(() => {
     if (!openWorkspaceMenuId && !openConversationMenuId) return;
@@ -670,6 +808,9 @@ export function App() {
       draftMessageIdRef.current = { id: crypto.randomUUID(), content: trimmed };
     }
     try {
+      // 原生斜杠命令（issue #160 + review）：客户端只提交消息原文，是否按
+      // 命令投递、投递给谁、发什么文本全部由服务端从 content 推导——频道
+      // 历史与实际执行的命令共用同一来源，不可能再分叉。
       const body: { content: string; approvalMode: ApprovalMode; clientMessageId: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
         content: trimmed,
         approvalMode,
@@ -1354,8 +1495,79 @@ export function App() {
     }, 0);
   }
 
+  function chooseSlashCommand(command: AgentCommand) {
+    if (!slashCommandDraft) {
+      return;
+    }
+
+    // 只替换 /命令 草稿本身，保留前面的 @员工: 前缀与后面的参数文本。
+    const nextContent = composeSlashCommandCompletion(content, slashCommandDraft, command.name);
+    const nextCursorIndex = slashCommandDraft.start + command.name.length + 2;
+    setContent(nextContent);
+    setCursorIndex(nextCursorIndex);
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
+    }, 0);
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (isImeComposition(event)) {
+      return;
+    }
+
+    // 斜杠命令菜单与 @员工 菜单互斥（issue #160）："/" 草稿只在开头且
+    // @ 草稿不存在时出现，这里按菜单开放情况分流按键。
+    if (slashCommandCandidates.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSelectedSlashIndex((index) => (index + 1) % slashCommandCandidates.length);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSelectedSlashIndex((index) => (index - 1 + slashCommandCandidates.length) % slashCommandCandidates.length);
+        return;
+      }
+
+      // 命令上百时逐条移动太慢：PgUp/PgDn 按页跳动，钳在两端不回绕。
+      if (event.key === "PageDown") {
+        event.preventDefault();
+        setSelectedSlashIndex((index) => Math.min(index + SLASH_COMMAND_PAGE_SIZE, slashCommandCandidates.length - 1));
+        return;
+      }
+
+      if (event.key === "PageUp") {
+        event.preventDefault();
+        setSelectedSlashIndex((index) => Math.max(index - SLASH_COMMAND_PAGE_SIZE, 0));
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        chooseSlashCommand(slashCommandCandidates[selectedSlashIndex] ?? slashCommandCandidates[0]);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlashDismissed(true);
+        return;
+      }
+      return;
+    }
+
+    // 菜单处于状态行（获取中/无命令/失败）时没有候选可补全：Esc 关闭菜单，
+    // Enter/Tab 吞掉，避免把未完成的 / 草稿当普通消息发出；其余按键照常。
+    if (slashMenuOpen && (event.key === "Enter" || event.key === "Tab")) {
+      event.preventDefault();
+      return;
+    }
+
+    if (slashMenuOpen && event.key === "Escape") {
+      event.preventDefault();
+      setSlashDismissed(true);
       return;
     }
 
@@ -1841,9 +2053,11 @@ export function App() {
                 if (isImeComposition(event)) {
                   return;
                 }
-                // @ 候选菜单打开时，Enter/Tab/方向键/Esc 优先交给候选菜单处理，
-                // 只有菜单关闭时 Enter 才是发送消息。
-                if (mentionCandidates.length > 0) {
+                // @ 候选菜单或斜杠命令菜单打开时，Enter/Tab/方向键/Esc 优先
+                // 交给候选菜单处理；斜杠菜单只有候选、没有候选的状态行都算
+                // 打开，否则状态行阶段的 Esc 关不掉、Enter 会把未完成的
+                // / 草稿当普通消息发出。只有菜单关闭时 Enter 才是发送消息。
+                if (mentionCandidates.length > 0 || slashMenuOpen) {
                   handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);
                   return;
                 }
@@ -1859,7 +2073,9 @@ export function App() {
                   ? "先添加或启用数字员工"
                   : interactionMode === "direct"
                     ? lastDirectAgentLabel
-                      ? `继续与 ${lastDirectAgentLabel} 对话，或 @其他员工切换`
+                      ? composerCommandHint
+                        ? `继续与 ${lastDirectAgentLabel} 对话，输入 / 可用命令，或 @其他员工切换`
+                        : `继续与 ${lastDirectAgentLabel} 对话，或 @其他员工切换`
                       : "@一位数字员工开始对话"
                     : interactionMode === "supervised"
                       ? "输入目标，由监工协调数字员工"
@@ -1874,6 +2090,17 @@ export function App() {
                 candidates={mentionCandidates}
                 selectedIndex={selectedMentionIndex}
                 onSelect={chooseMention}
+              />
+            ) : slashMenuOpen && slashCommandTarget ? (
+              <SlashCommandMenu
+                commands={slashCommandCandidates}
+                filtering={Boolean(slashCommandDraft?.query.trim())}
+                targetLabel={agentsById.get(slashCommandTarget.agentId)?.label ?? slashCommandTarget.agentId}
+                phase={slashMenuPhase}
+                statusMessage={slashCommandSnapshot?.status === "error" ? slashCommandSnapshot.message : undefined}
+                selectedIndex={selectedSlashIndex}
+                onSelect={chooseSlashCommand}
+                onRetry={() => { void requestAgentCommands(slashCommandTarget.agentId); }}
               />
             ) : null}
             <div className="composerModeRow">
@@ -2326,6 +2553,105 @@ function MentionMenu(props: {
         );
       })}
       <div className="mentionHint">↑↓ select · Tab/Enter confirm · Esc close</div>
+    </div>
+  );
+}
+
+/**
+ * 斜杠命令面板（issue #160）：紧凑双行布局——命令名一行、说明一行（最多两
+ * 行截断），头尾固定，候选区独立滚动；命名空间命令拆成弱化标签展示，补全
+ * 仍写入完整原始命令名。获取中/无命令/失败以状态行呈现，失败可重试。
+ */
+function SlashCommandMenu(props: {
+  commands: readonly AgentCommand[];
+  filtering: boolean;
+  targetLabel: string;
+  phase: "list" | "loading" | "empty" | "error";
+  statusMessage?: string;
+  selectedIndex: number;
+  onSelect: (command: AgentCommand) => void;
+  onRetry: () => void;
+}) {
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  // 键盘上下/翻页切换时保持选中项在可视区域内。
+  useEffect(() => {
+    itemRefs.current[props.selectedIndex]?.scrollIntoView({ block: "nearest" });
+  }, [props.selectedIndex, props.commands]);
+
+  return (
+    <div className="mentionMenu slashCommandMenu" role="listbox" aria-label="斜杠命令">
+      <div className="slashCommandMenuHeader">
+        <strong>斜杠命令</strong>
+        <span>发送给 {props.targetLabel}</span>
+      </div>
+      {props.phase === "list" ? (
+        props.commands.length > 0 ? (
+          <div className="slashCommandMenuList">
+            {props.commands.map((command, index) => {
+              const { namespace, base } = splitSlashCommandName(command.name);
+              return (
+                <button
+                  key={command.name}
+                  ref={(node) => { itemRefs.current[index] = node; }}
+                  className={index === props.selectedIndex ? "slashCommandItem selected" : "slashCommandItem"}
+                  type="button"
+                  role="option"
+                  aria-selected={index === props.selectedIndex}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => props.onSelect(command)}
+                >
+                  <span className="slashCommandItemName">
+                    <span className="slashCommandName">/{base}</span>
+                    {namespace ? <span className="slashCommandNamespace">{namespace}</span> : null}
+                    {command.inputHint ? <span className="slashCommandInputHint">{command.inputHint}</span> : null}
+                  </span>
+                  <span className="slashCommandItemDesc">{command.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="slashCommandMenuStatus" role="status">
+            <span>没有匹配的命令，换个关键词试试。</span>
+          </div>
+        )
+      ) : (
+        <div className="slashCommandMenuStatus" role="status">
+          {props.phase === "loading" ? (
+            <>
+              <span className="slashCommandSpinner" aria-hidden="true" />
+              <span>正在获取 {props.targetLabel} 的可用命令…</span>
+            </>
+          ) : props.phase === "empty" ? (
+            <span>{props.targetLabel} 当前没有可用命令。</span>
+          ) : (
+            <>
+              <span>{props.statusMessage ?? "获取斜杠命令失败。"}</span>
+              <button
+                type="button"
+                className="slashCommandRetry"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={props.onRetry}
+              >
+                重试
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      <div className="slashCommandMenuHint">
+        {props.phase === "list" ? (
+          <>
+            <span>↑↓ 选择 · PgUp/PgDn 翻页 · Enter/Tab 补全 · Esc 关闭</span>
+            <span>
+              {props.filtering ? `${props.commands.length} 个匹配` : `${props.commands.length} 个命令 · 输入以筛选`}
+            </span>
+          </>
+        ) : (
+          <span>Esc 关闭</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -3863,6 +4189,21 @@ export function applyEvent(state: AppState, event: RuntimeEvent): AppState {
     };
   }
 
+  // 员工 runtime 会话通告的斜杠命令快照（issue #160）：会话级事件，
+  // 已由上方过滤保证属于当前会话。status 缺省为 ready（运行期通告帧）；
+  // error 由主动探测失败路径携带，UI 据此展示失败与重试。
+  if (event.type === "agent.commands.updated") {
+    const snapshot: AgentCommandsSnapshot = {
+      status: event.status ?? "ready",
+      commands: event.commands,
+      ...(event.message ? { message: event.message } : {}),
+    };
+    return {
+      ...state,
+      agentCommands: { ...state.agentCommands, [event.agentId]: snapshot },
+    };
+  }
+
   if (event.type === "permission.requested") {
     if (state.pendingPermissions.some((permission) => permission.id === event.permission.id)) {
       return state;
@@ -3987,6 +4328,7 @@ function normalizeState(nextState: AppState): AppState {
     pendingPermissions: nextState.pendingPermissions ?? [],
     pendingElicitations: nextState.pendingElicitations ?? [],
     agentModelStates: nextState.agentModelStates ?? {},
+    agentCommands: nextState.agentCommands ?? {},
   };
 }
 
@@ -4018,6 +4360,114 @@ function findMentionDraft(value: string, cursorIndex: number): { start: number; 
     end: cursorIndex,
     query,
   };
+}
+
+/**
+ * HTTP 探测响应的落地守卫（探测竞态收尾）：探测响应与 SSE 通告走不同连接，
+ * 客户端到达顺序无法保证。正式通告（ready）先落地时，迟到的 HTTP 探测结果
+ * 必须让位——既不得用探测命令覆盖真实命令，也不得把失败态盖回就绪态；快照
+ * 缺失或处于 error 态时照常落地（ready 是探测的常规结果，error 落地支持
+ * 失败后重试）。SSE 事件不受此守卫约束：后到的真实通告必须仍能整体替换。
+ */
+export function probeSnapshotLands(current: AgentCommandsSnapshot | undefined): boolean {
+  return current?.status !== "ready";
+}
+
+/** PgUp/PgDn 的候选翻页步长：与面板可视行数同级，一次跳动一屏。 */
+export const SLASH_COMMAND_PAGE_SIZE = 8;
+
+/**
+ * 探测进行中的标记按 页面+员工 维度记（issue #160 收尾）：探测请求可能跨
+ * 页面发出，同一个员工在不同会话里的探测互不干扰，也不互相误判进行中。
+ */
+export function commandProbeKey(workspaceId: string, conversationId: string, agentId: AgentId): string {
+  return `${workspaceId}:${conversationId}:${agentId}`;
+}
+
+/**
+ * 筛选目标员工的斜杠命令（issue #160 收尾）。命令多的 runtime（百余条）
+ * 不再截断候选：完整列表交给面板独立滚动，翻页交给键盘；查询词按名称
+ * 前缀 → 名称包含 → 描述包含三档排序，描述也可作为搜索入口。
+ */
+export function filterSlashCommands(
+  commands: readonly AgentCommand[],
+  query: string,
+): { shown: readonly AgentCommand[]; total: number } {
+  const keyword = query.trim().toLowerCase();
+  if (!keyword) {
+    return { shown: commands, total: commands.length };
+  }
+  const byPrefix: AgentCommand[] = [];
+  const byName: AgentCommand[] = [];
+  const byDescription: AgentCommand[] = [];
+  for (const command of commands) {
+    const name = command.name.toLowerCase();
+    if (name.startsWith(keyword)) {
+      byPrefix.push(command);
+    } else if (name.includes(keyword)) {
+      byName.push(command);
+    } else if (command.description.toLowerCase().includes(keyword)) {
+      byDescription.push(command);
+    }
+  }
+  const matched = [...byPrefix, ...byName, ...byDescription];
+  return { shown: matched, total: matched.length };
+}
+
+/**
+ * 命名空间命令（如 `mcp:fetch`、`$product-design:share`）拆成命名空间标签与
+ * 基础名展示，避免长命名空间撑破面板行宽；补全仍写入完整原始命令名。
+ */
+export function splitSlashCommandName(name: string): { namespace: string | null; base: string } {
+  const index = name.lastIndexOf(":");
+  if (index <= 0 || index === name.length - 1) {
+    return { namespace: null, base: name };
+  }
+  return { namespace: name.slice(0, index), base: name.slice(index + 1) };
+}
+
+/**
+ * 斜杠命令草稿（issue #160）：光标前文本是可选的 `@员工:` 前缀加上
+ * "/命令名"（尚无空格）时视为正在输入命令；正在输入的 @ 员工草稿优先，
+ * 因此两种菜单互不干扰，也不会在命令参数阶段反复弹出。
+ */
+export function findSlashCommandDraft(value: string, cursorIndex: number): { start: number; end: number; query: string } | null {
+  const beforeCursor = value.slice(0, cursorIndex);
+  // 前缀识别与目标解析、指派路由同一语义（matchAssignmentPrefix）。
+  const prefix = matchAssignmentPrefix(beforeCursor);
+  const body = prefix ? beforeCursor.slice(prefix.end) : beforeCursor;
+  const match = /^\/([^\s]*)$/u.exec(body);
+  if (!match) {
+    return null;
+  }
+
+  const query = match[1] ?? "";
+  // 命中只看光标前文本，但草稿 end 必须是命令词的真实结束位置：光标可以停
+  // 在词中间（把光标点回命令词里改命令），补全时只替换整词，不把光标之后
+  // 的残余字符拼回内容。
+  let end = cursorIndex;
+  while (end < value.length && !/\s/u.test(value.charAt(end))) {
+    end += 1;
+  }
+  return {
+    start: prefix ? prefix.end : 0,
+    end,
+    query,
+  };
+}
+
+/**
+ * 斜杠命令补全拼接：只替换草稿括住的 /命令 词，保留前面的 @员工: 前缀与
+ * 后面的参数文本。命令与参数之间统一为一个空格，尾随文本若自带空格分隔
+ * 则不再追加，避免出现连续空格。
+ */
+export function composeSlashCommandCompletion(
+  content: string,
+  draft: { start: number; end: number },
+  commandName: string,
+): string {
+  const tail = content.slice(draft.end).replace(/^\s+/u, "");
+  return `${content.slice(0, draft.start)}/${commandName} ${tail}`;
 }
 
 function connectionLabel(state: "connecting" | "live" | "offline"): string {

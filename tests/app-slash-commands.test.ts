@@ -1,0 +1,448 @@
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+import {
+  applyEvent,
+  composeSlashCommandCompletion,
+  filterSlashCommands,
+  findSlashCommandDraft,
+  probeSnapshotLands,
+  splitSlashCommandName,
+} from "../src/ui/App.tsx";
+import {
+  resolveSlashCommandTarget,
+  resolveSlashSendTarget,
+} from "../src/core/native-commands.ts";
+import type { AgentCommand, AgentCommandsSnapshot, AgentId, AppState } from "../src/shared/types.ts";
+
+const developer: AgentId = "developer";
+const reviewer: AgentId = "reviewer";
+
+const agents = [
+  { id: developer, label: "开发" },
+  { id: reviewer, label: "评审" },
+];
+
+// 权威快照是“员工 → 已通告命令列表”；ready/error 包装只存在于 UI 快照层。
+const commands: Record<AgentId, readonly AgentCommand[]> = {
+  [developer]: [
+    { name: "init", description: "初始化项目" },
+    { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
+  ],
+  [reviewer]: [{ name: "plan", description: "生成计划" }],
+};
+
+test("slash send targets the last direct employee without a prefix in direct mode", () => {
+  assert.deepEqual(
+    resolveSlashSendTarget("/init", "direct", developer, agents, commands),
+    { agentId: developer, commandText: "/init" },
+  );
+  assert.deepEqual(
+    resolveSlashSendTarget("/review 聚焦登录流程", "direct", developer, agents, commands),
+    { agentId: developer, commandText: "/review 聚焦登录流程" },
+    "命令参数不影响投递判定",
+  );
+  // 简单/复杂协作没有默认接收方，无前缀时不提供原生命令入口。
+  assert.equal(resolveSlashSendTarget("/init", "collaborative", developer, agents, commands), null);
+  assert.equal(resolveSlashSendTarget("/init", "supervised", developer, agents, commands), null);
+});
+
+test("an explicit @员工: prefix routes the command to that employee in every mode", () => {
+  assert.deepEqual(
+    resolveSlashSendTarget("@开发: /init", "supervised", reviewer, agents, commands),
+    { agentId: developer, commandText: "/init" },
+    "复杂协作下显式前缀直达该员工，与指派路由走向一致",
+  );
+  assert.deepEqual(
+    resolveSlashSendTarget("@开发: /init", "collaborative", undefined, agents, commands),
+    { agentId: developer, commandText: "/init" },
+  );
+  assert.deepEqual(
+    resolveSlashSendTarget("@评审: /plan", "direct", developer, agents, commands),
+    { agentId: reviewer, commandText: "/plan" },
+    "前缀命中即切换目标，不沿用最近直接对话员工",
+  );
+});
+
+test("the prefix shares the routing marker semantics: fullwidth colon and case-insensitive labels", () => {
+  assert.deepEqual(
+    resolveSlashSendTarget("@开发： /init", "supervised", reviewer, agents, commands),
+    { agentId: developer, commandText: "/init" },
+    "全角冒号与半角冒号等价，与指派路由共用同一套标记语义",
+  );
+  // 前缀标签匹配忽略大小写（与指派路由 byName 一致）。
+  const casedAgents = [
+    { id: developer, label: "Ops" },
+    { id: reviewer, label: "评审" },
+  ];
+  const casedCommands: Record<AgentId, readonly AgentCommand[]> = {
+    [developer]: [{ name: "run", description: "运行检查" }],
+    [reviewer]: [{ name: "plan", description: "生成计划" }],
+  };
+  assert.deepEqual(
+    resolveSlashSendTarget("@ops: /run", "direct", developer, casedAgents, casedCommands),
+    { agentId: developer, commandText: "/run" },
+  );
+  assert.deepEqual(resolveSlashCommandTarget("@OPS： /run", "direct", developer, casedAgents), {
+    agentId: developer,
+    commandText: "/run",
+  });
+});
+
+test("slash send falls back to normal routing without a target or an announced command", () => {
+  // 尚未确定目标员工。
+  assert.equal(resolveSlashSendTarget("/init", "direct", undefined, agents, commands), null);
+  assert.equal(resolveSlashSendTarget("/init", "collaborative", undefined, agents, commands), null);
+  // 目标员工未通告该命令，或未通告任何命令。
+  assert.equal(resolveSlashSendTarget("/compact", "direct", developer, agents, commands), null);
+  assert.equal(resolveSlashSendTarget("@评审: /init", "direct", developer, agents, commands), null);
+  // 前缀标签必须唯一命中已启用员工：未知或歧义标签都不投递。
+  assert.equal(resolveSlashSendTarget("@不存在: /init", "supervised", undefined, agents, commands), null);
+  const duplicated = [...agents, { id: "developer-2" as AgentId, label: "开发" }];
+  assert.equal(resolveSlashSendTarget("@开发: /init", "direct", developer, duplicated, commands), null);
+  // 命令名按完整词匹配：前缀命中不得投递。
+  assert.equal(resolveSlashSendTarget("/ini", "direct", developer, agents, commands), null);
+  assert.equal(resolveSlashSendTarget("@开发: /ini", "direct", developer, agents, commands), null);
+  // 非斜杠消息走路由。
+  assert.equal(resolveSlashSendTarget("hello /init", "direct", developer, agents, commands), null);
+});
+
+test("slash command target resolution mirrors the send target without the command gate", () => {
+  assert.deepEqual(resolveSlashCommandTarget("@开发: 你好", "supervised", undefined, agents), {
+    agentId: developer,
+    commandText: "你好",
+  });
+  // 前缀之后的空白分隔（含制表符）都算前缀结束。
+  assert.deepEqual(resolveSlashCommandTarget("@开发:\t/init", "direct", reviewer, agents), {
+    agentId: developer,
+    commandText: "/init",
+  });
+  // 无前缀时直接协作沿用最近员工，其余模式没有目标。
+  assert.deepEqual(resolveSlashCommandTarget("你好", "direct", reviewer, agents), {
+    agentId: reviewer,
+    commandText: "你好",
+  });
+  assert.equal(resolveSlashCommandTarget("你好", "collaborative", reviewer, agents), null);
+});
+
+const probeOrderState: AppState = {
+  workspace: { id: "ws1", name: "Workspace", path: "D:/project" },
+  conversation: { id: "conv1", name: "conv1" },
+  messages: [],
+  messageHistory: { hasOlderMessages: false, olderCursor: null },
+  agents: [], terminal: {}, runningSummaries: [], runtimeAvailability: [], pendingPermissions: [], pendingElicitations: [],
+  agentModelStates: {}, agentCommands: {},
+};
+
+/** 复现 requestAgentCommands.applySnapshot 的落地决策：守卫通过才走 applyEvent。 */
+function landHttpProbeSnapshot(current: AppState, snapshot: AgentCommandsSnapshot): AppState {
+  if (!probeSnapshotLands(current.agentCommands[developer])) {
+    return current;
+  }
+  return applyEvent(current, {
+    type: "agent.commands.updated",
+    workspaceId: current.workspace.id,
+    conversationId: current.conversation.id,
+    agentId: developer,
+    commands: snapshot.commands,
+    status: snapshot.status,
+    ...(snapshot.message ? { message: snapshot.message } : {}),
+  });
+}
+
+function sseAnnounce(current: AppState, commands: readonly AgentCommand[]): AppState {
+  // 正式通告走 applyEvent 无条件替换：后到的真实通告必须仍能整体覆盖。
+  return applyEvent(current, {
+    type: "agent.commands.updated",
+    workspaceId: current.workspace.id,
+    conversationId: current.conversation.id,
+    agentId: developer,
+    commands,
+  });
+}
+
+test("a late HTTP probe response never overwrites a ready snapshot landed earlier via SSE", () => {
+  // 评审要求的落地顺序：HTTP 探测响应生成 → SSE 正式通告落地 → HTTP 响应落地。
+  // HTTP 与 SSE 走不同连接，客户端到达顺序无法保证，最终必须保持 SSE 真实命令。
+  const probed: readonly AgentCommand[] = [{ name: "review", description: "探测结果" }];
+  const real: readonly AgentCommand[] = [{ name: "init", description: "正式通告" }];
+
+  // 1) 探测响应先到（快照缺失，正常落地）。
+  const withProbe = landHttpProbeSnapshot(probeOrderState, { status: "ready", commands: probed });
+  assert.deepEqual(withProbe.agentCommands[developer]?.commands, probed);
+
+  // 2) 正式会话通告经 SSE 落地，覆盖探测结果。
+  const withReal = sseAnnounce(withProbe, real);
+  assert.deepEqual(withReal.agentCommands[developer]?.commands, real);
+
+  // 3) 迟到的 HTTP 探测响应（ready 或 error）都不得覆盖真实命令。
+  const afterLateReady = landHttpProbeSnapshot(withReal, { status: "ready", commands: probed });
+  assert.deepEqual(
+    afterLateReady.agentCommands[developer],
+    { status: "ready", commands: real },
+    "迟到的探测 ready 不得把 SSE 真实命令覆盖回探测结果",
+  );
+  const afterLateError = landHttpProbeSnapshot(withReal, { status: "error", commands: [], message: "boom" });
+  assert.deepEqual(
+    afterLateError.agentCommands[developer],
+    { status: "ready", commands: real },
+    "迟到的探测失败不得把就绪态盖回失败态",
+  );
+});
+
+test("the landing guard admits missing and error snapshots so probes and retries still land", () => {
+  // 快照缺失：探测结果照常落地。
+  assert.equal(probeSnapshotLands(undefined), true);
+  // error 态：重试的成功或失败结果都要能替换旧失败态。
+  assert.equal(probeSnapshotLands({ status: "error", commands: [], message: "first failure" }), true);
+  // ready 态：HTTP 探测响应让位给已就绪的快照。
+  assert.equal(probeSnapshotLands({ status: "ready", commands: [] }), false);
+});
+
+test("slash command draft only matches a bare /command under the cursor", () => {
+  assert.deepEqual(findSlashCommandDraft("/ini", 4), { start: 0, end: 4, query: "ini" });
+  assert.deepEqual(findSlashCommandDraft("/", 1), { start: 0, end: 1, query: "" });
+  // 光标在中间时按光标前文本判断。
+  assert.deepEqual(findSlashCommandDraft("/init foo", 5), { start: 0, end: 5, query: "init" });
+  // 命令参数阶段与普通文本不弹菜单。
+  assert.equal(findSlashCommandDraft("/init foo", 9), null);
+  assert.equal(findSlashCommandDraft("hello /init", 11), null);
+  assert.equal(findSlashCommandDraft("/init ", 6), null);
+});
+
+test("slash command draft brackets the whole command word even with the cursor mid-word", () => {
+  // 光标可以停回命令词中间改命令：query 仍按光标前文本过滤，但草稿 end
+  // 必须扫到整词结束，补全才不会把光标后的残余字符拼回内容。
+  assert.deepEqual(findSlashCommandDraft("/review foo", 4), { start: 0, end: 7, query: "rev" });
+  assert.deepEqual(findSlashCommandDraft("/review foo", 6), { start: 0, end: 7, query: "revie" });
+  assert.deepEqual(findSlashCommandDraft("@开发: /ini foo", 9), { start: 5, end: 9, query: "ini" });
+  // 光标停在词尾或后续是空白时，end 与旧行为一致。
+  assert.deepEqual(findSlashCommandDraft("/review foo", 7), { start: 0, end: 7, query: "review" });
+  assert.deepEqual(findSlashCommandDraft("/ini", 4), { start: 0, end: 4, query: "ini" });
+});
+
+test("slash command draft brackets the /command after an @员工: prefix", () => {
+  const value = "@开发: /ini";
+  assert.deepEqual(
+    findSlashCommandDraft(value, value.length),
+    { start: 5, end: value.length, query: "ini" },
+    "草稿从前缀之后开始，补全时保留 @员工: 前缀",
+  );
+  assert.deepEqual(findSlashCommandDraft("@开发: /", 6), { start: 5, end: 6, query: "" });
+  // 全角冒号前缀与半角等价：草稿同样从前缀之后开始。
+  const fullwidth = "@开发： /";
+  assert.deepEqual(
+    findSlashCommandDraft(fullwidth, fullwidth.length),
+    { start: 5, end: fullwidth.length, query: "" },
+  );
+  // 光标还在前缀内、尚未输入 "/" 时不弹命令菜单。
+  assert.equal(findSlashCommandDraft("@开", 2), null);
+  assert.equal(findSlashCommandDraft("@开发: ", 5), null);
+  // 参数阶段不弹菜单。
+  assert.equal(findSlashCommandDraft("@开发: /init foo", 15), null);
+});
+
+test("filterSlashCommands returns the full list for the bare slash query", () => {
+  // 命令上百时不再截断候选：完整列表交给面板独立滚动、键盘翻页。
+  const many: AgentCommand[] = Array.from({ length: 105 }, (_, index) => ({
+    name: `cmd${String(index).padStart(2, "0")}`,
+    description: `命令 ${index}`,
+  }));
+  const bare = filterSlashCommands(many, "");
+  assert.equal(bare.total, 105);
+  assert.equal(bare.shown.length, 105);
+  assert.deepEqual(bare.shown[0], many[0]);
+
+  assert.deepEqual(filterSlashCommands(many, "cmd29").shown, [many[29]]);
+  assert.deepEqual(filterSlashCommands(many, "missing"), { shown: [], total: 0 });
+});
+
+test("filterSlashCommands searches names and descriptions with prefix matches first", () => {
+  const mixed: AgentCommand[] = [
+    { name: "review", description: "审查当前变更" },
+    { name: "review-branch", description: "审查分支差异" },
+    { name: "mcp:review", description: "运行远端检查器" },
+    { name: "audit", description: "Review uncommitted changes" },
+    { name: "plan", description: "生成计划" },
+  ];
+
+  // 命中排序：名称前缀 → 名称包含 → 仅描述包含；大小写不敏感。
+  const hit = filterSlashCommands(mixed, "REV");
+  assert.deepEqual(hit.shown.map((command) => command.name), ["review", "review-branch", "mcp:review", "audit"]);
+  assert.equal(hit.total, 4);
+
+  // 中文关键词走描述搜索。
+  assert.deepEqual(
+    filterSlashCommands(mixed, "审查").shown.map((command) => command.name),
+    ["review", "review-branch"],
+    "描述包含关键词的命令都命中，保持通告顺序",
+  );
+});
+
+test("splitSlashCommandName separates the namespace tag from the base name", () => {
+  assert.deepEqual(splitSlashCommandName("init"), { namespace: null, base: "init" });
+  assert.deepEqual(splitSlashCommandName("mcp:fetch"), { namespace: "mcp", base: "fetch" });
+  assert.deepEqual(splitSlashCommandName("$product-design:share"), { namespace: "$product-design", base: "share" });
+  // 命名空间内多级冒号保留完整前缀；冒号在开头或结尾时不拆分。
+  assert.deepEqual(splitSlashCommandName("a:b:c"), { namespace: "a:b", base: "c" });
+  assert.deepEqual(splitSlashCommandName(":lead"), { namespace: null, base: ":lead" });
+  assert.deepEqual(splitSlashCommandName("trail:"), { namespace: null, base: "trail:" });
+});
+
+describe("composer key wiring for the slash command menu", () => {
+  const appSource = fs.readFileSync(
+    path.resolve(import.meta.dirname, "../src/ui/App.tsx"),
+    "utf-8",
+  );
+
+  test("the slash menu branch handles Enter/Tab, arrows, and Esc inside handleComposerKeyDown", () => {
+    const handler = appSource.match(/function handleComposerKeyDown\([\s\S]*?\n  \}/)?.[0] ?? "";
+    assert.ok(handler, "handleComposerKeyDown must exist in App.tsx");
+    const slashBranch = handler.match(/if \(slashCommandCandidates\.length > 0\) \{[\s\S]*?\n    \}/)?.[0] ?? "";
+    assert.ok(slashBranch, "the slash menu must get first crack at composer keys");
+    assert.ok(slashBranch.includes("chooseSlashCommand("), "Enter/Tab must complete the command instead of sending");
+    assert.ok(slashBranch.includes("setSlashDismissed(true)"), "Esc must dismiss via the dedicated flag so the menu can reopen");
+    assert.ok(slashBranch.includes('"PageDown"') && slashBranch.includes('"PageUp"'), "PgUp/PgDn must page through long command lists");
+    assert.ok(
+      !slashBranch.includes("setInputFocused(false)"),
+      "Esc must not clear inputFocused: the textarea keeps DOM focus, so onFocus never refires and the menu could never reopen",
+    );
+  });
+
+  test("slash dismissal blocks candidates, gates on a target, and resets when the draft is gone", () => {
+    const memo = appSource.match(/const slashCommandCandidates = useMemo\(\(\) => \{[\s\S]*?\n  \}, \[/);
+    assert.ok(memo, "slashCommandCandidates memo must exist in App.tsx");
+    assert.ok(memo[0].includes("slashDismissed"), "candidates must respect the dismissal flag");
+    assert.ok(memo[0].includes("slashCommandTarget"), "candidates must be gated on a resolved target employee");
+
+    const resetEffect = appSource.match(
+      /useEffect\(\(\) => \{\s*if \(!slashCommandDraft\) \{\s*setSlashDismissed\(false\);\s*\}\s*\}, \[slashCommandDraft\]\);/,
+    );
+    assert.ok(resetEffect, "dismissal must reset when the slash draft disappears so Esc can re-invoke the menu");
+  });
+
+  test("an active mention draft suppresses the slash draft so the two menus stay exclusive", () => {
+    const memoIndex = appSource.indexOf("const slashCommandDraft = useMemo(");
+    assert.ok(memoIndex > 0, "slashCommandDraft memo must exist in App.tsx");
+    const memoBody = appSource.slice(memoIndex, appSource.indexOf(");", memoIndex));
+    assert.ok(
+      memoBody.includes("mentionDraft ? null : findSlashCommandDraft"),
+      "a mention draft must take priority over the slash command draft",
+    );
+  });
+
+  test("slash completion splices only the /command draft, preserving the prefix and trailing text", () => {
+    const fnIndex = appSource.indexOf("function chooseSlashCommand(");
+    assert.ok(fnIndex > 0, "chooseSlashCommand must exist in App.tsx");
+    const fnBody = appSource.slice(fnIndex, appSource.indexOf("\n  }", fnIndex));
+    assert.ok(
+      fnBody.includes("composeSlashCommandCompletion("),
+      "completion must go through the shared splicer so the draft replacement stays behavior-tested",
+    );
+  });
+
+  test("composeSlashCommandCompletion replaces the whole command word and normalizes the separator", () => {
+    // 光标停在命令词中间补全：整词被替换，光标后的残余不得拼回内容。
+    assert.equal(
+      composeSlashCommandCompletion("/review foo", { start: 0, end: 7 }, "review"),
+      "/review foo",
+      "补全 review 不得把光标后的 iew 拼回去",
+    );
+    assert.equal(
+      composeSlashCommandCompletion("/review foo", { start: 0, end: 7 }, "review-branch"),
+      "/review-branch foo",
+    );
+    // 光标在词尾（无尾随文本）：补全后命令后带一个空格，等待输入参数。
+    assert.equal(composeSlashCommandCompletion("/rev", { start: 0, end: 4 }, "review"), "/review ");
+    // 尾随文本自带空格分隔时不重复追加，避免连续空格。
+    assert.equal(composeSlashCommandCompletion("/review   foo", { start: 0, end: 7 }, "review"), "/review foo");
+    // @员工: 前缀保留。
+    assert.equal(
+      composeSlashCommandCompletion("@开发: /ini foo", { start: 5, end: 9 }, "init"),
+      "@开发: /init foo",
+    );
+    assert.equal(composeSlashCommandCompletion("@开发: /ini", { start: 5, end: 9 }, "init"), "@开发: /init ");
+  });
+
+  test("the status phase stays keyboard-reachable: the outer guard admits a candidate-less menu", () => {
+    assert.ok(
+      appSource.includes("mentionCandidates.length > 0 || slashMenuOpen"),
+      "状态行（获取中/无命令/失败）没有候选，外层守卫必须按菜单开放而不是候选数分流，否则 Esc 关不掉、Enter 把未完成的 / 草稿当普通消息发出",
+    );
+    const handler = appSource.match(/function handleComposerKeyDown\([\s\S]*?\n  \}/)?.[0] ?? "";
+    assert.ok(handler, "handleComposerKeyDown must exist in App.tsx");
+    const candidatesBranch = handler.match(/if \(slashCommandCandidates\.length > 0\) \{[\s\S]*?\n    \}/)?.[0] ?? "";
+    assert.ok(candidatesBranch, "the candidates branch must exist first");
+    const statusBranch = handler.slice((handler.indexOf(candidatesBranch)) + candidatesBranch.length);
+    assert.match(
+      statusBranch,
+      /if \(slashMenuOpen && \(event\.key === "Enter" \|\| event\.key === "Tab"\)\) \{\s*event\.preventDefault\(\);\s*return;/,
+      "状态行阶段 Enter/Tab 必须被吞掉，不得把未完成的 / 草稿当普通消息发出",
+    );
+    assert.match(
+      statusBranch,
+      /if \(slashMenuOpen && event\.key === "Escape"\) \{\s*event\.preventDefault\(\);\s*setSlashDismissed\(true\);/,
+      "状态行阶段 Esc 必须能关闭菜单",
+    );
+  });
+});
+
+describe("probe lifecycle for the slash command menu", () => {
+  const appSource = fs.readFileSync(
+    path.resolve(import.meta.dirname, "../src/ui/App.tsx"),
+    "utf-8",
+  );
+
+  test("probe responses land with the requesting page context and pending state is per page+employee", () => {
+    const probe = appSource.match(/async function requestAgentCommands\([\s\S]*?\n  \}/)?.[0] ?? "";
+    assert.ok(probe, "requestAgentCommands must exist in App.tsx");
+    assert.ok(
+      probe.includes("const requestedContext = currentPageContext();"),
+      "探测请求必须绑定发起时的页面上下文",
+    );
+    assert.ok(
+      probe.includes("commandProbeKey(requestedContext.workspaceId, requestedContext.conversationId, agentId)"),
+      "在途标记必须按 页面+员工 记，跨页探测互不干扰",
+    );
+    const applySnapshot = probe.match(/const applySnapshot = \(snapshot: AgentCommandsSnapshot\) => \{[\s\S]*?\n    \};/)?.[0] ?? "";
+    assert.ok(applySnapshot, "快照落地函数必须存在");
+    assert.ok(
+      applySnapshot.includes("workspaceId: requestedContext.workspaceId")
+        && applySnapshot.includes("conversationId: requestedContext.conversationId"),
+      "探测响应必须按发起请求时的页面落地：applyEvent 的页面门控会丢弃不属于当前页的落地，不污染切换后的新页快照",
+    );
+    assert.ok(
+      applySnapshot.includes("probeSnapshotLands(current.agentCommands[agentId])"),
+      "HTTP 探测响应落地必须经过 ready 守卫：SSE 先到的正式通告不得被迟到的响应覆盖",
+    );
+  });
+
+  test("snapshot absence triggers one probe per page and the loading phase reads the matching pending flag", () => {
+    // 在途标记（slashProbePending）与菜单阶段（slashMenuPhase）是相邻的两个
+    // 声明，一起切片才能同时断言“读当前页 key”与“ready 优先于 loading”。
+    const phaseStart = appSource.indexOf("const slashProbePending");
+    const phaseEnd = appSource.indexOf(";", appSource.indexOf("const slashMenuPhase"));
+    const phase = phaseStart > -1 && phaseEnd > phaseStart ? appSource.slice(phaseStart, phaseEnd + 1) : "";
+    assert.ok(phase, "slashMenuPhase must exist in App.tsx");
+    assert.ok(
+      phase.includes("commandProbeKey(state.workspace.id, state.conversation.id"),
+      "状态行必须读当前页面的在途标记，跨页探测不得误判本页进行中",
+    );
+    // 在途探测只是“未知快照”的占位 loading：正式通告先到时 ready 快照必须
+    // 立即生效，不得被尚未返回的探测 loading 掩盖（二轮 review 的 UI 侧竞态）。
+    // pendingIdx 取三元分支里的用法而非 const 声明处。
+    const readyIdx = phase.indexOf('slashCommandSnapshot?.status === "ready"');
+    const pendingIdx = phase.indexOf(": slashProbePending");
+    assert.ok(readyIdx > -1 && pendingIdx > readyIdx, "ready 快照的判断必须先于在途探测 loading，正式通告不被探测掩盖");
+    const effect = appSource.match(
+      /useEffect\(\(\) => \{\s*if \(!slashMenuOpen \|\| !slashCommandTarget\) return;[\s\S]*?\}, \[slashMenuOpen/,
+    );
+    assert.ok(effect, "菜单打开而快照未知时必须自动探测一次");
+    assert.ok(
+      effect?.[0].includes("state.agentCommands[slashCommandTarget.agentId]"),
+      "已有快照（含空列表与失败态）时不得重复探测：失败由用户显式重试，避免反复拉起 runtime 进程",
+    );
+  });
+});

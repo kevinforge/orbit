@@ -8,7 +8,7 @@ import { AgentSession } from "../src/core/agent-session.ts";
 import { AgentRunCancelledError, type AgentRuntime, type AgentRuntimeRunOptions } from "../src/core/agent-runtime.ts";
 import { EventBus } from "../src/core/event-bus.ts";
 import { SessionStore } from "../src/core/session-store.ts";
-import type { AgentModelStateSnapshot, MessageAttachment } from "../src/shared/types.ts";
+import type { AgentCommand, AgentModelStateSnapshot, MessageAttachment, RuntimeEvent } from "../src/shared/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orbit-agent-session-test-"));
@@ -1040,6 +1040,199 @@ test("model preference and snapshot bridge reach the runtime run options", async
   const next = { ...lastSnapshot, currentValue: "model-b" };
   controlled.calls[0]!.onSessionConfig!(next);
   assert.deepEqual(updates, [next]);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---- issue #160：员工会话的斜杠命令快照 ----
+
+function commandsUpdatedEvents(events: RuntimeEvent[]): Array<Extract<RuntimeEvent, { type: "agent.commands.updated" }>> {
+  return events.filter((event): event is Extract<RuntimeEvent, { type: "agent.commands.updated" }> => event.type === "agent.commands.updated");
+}
+
+test("slash command announcements are cached and published as conversation events", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const controlled = controllableRuntime("ok", "sess-1");
+  const events: RuntimeEvent[] = [];
+  const eventBus = new EventBus();
+  eventBus.subscribe((event) => events.push(event));
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: controlled.runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "conv-commands",
+  });
+  session.start();
+
+  const result = await session.send("run-1", "hello");
+  assert.equal(result.content, "ok");
+  assert.deepEqual(session.availableCommands(), [], "会话未通告前不得有命令");
+
+  const commands: AgentCommand[] = [
+    { name: "init", description: "初始化项目" },
+    { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
+  ];
+  controlled.calls[0]!.onSessionCommands!(commands, "sess-1");
+
+  assert.deepEqual(session.availableCommands(), commands);
+  const published = commandsUpdatedEvents(events);
+  assert.equal(published.length, 1);
+  assert.equal(published[0]!.conversationId, "conv-commands");
+  assert.equal(published[0]!.agentId, "developer");
+  assert.deepEqual(published[0]!.commands, commands);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a replacement session id clears the cached command snapshot", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const events: RuntimeEvent[] = [];
+  const eventBus = new EventBus();
+  eventBus.subscribe((event) => events.push(event));
+  const calls: AgentRuntimeRunOptions[] = [];
+  let nextSessionId = "sess-1";
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: {
+      kind: "codebuddy",
+      run(options) {
+        calls.push(options);
+        return {
+          process: { kill() {}, pid: 12345, interrupt() {} },
+          result: Promise.resolve("ok"),
+          sessionId: Promise.resolve(nextSessionId),
+        };
+      },
+    },
+    eventBus,
+    sessionStore: store,
+    conversationId: "conv-commands",
+  });
+  session.start();
+
+  await session.send("run-1", "hello");
+  const commands: AgentCommand[] = [{ name: "init", description: "初始化项目" }];
+  calls[0]!.onSessionCommands!(commands, "sess-1");
+  assert.deepEqual(session.availableCommands(), commands);
+
+  // 恢复失败降级：新一轮落定不同的 runtime 会话 id，旧通告不再可信。
+  nextSessionId = "sess-2";
+  await session.send("run-2", "again");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(session.availableCommands(), [], "替换会话后命令缓存必须清空");
+  const published = commandsUpdatedEvents(events);
+  assert.equal(published.length, 2);
+  assert.deepEqual(published[1]!.commands, [], "清空必须以空列表广播给打开的页面");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---- issue #160 收尾：探测写回与正式通告共用一份权威快照 ----
+
+test("probed commands write back as the authoritative snapshot without publishing", () => {
+  const dir = tmpDir();
+  const events: RuntimeEvent[] = [];
+  const eventBus = new EventBus();
+  eventBus.subscribe((event) => events.push(event));
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: {
+      kind: "claude-code",
+      run() { throw new Error("探测写回不需要真实运行"); },
+    },
+    eventBus,
+    sessionStore: new SessionStore(dir),
+    conversationId: "conv-probe",
+  });
+  session.start();
+
+  assert.equal(session.commandsAnnounced(), false, "从未通告时不得伪造快照");
+  const commands: AgentCommand[] = [{ name: "review", description: "审查当前变更" }];
+  assert.equal(session.adoptProbedCommands(commands), true, "无正式通告时探测写回必须被采纳");
+
+  assert.equal(session.commandsAnnounced(), true, "写回后 /api/state 与发送校验必须能看到这些命令");
+  assert.deepEqual(session.availableCommands(), commands);
+  assert.deepEqual(commandsUpdatedEvents(events), [], "写回不广播：探测结果由服务端探测路径自己按会话广播");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a late probe write-back cannot clobber a real announcement", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const controlled = controllableRuntime("ok", "sess-1");
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: controlled.runtime,
+    eventBus: new EventBus(),
+    sessionStore: store,
+    conversationId: "conv-probe",
+  });
+  session.start();
+  await session.send("run-1", "hello");
+
+  const commands: AgentCommand[] = [{ name: "init", description: "初始化项目" }];
+  controlled.calls[0]!.onSessionCommands!(commands, "sess-1");
+  assert.deepEqual(session.availableCommands(), commands);
+
+  assert.equal(
+    session.adoptProbedCommands([{ name: "probed", description: "迟到的探测结果" }]),
+    false,
+    "写回必须报告被拒绝：服务端探测路径据此放弃广播探测结果",
+  );
+  assert.deepEqual(session.availableCommands(), commands, "正式会话已通告后探测写回不得覆盖真实数据");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a probed snapshot is invalidated when the real session lands and is repopulated by its announcement", async () => {
+  const dir = tmpDir();
+  const store = new SessionStore(dir);
+  const events: RuntimeEvent[] = [];
+  const eventBus = new EventBus();
+  eventBus.subscribe((event) => events.push(event));
+  const controlled = controllableRuntime("ok", "sess-1");
+  const session = new AgentSession({
+    id: "developer",
+    label: "Developer",
+    cwd: process.cwd(),
+    runtime: controlled.runtime,
+    eventBus,
+    sessionStore: store,
+    conversationId: "conv-probe",
+  });
+  session.start();
+
+  const probed: AgentCommand[] = [{ name: "review", description: "临时会话探测结果" }];
+  assert.equal(session.adoptProbedCommands(probed), true);
+  assert.deepEqual(session.availableCommands(), probed);
+
+  // 正式会话落定：探测哨兵与真实会话 id 不匹配，缓存失效并广播空列表。
+  await session.send("run-1", "hello");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(session.availableCommands(), [], "探测写回的命令在正式会话落定后必须失效");
+  const published = commandsUpdatedEvents(events);
+  assert.equal(published.length, 1);
+  assert.deepEqual(published[0]!.commands, [], "失效必须以空列表广播给打开的页面");
+
+  // 正式会话通告随后补齐命令，且此后快照归属真实会话。
+  const announced: AgentCommand[] = [{ name: "init", description: "初始化项目" }];
+  controlled.calls[0]!.onSessionCommands!(announced, "sess-1");
+  assert.deepEqual(session.availableCommands(), announced);
+  assert.equal(session.adoptProbedCommands(probed), false, "正式通告之后探测写回必须被拒绝");
+  assert.deepEqual(session.availableCommands(), announced, "正式通告之后探测写回不得再覆盖");
 
   fs.rmSync(dir, { recursive: true, force: true });
 });

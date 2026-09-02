@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { applyEvent, buildProcessTimeline, mergeModelProbeResponse, mergeProbedConfigs, upsertMessage } from "../src/ui/App.tsx";
-import type { AgentActivityEvent, AgentModelStateSnapshot, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
+import type { AgentActivityEvent, AgentCommand, AgentModelStateSnapshot, AgentPlanSnapshot, AppState, ChatMessage } from "../src/shared/types.ts";
 
 const CONVERSATION = "conv1";
 
@@ -25,7 +25,7 @@ function state(messages: ChatMessage[]): AppState {
     messages,
     messageHistory: { hasOlderMessages: false, olderCursor: null },
     agents: [], terminal: {}, runningSummaries: [], runtimeAvailability: [], pendingPermissions: [], pendingElicitations: [],
-    agentModelStates: {},
+    agentModelStates: {}, agentCommands: {},
   };
 }
 
@@ -364,6 +364,84 @@ test("agent.model_state snapshots are stored per agent without conversation gati
     modelState: { ...snapshot, currentValue: "opus" },
   });
   assert.equal(otherWorkspace.agentModelStates.implementation, snapshot, "其他工作区的快照不得覆盖当前状态");
+});
+
+// ---- issue #160：斜杠命令快照事件进入 UI 状态 ----
+
+test("agent.commands.updated snapshots are stored per agent and gated by page scope", () => {
+  const commands: AgentCommand[] = [
+    { name: "init", description: "初始化项目" },
+    { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
+  ];
+  // 运行期通告帧不带 status：默认落为 ready 快照。
+  const updated = applyEvent(state([agentMessage()]), {
+    type: "agent.commands.updated",
+    workspaceId: "ws1",
+    conversationId: CONVERSATION,
+    agentId: "implementation",
+    commands,
+  });
+  assert.deepEqual(updated.agentCommands.implementation, { status: "ready", commands });
+
+  // 空通告同样生效：替换会话后的清空必须到达页面。
+  const cleared = applyEvent(updated, {
+    type: "agent.commands.updated",
+    workspaceId: "ws1",
+    conversationId: CONVERSATION,
+    agentId: "implementation",
+    commands: [],
+  });
+  assert.deepEqual(cleared.agentCommands.implementation, { status: "ready", commands: [] });
+
+  // 其他会话/其他工作区的同名员工不得覆盖当前页面。
+  const otherConversation = applyEvent(updated, {
+    type: "agent.commands.updated",
+    workspaceId: "ws1",
+    conversationId: "conv2",
+    agentId: "implementation",
+    commands: [],
+  });
+  assert.deepEqual(otherConversation.agentCommands.implementation, { status: "ready", commands }, "其他会话的清空不得影响当前页面");
+  const otherWorkspace = applyEvent(updated, {
+    type: "agent.commands.updated",
+    workspaceId: "ws2",
+    conversationId: CONVERSATION,
+    agentId: "implementation",
+    commands: [],
+  });
+  assert.deepEqual(otherWorkspace.agentCommands.implementation, { status: "ready", commands }, "其他工作区的清空不得影响当前页面");
+});
+
+test("agent.commands.updated carries probe failure as an error snapshot", () => {
+  // 主动探测失败（issue #160 收尾）：error 快照携带原因，UI 据此展示失败与重试，
+  // 不再与“尚未获取”“没有命令”混为一谈。
+  const failed = applyEvent(state([agentMessage()]), {
+    type: "agent.commands.updated",
+    workspaceId: "ws1",
+    conversationId: CONVERSATION,
+    agentId: "implementation",
+    commands: [],
+    status: "error",
+    message: "claude-code slash-command discovery timed out.",
+  });
+  assert.deepEqual(failed.agentCommands.implementation, {
+    status: "error",
+    commands: [],
+    message: "claude-code slash-command discovery timed out.",
+  });
+
+  // 后续就绪通告整体替换失败快照。
+  const recovered = applyEvent(failed, {
+    type: "agent.commands.updated",
+    workspaceId: "ws1",
+    conversationId: CONVERSATION,
+    agentId: "implementation",
+    commands: [{ name: "init", description: "初始化项目" }],
+  });
+  assert.deepEqual(recovered.agentCommands.implementation, {
+    status: "ready",
+    commands: [{ name: "init", description: "初始化项目" }],
+  });
 });
 
 test("model probe responses preserve unsaved local employee configuration", () => {

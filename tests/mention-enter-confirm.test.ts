@@ -18,21 +18,27 @@ const appSource = fs.readFileSync(
 );
 
 describe("mention menu Enter confirm", () => {
-  test("composer dispatches to the mention menu before the Enter-send branch", () => {
+  test("composer dispatches to either candidate menu before the Enter-send branch", () => {
     const guardIndex = appSource.indexOf("if (isImeComposition(event)) {");
-    const mentionOpenIndex = appSource.indexOf("if (mentionCandidates.length > 0) {");
+    const dispatchGuardIndex = appSource.indexOf(
+      "if (mentionCandidates.length > 0 || slashMenuOpen) {",
+    );
     const dispatchIndex = appSource.indexOf(
       "handleComposerKeyDown(event as unknown as KeyboardEvent<HTMLInputElement>);",
     );
     const sendIndex = appSource.indexOf("sendMessage(event as unknown as FormEvent<HTMLFormElement>)");
 
     assert.ok(guardIndex > 0, "composer onKeyDown must keep the composition guard");
-    assert.ok(mentionOpenIndex > guardIndex, "mention dispatch must come after the composition guard");
-    assert.ok(dispatchIndex > mentionOpenIndex, "mention dispatch must be guarded by open candidates");
-    assert.ok(sendIndex > dispatchIndex, "Enter-send must run only when the mention menu is closed");
+    assert.ok(
+      dispatchGuardIndex > 0,
+      "the dispatch guard must cover both menus: mention candidates and the slash menu in every phase (candidates or status line)",
+    );
+    assert.ok(dispatchGuardIndex > guardIndex, "menu dispatch must come after the composition guard");
+    assert.ok(dispatchIndex > dispatchGuardIndex, "menu dispatch must be gated by open candidates of either menu");
+    assert.ok(sendIndex > dispatchIndex, "Enter-send must run only when both menus are closed");
 
     const dispatchBlock = appSource.slice(dispatchIndex, sendIndex);
-    assert.ok(dispatchBlock.includes("return;"), "handled mention keys must not fall through to send");
+    assert.ok(dispatchBlock.includes("return;"), "handled menu keys must not fall through to send");
   });
 
   test("menu-closed Enter still sends; the send condition stays shift-guarded", () => {

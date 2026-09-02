@@ -225,6 +225,91 @@ test("propagates the source approval mode to the agent run and result message", 
   assert.equal(messages.get(run.resultMessageId)?.approvalMode, "full-access");
 });
 
+test("native commands reach the runtime as raw text without prompt assembly or follow-up routing", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const pending = deferred();
+  let buildPromptCalls = 0;
+  let onRunCompletedCalls = 0;
+  const prompts: string[] = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(_runId: string, prompt: string) {
+            prompts.push(prompt);
+            return pending.promise;
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) {
+      buildPromptCalls++;
+      return `context\n${prompt}`;
+    },
+    onRunCompleted() { onRunCompletedCalls++; },
+  });
+
+  manager.enqueueNativeCommand("developer", "/init", createSourceMessage());
+
+  assert.deepEqual(prompts, ["/init"], "runtime must receive the raw command text unchanged");
+  assert.equal(buildPromptCalls, 0, "native command delivery must skip prompt assembly");
+  const [resultMessage] = messages.list();
+  assert.equal(resultMessage?.kind, "agent", "命令投递仍产生常规的员工结果消息");
+
+  pending.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(messages.get(resultMessage!.id)?.status, "done", "命令运行正常结算");
+  assert.equal(onRunCompletedCalls, 0, "native commands must not trigger follow-up routing");
+});
+
+test("native commands share the same serialized slot as regular runs", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const first = deferred();
+  const second = deferred();
+  const pending = [first, second];
+  const prompts: string[] = [];
+
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(_runId: string, prompt: string) {
+            prompts.push(prompt);
+            return pending.shift()?.promise ?? Promise.reject(new Error("unexpected run"));
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  manager.enqueue("developer", "regular task", createSourceMessage());
+  manager.enqueueNativeCommand("developer", "/init", createSourceMessage());
+
+  assert.deepEqual(prompts, ["regular task"], "native command must wait for the active run to settle");
+
+  first.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(prompts, ["regular task", "/init"]);
+
+  second.resolve({ content: "done" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
 test("keeps the latest bounded plan snapshot live and persists it only at settlement", async () => {
   const messages = new MessageStore();
   const eventBus = new EventBus();
@@ -286,6 +371,86 @@ test("keeps the latest bounded plan snapshot live and persists it only at settle
   }
   // 结算后：工具/状态活动仍然不落盘。
   assert.equal(settled?.activity, undefined);
+});
+
+test("keeps the slot busy until a delayed runtime settles, then persists the latest codebuddy plan", async () => {
+  const messages = new MessageStore();
+  const eventBus = new EventBus();
+  const pending = deferred();
+  const calls: string[] = [];
+  const manager = new RunManager({
+    conversationId: "test-conv",
+    messages,
+    eventBus,
+    agents: {
+      get() {
+        return {
+          send(runId: string) {
+            calls.push(runId);
+            return calls.length === 1 ? pending.promise : Promise.resolve({ content: "second done" });
+          },
+          interrupt() { return true; },
+        };
+      },
+    },
+    buildPrompt(_agentId, prompt) { return prompt; },
+    onRunCompleted() {},
+  });
+
+  manager.enqueue("codebuddy-worker", "first", createSourceMessage());
+  manager.enqueue("codebuddy-worker", "second", createSourceMessage());
+  const running = messages.list()[0]!;
+  assert.ok(running.runId, "the agent message must carry the active run id");
+  const publish = (activity: AgentActivityEvent) => eventBus.publish({
+    type: "runtime.activity",
+    conversationId: "test-conv",
+    agentId: "codebuddy-worker",
+    runId: running.runId!,
+    activity,
+  });
+
+  const ts = () => new Date().toISOString();
+  publish({
+    type: "plan.updated",
+    plan: {
+      id: "codebuddy-tasks",
+      format: "items",
+      entries: [{ content: "实现修改", priority: "medium", status: "in_progress" }],
+    },
+    timestamp: ts(),
+  });
+  publish({ type: "process.text", text: "最终回复", stream: "answer", answerGroup: "codebuddy-response-1", timestamp: ts() });
+
+  // 延迟期间（prompt response 未返回）：消息仍 running、计划不落盘、下一条任务不启动。
+  assert.equal(messages.get(running.id)?.status, "running");
+  assert.equal(messages.get(running.id)?.plan, undefined);
+  assert.deepEqual(calls, [running.runId!]);
+
+  // 运行中收到的最新快照整体替换。
+  publish({
+    type: "plan.updated",
+    plan: {
+      id: "codebuddy-tasks",
+      format: "items",
+      entries: [{ content: "实现修改", priority: "medium", status: "completed" }],
+    },
+    timestamp: ts(),
+  });
+
+  pending.resolve({ content: "最终回复" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const settled = messages.get(running.id);
+  assert.equal(settled?.status, "done");
+  assert.equal(settled?.content, "最终回复");
+  // 结算后最新计划快照随消息持久化，可从消息历史恢复。
+  assert.deepEqual(settled?.plan, {
+    id: "codebuddy-tasks",
+    format: "items",
+    entries: [{ content: "实现修改", priority: "medium", status: "completed" }],
+  });
+  // 执行槽在前一运行结算后才释放给排队任务。
+  assert.equal(calls.length, 2);
 });
 
 test("settlement explicitly clears an absent process timeline and a removed plan", async () => {
