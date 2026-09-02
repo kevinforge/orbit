@@ -5,6 +5,7 @@ import path from "node:path";
 
 import {
   applyEvent,
+  composeSlashCommandCompletion,
   filterSlashCommands,
   findSlashCommandDraft,
   probeSnapshotLands,
@@ -211,6 +212,17 @@ test("slash command draft only matches a bare /command under the cursor", () => 
   assert.equal(findSlashCommandDraft("/init ", 6), null);
 });
 
+test("slash command draft brackets the whole command word even with the cursor mid-word", () => {
+  // 光标可以停回命令词中间改命令：query 仍按光标前文本过滤，但草稿 end
+  // 必须扫到整词结束，补全才不会把光标后的残余字符拼回内容。
+  assert.deepEqual(findSlashCommandDraft("/review foo", 4), { start: 0, end: 7, query: "rev" });
+  assert.deepEqual(findSlashCommandDraft("/review foo", 6), { start: 0, end: 7, query: "revie" });
+  assert.deepEqual(findSlashCommandDraft("@开发: /ini foo", 9), { start: 5, end: 9, query: "ini" });
+  // 光标停在词尾或后续是空白时，end 与旧行为一致。
+  assert.deepEqual(findSlashCommandDraft("/review foo", 7), { start: 0, end: 7, query: "review" });
+  assert.deepEqual(findSlashCommandDraft("/ini", 4), { start: 0, end: 4, query: "ini" });
+});
+
 test("slash command draft brackets the /command after an @员工: prefix", () => {
   const value = "@开发: /ini";
   assert.deepEqual(
@@ -326,13 +338,32 @@ describe("composer key wiring for the slash command menu", () => {
     assert.ok(fnIndex > 0, "chooseSlashCommand must exist in App.tsx");
     const fnBody = appSource.slice(fnIndex, appSource.indexOf("\n  }", fnIndex));
     assert.ok(
-      fnBody.includes("content.slice(0, slashCommandDraft.start)"),
-      "completion must keep the @员工: prefix before the draft start",
+      fnBody.includes("composeSlashCommandCompletion("),
+      "completion must go through the shared splicer so the draft replacement stays behavior-tested",
     );
-    assert.ok(
-      fnBody.includes("content.slice(slashCommandDraft.end)"),
-      "completion must keep any trailing text after the cursor",
+  });
+
+  test("composeSlashCommandCompletion replaces the whole command word and normalizes the separator", () => {
+    // 光标停在命令词中间补全：整词被替换，光标后的残余不得拼回内容。
+    assert.equal(
+      composeSlashCommandCompletion("/review foo", { start: 0, end: 7 }, "review"),
+      "/review foo",
+      "补全 review 不得把光标后的 iew 拼回去",
     );
+    assert.equal(
+      composeSlashCommandCompletion("/review foo", { start: 0, end: 7 }, "review-branch"),
+      "/review-branch foo",
+    );
+    // 光标在词尾（无尾随文本）：补全后命令后带一个空格，等待输入参数。
+    assert.equal(composeSlashCommandCompletion("/rev", { start: 0, end: 4 }, "review"), "/review ");
+    // 尾随文本自带空格分隔时不重复追加，避免连续空格。
+    assert.equal(composeSlashCommandCompletion("/review   foo", { start: 0, end: 7 }, "review"), "/review foo");
+    // @员工: 前缀保留。
+    assert.equal(
+      composeSlashCommandCompletion("@开发: /ini foo", { start: 5, end: 9 }, "init"),
+      "@开发: /init foo",
+    );
+    assert.equal(composeSlashCommandCompletion("@开发: /ini", { start: 5, end: 9 }, "init"), "@开发: /init ");
   });
 
   test("the status phase stays keyboard-reachable: the outer guard admits a candidate-less menu", () => {

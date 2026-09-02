@@ -1501,7 +1501,7 @@ export function App() {
     }
 
     // 只替换 /命令 草稿本身，保留前面的 @员工: 前缀与后面的参数文本。
-    const nextContent = `${content.slice(0, slashCommandDraft.start)}/${command.name} ${content.slice(slashCommandDraft.end)}`;
+    const nextContent = composeSlashCommandCompletion(content, slashCommandDraft, command.name);
     const nextCursorIndex = slashCommandDraft.start + command.name.length + 2;
     setContent(nextContent);
     setCursorIndex(nextCursorIndex);
@@ -4442,11 +4442,32 @@ export function findSlashCommandDraft(value: string, cursorIndex: number): { sta
   }
 
   const query = match[1] ?? "";
+  // 命中只看光标前文本，但草稿 end 必须是命令词的真实结束位置：光标可以停
+  // 在词中间（把光标点回命令词里改命令），补全时只替换整词，不把光标之后
+  // 的残余字符拼回内容。
+  let end = cursorIndex;
+  while (end < value.length && !/\s/u.test(value.charAt(end))) {
+    end += 1;
+  }
   return {
     start: prefix ? prefix.end : 0,
-    end: cursorIndex,
+    end,
     query,
   };
+}
+
+/**
+ * 斜杠命令补全拼接：只替换草稿括住的 /命令 词，保留前面的 @员工: 前缀与
+ * 后面的参数文本。命令与参数之间统一为一个空格，尾随文本若自带空格分隔
+ * 则不再追加，避免出现连续空格。
+ */
+export function composeSlashCommandCompletion(
+  content: string,
+  draft: { start: number; end: number },
+  commandName: string,
+): string {
+  const tail = content.slice(draft.end).replace(/^\s+/u, "");
+  return `${content.slice(0, draft.start)}/${commandName} ${tail}`;
 }
 
 function connectionLabel(state: "connecting" | "live" | "offline"): string {
