@@ -135,7 +135,10 @@ cannot run until its selected runtime CLI is available and authenticated.
 - Added a dedicated Orbit landing page with responsive product content and an
   optimized collaboration demo.
 - Added a GitHub Pages deployment workflow and refreshed the website dependency
-  set used by Vite and Cloudflare tooling.
+  set used by React, Vite, Vinext, Cloudflare, and React Server Components
+  tooling.
+- Upgraded Vinext to remove the vulnerable `image-size` transitive dependency
+  reported by Dependabot.
 
 ## Security And Governance
 
@@ -169,6 +172,8 @@ cannot run until its selected runtime CLI is available and authenticated.
 | `npm run test` | Passed locally | Full repository test suite |
 | `npm run build` | Passed locally | TypeScript, Vite UI, and standalone binary build |
 | `npm audit --audit-level=moderate` | Passed locally | Dependency audit reported no moderate-or-higher vulnerabilities |
+| `npm audit --audit-level=moderate` (`website/`) | Passed locally | Website dependency audit reported no vulnerabilities |
+| `npm run build` (`website/`) | Passed locally | Vinext production website build |
 | `npm run smoke:start` | Passed locally | Built standalone server startup and state endpoint |
 | `npm run smoke:port-conflict` | Passed locally | Occupied-port startup behavior |
 | `npm pack --dry-run --json` | Passed locally | Package payload inspected against the release allowlist |

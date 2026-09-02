@@ -35,7 +35,9 @@
 - 提及菜单与斜杠命令菜单完整支持输入法组合输入、Enter/Tab 补全、
   Shift+Enter 换行、Esc 关闭和键盘翻页。
 - 运行时尚未结算时，流式最终答案不再在过程时间线与回复正文之间闪动。
-- 更新官网构建依赖，包括 Vite、Wrangler 与 Cloudflare Vite 插件。
+- 更新官网构建依赖，包括 React、Vite、Vinext、Wrangler，以及 Cloudflare
+  和 React Server Components Vite 插件；Vinext 更新移除了存在漏洞的
+  `image-size` 传递依赖。
 
 ---
 

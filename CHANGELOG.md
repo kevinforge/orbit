@@ -40,8 +40,9 @@ No notable changes yet.
   completion, Shift+Enter newlines, Esc dismissal, and keyboard paging.
 - Streamed final answers no longer flash between the process timeline and reply
   body while runtime settlement is still pending.
-- Website build dependencies were refreshed, including Vite, Wrangler, and the
-  Cloudflare Vite plugin.
+- Website build dependencies were refreshed, including React, Vite, Vinext,
+  Wrangler, and the Cloudflare and React Server Components Vite plugins; the
+  Vinext update removes the vulnerable `image-size` transitive dependency.
 
 ---
 
