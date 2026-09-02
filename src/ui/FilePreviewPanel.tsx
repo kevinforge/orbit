@@ -1,0 +1,146 @@
+import { useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { FolderIcon } from "tdesign-icons-react";
+import { LOCAL_PATH_LINK_CLASS, renderMarkdown } from "./markdown-renderer.ts";
+import {
+  buildPreviewMetadataUrl,
+  buildPreviewRawUrl,
+  formatPreviewSize,
+  previewFileName,
+  prettifyJsonText,
+  type FilePreviewMeta,
+} from "./file-preview.ts";
+
+/**
+ * 右侧只读文件预览面板（issue #165）。
+ *
+ * 面板按元数据接口的类型分级渲染：文本/Markdown 直接内嵌，图片与 PDF 走
+ * 原生字节接口（<img> / <iframe>），二进制只给提示与定位入口。目录由
+ * App 侧继续走资源管理器定位，面板自动关闭。单面板：点新文件时 App 替换
+ * path 即可。
+ */
+export function FilePreviewPanel(props: {
+  path: string;
+  overlay: boolean;
+  onClose: () => void;
+  onReveal: (path: string) => void;
+  onOpenPath: (path: string) => void;
+}) {
+  const [meta, setMeta] = useState<FilePreviewMeta | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setMeta(null);
+    setErrorMessage("");
+    fetch(buildPreviewMetadataUrl(props.path), { signal: controller.signal })
+      .then(async (response) => {
+        const data = (await response.json().catch(() => null)) as
+          | (FilePreviewMeta & { ok?: true })
+          | { ok: false; message?: string }
+          | null;
+        if (!response.ok || !data || data.ok === false) {
+          throw new Error((data && "message" in data && data.message) || "无法预览该文件");
+        }
+        return data;
+      })
+      .then((data) => {
+        if (data.kind === "directory") {
+          props.onReveal(props.path);
+          props.onClose();
+          return;
+        }
+        setMeta(data);
+      })
+      .catch((reason: unknown) => {
+        if ((reason as { name?: string }).name === "AbortError") return;
+        setErrorMessage(reason instanceof Error ? reason.message : "无法预览该文件");
+      });
+    return () => controller.abort();
+    // path 变化即重新加载；回调闭包在此期间保持语义稳定（仅 setState）。
+  }, [props.path]);
+
+  // 渲染后的 Markdown 里可能仍含本地路径入口，与消息区一致走委托预览。
+  function handleBodyClick(event: MouseEvent<HTMLDivElement>) {
+    if (!(event.target instanceof HTMLElement)) return;
+    const entry = event.target.closest<HTMLElement>(`.${LOCAL_PATH_LINK_CLASS}`);
+    const nestedPath = entry?.dataset.path;
+    if (nestedPath) props.onOpenPath(nestedPath);
+  }
+
+  function handleBodyKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (!(event.target instanceof HTMLElement)) return;
+    const entry = event.target.closest<HTMLElement>(`.${LOCAL_PATH_LINK_CLASS}`);
+    const nestedPath = entry?.dataset.path;
+    if (!nestedPath) return;
+    event.preventDefault();
+    props.onOpenPath(nestedPath);
+  }
+
+  const fileName = previewFileName(props.path);
+
+  return (
+    <section className={`previewPanel${props.overlay ? " overlay" : ""}`} aria-label="文件预览">
+      <header className="previewPanelHeader">
+        <div className="previewPanelTitle" title={props.path}>
+          <strong>{fileName}</strong>
+          <span className="previewPanelPath">{props.path}</span>
+        </div>
+        <div className="previewPanelActions">
+          <button
+            type="button"
+            className="previewPanelRevealBtn"
+            onClick={() => props.onReveal(props.path)}
+            title="在资源管理器中定位"
+          >
+            <FolderIcon />
+          </button>
+          <button type="button" className="previewPanelCloseBtn" onClick={props.onClose} title="关闭预览">&times;</button>
+        </div>
+      </header>
+
+      {!meta && !errorMessage ? <div className="previewPanelState">正在加载预览…</div> : null}
+      {errorMessage ? (
+        <div className="previewPanelState previewPanelError" role="alert">
+          <p>{errorMessage}</p>
+          <p className="previewPanelHint">文件可能已被移动或删除，可在资源管理器中确认。</p>
+        </div>
+      ) : null}
+
+      {meta?.kind === "text" ? (
+        <div className="previewPanelBody" onClick={handleBodyClick} onKeyDown={handleBodyKeyDown}>
+          <pre className="previewText">{prettifyJsonText(meta.target, meta.content, meta.truncated) ?? meta.content}</pre>
+          {meta.truncated ? (
+            <div className="previewTruncatedNotice">文件较大，仅显示前 1 MB（共 {formatPreviewSize(meta.size)}）。</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {meta?.kind === "markdown" ? (
+        <div className="previewPanelBody" onClick={handleBodyClick} onKeyDown={handleBodyKeyDown}>
+          <div className="markdown previewMarkdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(meta.content) }} />
+          {meta.truncated ? (
+            <div className="previewTruncatedNotice">文件较大，仅显示前 1 MB（共 {formatPreviewSize(meta.size)}）。</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {meta?.kind === "image" ? (
+        <div className="previewPanelBody previewImageBody">
+          <img className="previewImage" src={buildPreviewRawUrl(props.path)} alt={fileName} />
+        </div>
+      ) : null}
+
+      {meta?.kind === "pdf" ? (
+        <iframe className="previewPdf" src={buildPreviewRawUrl(props.path)} title={fileName} />
+      ) : null}
+
+      {meta?.kind === "binary" ? (
+        <div className="previewPanelState">
+          <p>该文件类型暂不支持在 Orbit 内预览（{formatPreviewSize(meta.size)}）。</p>
+          <p className="previewPanelHint">可点击右上角文件夹按钮在资源管理器中定位并打开。</p>
+        </div>
+      ) : null}
+    </section>
+  );
+}

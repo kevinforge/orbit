@@ -547,6 +547,165 @@ button:active:not(:disabled) {
   background: var(--subtext);
 }
 
+/* ── File preview panel（issue #165）──────────────────────── */
+
+.previewPanel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+/* 窄视口（≤920px，由 App 的 matchMedia 判定）下转为右侧浮层。 */
+.previewPanel.overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(92vw, 420px);
+  z-index: 60;
+  box-shadow: var(--shadow-lg);
+}
+
+.previewPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.previewPanelTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.previewPanelTitle strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewPanelPath {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewPanelActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.previewPanelRevealBtn,
+.previewPanelCloseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.previewPanelRevealBtn:hover,
+.previewPanelCloseBtn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.previewPanelBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.previewText {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.previewMarkdown {
+  font-size: 13px;
+}
+
+.previewImageBody {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.previewImage {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.previewPdf {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+}
+
+.previewPanelState {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.previewPanelState p {
+  margin: 0;
+}
+
+.previewPanelError {
+  color: var(--error);
+}
+
+.previewPanelHint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.previewTruncatedNotice {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 12px;
+}
+
 /* ── Conversation ──────────────────────────────────────────── */
 
 .conversation {
@@ -6233,6 +6392,16 @@ button:active:not(:disabled) {
 
   .shell.sidebarCollapsed {
     grid-template-columns: 0 minmax(0, 1fr) !important;
+  }
+
+  /* 预览面板第三栏（issue #165）：面板打开时扩展为三栏；宽度与 App 的
+     inline 表达式保持一致。窄视口（≤920px）下 App 不挂该类，面板转浮层。 */
+  .shell.previewOpen {
+    grid-template-columns: 288px minmax(0, 1fr) clamp(300px, 34vw, 480px) !important;
+  }
+
+  .shell.sidebarCollapsed.previewOpen {
+    grid-template-columns: 0 minmax(0, 1fr) clamp(300px, 34vw, 480px) !important;
   }
 
   .sidebar {

@@ -42,15 +42,15 @@ function sanitizeUrl(href: string): string {
   return href;
 }
 
-// --- 本地路径入口（issue #143）---
+// --- 本地路径入口（issue #143；issue #165 起默认打开预览）---
 // 消息里的本地路径（X:/、X:\、~/、/ 开头，含 file:/// 前缀）不是可导航的
 // Web URL：交给 sanitizeUrl 会被当成占位域下的站内相对链接。这里在 sanitize
-// 之前分流，渲染成带 data-path 的 span，由 App 层的点击委托调用
-// /api/local-path/reveal 在系统资源管理器中定位。只动渲染层，不改消息存储。
+// 之前分流，渲染成带 data-path 的 span，由 App 层的点击委托打开右侧只读
+// 预览面板；在资源管理器中定位降级为面板内按钮。只动渲染层，不改消息存储。
 export const LOCAL_PATH_LINK_CLASS = "localPathLink";
 
 function renderLocalPathEntry(path: string, text: string): string {
-  return `<span class="${LOCAL_PATH_LINK_CLASS}" data-path="${escapeHtml(path)}" role="button" tabindex="0" title="在系统资源管理器中定位">${escapeHtml(text)}</span>`;
+  return `<span class="${LOCAL_PATH_LINK_CLASS}" data-path="${escapeHtml(path)}" role="button" tabindex="0" title="点击预览文件内容">${escapeHtml(text)}</span>`;
 }
 
 // file:///D:/x 与 file:///home/x 都剥掉 file:// 前缀；file://host/ 形式指向

@@ -45,6 +45,7 @@ import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 import { buildWorkspaceWorkAnalysis } from "./workspace-work-analysis.ts";
 import { resolveRevealTarget, revealInFileManager } from "./local-path-reveal.ts";
+import { buildFilePreview, buildRawPreviewHeaders, readRawPreview } from "./local-path-preview.ts";
 
 const DEFAULT_PORT = 4317;
 const requestedPort = Number(process.env.ORBIT_PORT ?? DEFAULT_PORT);
@@ -1271,6 +1272,64 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, { ok: true });
       } catch (err) {
         sendJson(res, 500, { ok: false, message: `无法打开资源管理器：${err instanceof Error ? err.message : String(err)}` });
+      }
+      return;
+    }
+
+    // 消息里的本地路径入口默认打开只读预览面板（issue #165）。元数据接口
+    // 返回类型分级与文本内容；字节接口只放行图片与 PDF，MIME 由扩展名白
+    // 名单精确映射。两条路径都复用 reveal 的解析与工作区边界校验。
+    if (req.method === "GET" && url.pathname === "/api/local-path/preview") {
+      const rawPath = url.searchParams.get("path");
+      if (!rawPath) {
+        sendJson(res, 400, { ok: false, message: "path is required." });
+        return;
+      }
+      const roots = workspaceStore.list().map((ws) => ws.path);
+      const resolution = await resolveRevealTarget(rawPath, roots);
+      if (!resolution.ok) {
+        sendJson(res, resolution.status, { ok: false, message: resolution.message });
+        return;
+      }
+      if (resolution.isDirectory) {
+        sendJson(res, 200, { ok: true, kind: "directory", target: resolution.target });
+        return;
+      }
+      try {
+        const preview = await buildFilePreview(resolution.target);
+        sendJson(res, 200, { ok: true, ...preview });
+      } catch (err) {
+        sendJson(res, 500, { ok: false, message: `无法读取该文件：${err instanceof Error ? err.message : String(err)}` });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/local-path/preview/raw") {
+      const rawPath = url.searchParams.get("path");
+      if (!rawPath) {
+        sendJson(res, 400, { ok: false, message: "path is required." });
+        return;
+      }
+      const roots = workspaceStore.list().map((ws) => ws.path);
+      const resolution = await resolveRevealTarget(rawPath, roots);
+      if (!resolution.ok) {
+        sendJson(res, resolution.status, { ok: false, message: resolution.message });
+        return;
+      }
+      if (resolution.isDirectory) {
+        sendJson(res, 400, { ok: false, message: "该路径是目录，请在资源管理器中打开。" });
+        return;
+      }
+      try {
+        const raw = await readRawPreview(resolution.target);
+        if (!raw.ok) {
+          sendJson(res, raw.status, { ok: false, message: raw.message });
+          return;
+        }
+        res.writeHead(200, buildRawPreviewHeaders(raw.mimeType, raw.buffer.length));
+        res.end(raw.buffer);
+      } catch (err) {
+        sendJson(res, 500, { ok: false, message: `无法读取该文件：${err instanceof Error ? err.message : String(err)}` });
       }
       return;
     }
