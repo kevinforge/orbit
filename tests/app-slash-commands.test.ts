@@ -6,11 +6,13 @@ import path from "node:path";
 import {
   filterSlashCommands,
   findSlashCommandDraft,
-  resolveSlashCommandTarget,
-  resolveSlashSendTarget,
   splitSlashCommandName,
 } from "../src/ui/App.tsx";
-import type { AgentCommand, AgentCommandsSnapshot, AgentId } from "../src/shared/types.ts";
+import {
+  resolveSlashCommandTarget,
+  resolveSlashSendTarget,
+} from "../src/core/native-commands.ts";
+import type { AgentCommand, AgentId } from "../src/shared/types.ts";
 
 const developer: AgentId = "developer";
 const reviewer: AgentId = "reviewer";
@@ -20,16 +22,13 @@ const agents = [
   { id: reviewer, label: "评审" },
 ];
 
-function snapshot(commands: readonly AgentCommand[]): AgentCommandsSnapshot {
-  return { status: "ready", commands };
-}
-
-const commands: Record<AgentId, AgentCommandsSnapshot> = {
-  [developer]: snapshot([
+// 权威快照是“员工 → 已通告命令列表”；ready/error 包装只存在于 UI 快照层。
+const commands: Record<AgentId, readonly AgentCommand[]> = {
+  [developer]: [
     { name: "init", description: "初始化项目" },
     { name: "review", description: "审查当前变更", inputHint: "可选关注点" },
-  ]),
-  [reviewer]: snapshot([{ name: "plan", description: "生成计划" }]),
+  ],
+  [reviewer]: [{ name: "plan", description: "生成计划" }],
 };
 
 test("slash send targets the last direct employee without a prefix in direct mode", () => {
@@ -75,9 +74,9 @@ test("the prefix shares the routing marker semantics: fullwidth colon and case-i
     { id: developer, label: "Ops" },
     { id: reviewer, label: "评审" },
   ];
-  const casedCommands: Record<AgentId, AgentCommandsSnapshot> = {
-    [developer]: snapshot([{ name: "run", description: "运行检查" }]),
-    [reviewer]: snapshot([{ name: "plan", description: "生成计划" }]),
+  const casedCommands: Record<AgentId, readonly AgentCommand[]> = {
+    [developer]: [{ name: "run", description: "运行检查" }],
+    [reviewer]: [{ name: "plan", description: "生成计划" }],
   };
   assert.deepEqual(
     resolveSlashSendTarget("@ops: /run", "direct", developer, casedAgents, casedCommands),
@@ -310,12 +309,22 @@ describe("probe lifecycle for the slash command menu", () => {
   });
 
   test("snapshot absence triggers one probe per page and the loading phase reads the matching pending flag", () => {
-    const phase = appSource.match(/const slashMenuPhase[\s\S]*?: "empty";/)?.[0] ?? "";
+    // 在途标记（slashProbePending）与菜单阶段（slashMenuPhase）是相邻的两个
+    // 声明，一起切片才能同时断言“读当前页 key”与“ready 优先于 loading”。
+    const phaseStart = appSource.indexOf("const slashProbePending");
+    const phaseEnd = appSource.indexOf(";", appSource.indexOf("const slashMenuPhase"));
+    const phase = phaseStart > -1 && phaseEnd > phaseStart ? appSource.slice(phaseStart, phaseEnd + 1) : "";
     assert.ok(phase, "slashMenuPhase must exist in App.tsx");
     assert.ok(
       phase.includes("commandProbeKey(state.workspace.id, state.conversation.id"),
       "状态行必须读当前页面的在途标记，跨页探测不得误判本页进行中",
     );
+    // 在途探测只是“未知快照”的占位 loading：正式通告先到时 ready 快照必须
+    // 立即生效，不得被尚未返回的探测 loading 掩盖（二轮 review 的 UI 侧竞态）。
+    // pendingIdx 取三元分支里的用法而非 const 声明处。
+    const readyIdx = phase.indexOf('slashCommandSnapshot?.status === "ready"');
+    const pendingIdx = phase.indexOf(": slashProbePending");
+    assert.ok(readyIdx > -1 && pendingIdx > readyIdx, "ready 快照的判断必须先于在途探测 loading，正式通告不被探测掩盖");
     const effect = appSource.match(
       /useEffect\(\(\) => \{\s*if \(!slashMenuOpen \|\| !slashCommandTarget\) return;[\s\S]*?\}, \[slashMenuOpen/,
     );

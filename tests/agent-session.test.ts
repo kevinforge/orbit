@@ -1158,7 +1158,7 @@ test("probed commands write back as the authoritative snapshot without publishin
 
   assert.equal(session.commandsAnnounced(), false, "从未通告时不得伪造快照");
   const commands: AgentCommand[] = [{ name: "review", description: "审查当前变更" }];
-  session.adoptProbedCommands(commands);
+  assert.equal(session.adoptProbedCommands(commands), true, "无正式通告时探测写回必须被采纳");
 
   assert.equal(session.commandsAnnounced(), true, "写回后 /api/state 与发送校验必须能看到这些命令");
   assert.deepEqual(session.availableCommands(), commands);
@@ -1187,7 +1187,11 @@ test("a late probe write-back cannot clobber a real announcement", async () => {
   controlled.calls[0]!.onSessionCommands!(commands, "sess-1");
   assert.deepEqual(session.availableCommands(), commands);
 
-  session.adoptProbedCommands([{ name: "probed", description: "迟到的探测结果" }]);
+  assert.equal(
+    session.adoptProbedCommands([{ name: "probed", description: "迟到的探测结果" }]),
+    false,
+    "写回必须报告被拒绝：服务端探测路径据此放弃广播探测结果",
+  );
   assert.deepEqual(session.availableCommands(), commands, "正式会话已通告后探测写回不得覆盖真实数据");
 
   fs.rmSync(dir, { recursive: true, force: true });
@@ -1212,7 +1216,7 @@ test("a probed snapshot is invalidated when the real session lands and is repopu
   session.start();
 
   const probed: AgentCommand[] = [{ name: "review", description: "临时会话探测结果" }];
-  session.adoptProbedCommands(probed);
+  assert.equal(session.adoptProbedCommands(probed), true);
   assert.deepEqual(session.availableCommands(), probed);
 
   // 正式会话落定：探测哨兵与真实会话 id 不匹配，缓存失效并广播空列表。
@@ -1227,7 +1231,7 @@ test("a probed snapshot is invalidated when the real session lands and is repopu
   const announced: AgentCommand[] = [{ name: "init", description: "初始化项目" }];
   controlled.calls[0]!.onSessionCommands!(announced, "sess-1");
   assert.deepEqual(session.availableCommands(), announced);
-  session.adoptProbedCommands(probed);
+  assert.equal(session.adoptProbedCommands(probed), false, "正式通告之后探测写回必须被拒绝");
   assert.deepEqual(session.availableCommands(), announced, "正式通告之后探测写回不得再覆盖");
 
   fs.rmSync(dir, { recursive: true, force: true });

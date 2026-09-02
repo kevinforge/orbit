@@ -4,8 +4,9 @@ import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
 import { matchAssignmentPrefix } from "../core/mention-router.ts";
+import { resolveSlashCommandTarget } from "../core/native-commands.ts";
 import { matchPreset } from "../core/workspace-presets.ts";
-import { type AgentActivityEvent, type AgentCommand, type AgentCommandsSnapshot, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type NativeCommandDelivery, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
+import { type AgentActivityEvent, type AgentCommand, type AgentCommandsSnapshot, type AgentConfig, type AgentConfigWithModelState, type AgentId, type AgentModelPreference, type AgentModelProbeResponse, type AgentModelProbeState, type AgentModelStateSnapshot, type AgentPlanSnapshot, type AgentRuntimeKind, type AgentState, type AgentTeamTemplate, type AppState, type ApprovalMode, type ChatMessage, type Conversation, type ConversationInfo, type DraftAttachmentInfo, type ElicitationContent, type ElicitationFieldSchema, type ElicitationResponse, type InteractionMode, type MessagePage, type PendingElicitation, type PendingPermission, type PermissionDecision, type PersistedProcessTimelineEntry, type RunningSummary, type RuntimeEvent, type SupervisorConfig, type Workspace, type WorkspacePreset, ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { attachmentAcceptAttribute } from "../shared/attachment-registry.ts";
 import { canSendMessage } from "../shared/message-validation.ts";
 import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
@@ -521,16 +522,20 @@ export function App() {
   // 菜单展开状态（issue #160 收尾）：候选列表之外还要呈现“正在获取 / 没有
   // 命令 / 获取失败”，不再把“尚未获取过命令”误显示成毫无反应。
   const slashMenuOpen = Boolean(inputFocused && !slashDismissed && slashCommandDraft && slashCommandTarget);
-  const slashMenuPhase: "list" | "loading" | "empty" | "error" = slashCommandTarget
-    && commandProbePending[commandProbeKey(state.workspace.id, state.conversation.id, slashCommandTarget.agentId)]
-    ? "loading"
-    : !slashCommandSnapshot
+  // 快照优先于在途标记（探测竞态收尾）：探测期间正式通告可能先经 SSE 到达，
+  // ready 快照必须立即呈现，不得停在“正在获取”；在途标记只决定快照未知或
+  // 失败重试时的 loading 表现。
+  const slashProbePending = Boolean(slashCommandTarget
+    && commandProbePending[commandProbeKey(state.workspace.id, state.conversation.id, slashCommandTarget.agentId)]);
+  const slashMenuPhase: "list" | "loading" | "empty" | "error" = slashCommandSnapshot?.status === "ready"
+    ? slashCommandSnapshot.commands.length > 0
+      ? "list"
+      : "empty"
+    : slashProbePending
       ? "loading"
-      : slashCommandSnapshot.status === "error"
+      : slashCommandSnapshot?.status === "error"
         ? "error"
-        : slashCommandSnapshot.commands.length > 0
-          ? "list"
-          : "empty";
+        : "loading";
 
   /**
    * 主动获取员工斜杠命令（issue #160 收尾）：ACP 没有独立的命令列表请求，
@@ -795,7 +800,10 @@ export function App() {
       draftMessageIdRef.current = { id: crypto.randomUUID(), content: trimmed };
     }
     try {
-      const body: { content: string; approvalMode: ApprovalMode; clientMessageId: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }>; delivery?: NativeCommandDelivery } = {
+      // 原生斜杠命令（issue #160 + review）：客户端只提交消息原文，是否按
+      // 命令投递、投递给谁、发什么文本全部由服务端从 content 推导——频道
+      // 历史与实际执行的命令共用同一来源，不可能再分叉。
+      const body: { content: string; approvalMode: ApprovalMode; clientMessageId: string; draftAttachments?: Array<{ id: string; mimeType: string; filename: string; size: number }> } = {
         content: trimmed,
         approvalMode,
         clientMessageId: draftMessageIdRef.current.id,
@@ -807,19 +815,6 @@ export function App() {
           filename: a.filename,
           size: a.size,
         }));
-      }
-      // 原生斜杠命令（issue #160）：消息解析出已通告命令与明确目标员工时，
-      // 标记为命令投递；prompt 是发给 runtime 的命令文本（`@员工:` 前缀
-      // 之后的命令部分），频道历史仍保留用户输入的原文。
-      const slashTarget = resolveSlashSendTarget(
-        trimmed,
-        interactionMode,
-        state.conversation.lastDirectAgentId,
-        state.agents,
-        state.agentCommands,
-      );
-      if (slashTarget) {
-        body.delivery = { type: "acp_command", agentId: slashTarget.agentId, prompt: slashTarget.commandText };
       }
       const response = await fetch(withPageContext("/api/messages", requestedContext), {
         method: "POST",
@@ -4357,54 +4352,6 @@ function findMentionDraft(value: string, cursorIndex: number): { start: number; 
     end: cursorIndex,
     query,
   };
-}
-
-/**
- * 解析原生斜杠命令的目标员工（issue #160）：显式 `@员工:` 前缀唯一命中
- * 已启用员工时命令直达该员工，各协作模式一致（与指派路由对显式标记的
- * 走向相同）；无前缀时沿用普通对话走向——直接协作发给最近直接对话员工，
- * 简单/复杂协作没有默认接收方，不提供原生命令入口。
- */
-export function resolveSlashCommandTarget(
-  trimmed: string,
-  interactionMode: InteractionMode,
-  lastDirectAgentId: string | undefined,
-  agents: readonly { id: AgentId; label: string }[],
-): { agentId: AgentId; commandText: string } | null {
-  // 与指派路由共用同一套标记语义（mention-router）：全角冒号也算标记结束，
-  // 名称匹配忽略大小写；前缀必须唯一命中已启用员工才提供命令入口。
-  const prefix = matchAssignmentPrefix(trimmed);
-  if (prefix) {
-    const label = prefix.name.toLocaleLowerCase();
-    const matches = agents.filter((agent) => agent.label.toLocaleLowerCase() === label);
-    return matches.length === 1
-      ? { agentId: matches[0]!.id, commandText: trimmed.slice(prefix.end) }
-      : null;
-  }
-  if (interactionMode !== "direct" || !lastDirectAgentId) {
-    return null;
-  }
-  return { agentId: lastDirectAgentId, commandText: trimmed };
-}
-
-/**
- * 判断待发送文本是否按原生斜杠命令投递（issue #160）：命令词是目标员工
- * runtime 会话已通告的命令时返回目标员工与命令文本，否则按普通消息走路由。
- */
-export function resolveSlashSendTarget(
-  trimmed: string,
-  interactionMode: InteractionMode,
-  lastDirectAgentId: string | undefined,
-  agents: readonly { id: AgentId; label: string }[],
-  agentCommands: Record<AgentId, AgentCommandsSnapshot>,
-): { agentId: AgentId; commandText: string } | null {
-  const resolved = resolveSlashCommandTarget(trimmed, interactionMode, lastDirectAgentId, agents);
-  if (!resolved || !resolved.commandText.startsWith("/")) {
-    return null;
-  }
-  const name = resolved.commandText.split(/\s+/)[0]?.slice(1) ?? "";
-  const available = agentCommands[resolved.agentId]?.commands ?? [];
-  return available.some((command) => command.name === name) ? resolved : null;
 }
 
 /** PgUp/PgDn 的候选翻页步长：与面板可视行数同级，一次跳动一屏。 */

@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { configsToProfiles, INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
-import { disposeAcpConnectionPool, probeAcpCommands, probeAcpModelState, type AcpRuntimeDefinition } from "../core/acp-runtime.ts";
+import { disposeAcpConnectionPool, probeAcpModelState } from "../core/acp-runtime.ts";
 import { defaultAcpRunnerRegistry } from "../core/acp-runner-registry.ts";
 import { AGENT_TEAM_TEMPLATES, AgentConfigStore, validateAgentConfigs } from "../core/agent-config-store.ts";
 import { AgentModelStateStore, supervisorStorageKey } from "../core/agent-model-state-store.ts";
@@ -25,13 +25,15 @@ import { initialAgentConfigsForWorkspacePreset } from "../core/workspace-agent-p
 import { getWorkspacePresets } from "../core/workspace-presets.ts";
 import { migrateChannelLayer } from "../core/migrate-channel-layer.ts";
 import { cleanupHistory } from "../core/history-retention.ts";
-import type { AgentCommandsSnapshot, AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, NativeCommandDelivery, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo, AgentId } from "../shared/types.ts";
+import type { AgentCommandsSnapshot, AgentConfigWithModelState, AgentModelProbeResponse, AgentModelProbeState, ApprovalMode, Conversation, ConversationInfo, ElicitationResponse, InteractionMode, MessagePage, PermissionDecision, RunningSummary, SupervisorConfig, WorkspaceInfo, AgentId } from "../shared/types.ts";
 import { isAgentRuntimeKind, isInteractionMode } from "../shared/types.ts";
 import { ATTACHMENT_LIMITS } from "../shared/types.ts";
 import { AttachmentStore } from "../core/attachment-store.ts";
 import { buildAttachmentHeaders } from "./attachment-response.ts";
 import { canSendMessage } from "../shared/message-validation.ts";
+import { resolveSlashSendTarget } from "../core/native-commands.ts";
 import { ConversationContext } from "./conversation-context.ts";
+import { probeAgentCommands } from "./command-probe.ts";
 import { findPortOwners, isOrbitPortOwner, stopPortOwner } from "./port-recovery.ts";
 import { readJson, RequestBodyTooLargeError } from "./read-json.ts";
 import {
@@ -209,55 +211,6 @@ function setModelProbeState(workspaceId: string, runtime: AgentConfig["runtime"]
   const states = modelProbeStates.get(workspaceId) ?? new Map<AgentConfig["runtime"], AgentModelProbeState>();
   states.set(runtime, state);
   modelProbeStates.set(workspaceId, states);
-}
-
-/**
- * 为员工拉一次斜杠命令快照并按会话广播（issue #160 收尾）。会话里已有通告
- * （runtime 通告或上次探测写回，含空列表）时直接复用，不重复拉起 runtime
- * 进程；探测成功写回会话缓存——/api/state、探测短路和发送校验共用这一份
- * 权威快照，探测出的命令才能直接发送。探测失败同样以 error 快照广播，让
- * UI 停在明确的失败态（可重试），而不是“输入 / 毫无反应”。
- */
-async function probeAgentCommands(
-  ctx: ConversationContext | null,
-  workspaceId: string,
-  conversationId: string,
-  agentId: AgentId,
-  definition: AcpRuntimeDefinition,
-  workspacePath: string,
-): Promise<AgentCommandsSnapshot> {
-  const existing = ctx?.availableCommands()[agentId];
-  if (existing) {
-    return { status: "ready", commands: existing };
-  }
-  try {
-    const commands = await probeAcpCommands(definition, { agentId, cwd: workspacePath });
-    ctx?.adoptProbedCommands(agentId, commands);
-    const snapshot: AgentCommandsSnapshot = { status: "ready", commands };
-    sseHub.publish({
-      type: "agent.commands.updated",
-      workspaceId,
-      conversationId,
-      agentId,
-      commands,
-      status: "ready",
-    });
-    return snapshot;
-  } catch (error) {
-    const raw = error instanceof Error ? error.message : String(error);
-    const message = raw.split("\n")[0]?.trim() || "获取斜杠命令失败。";
-    console.warn(`[orbit] slash-command discovery failed for ${definition.displayName}:`, raw);
-    sseHub.publish({
-      type: "agent.commands.updated",
-      workspaceId,
-      conversationId,
-      agentId,
-      commands: [],
-      status: "error",
-      message,
-    });
-    return { status: "error", commands: [], message };
-  }
 }
 
 function modelProbeStateFor(
@@ -1144,6 +1097,8 @@ const server = http.createServer(async (req, res) => {
       const probeKey = `${target.workspaceId}:${target.conversationId}:${agentId}`;
       let pending = commandProbeInFlight.get(probeKey);
       if (!pending) {
+        // 探测逻辑在 command-probe.ts：写回被拒（正式通告先到）时由它保证
+        // 不广播探测结果、响应改答权威快照。
         pending = probeAgentCommands(
           contextForTarget(target),
           target.workspaceId,
@@ -1151,6 +1106,7 @@ const server = http.createServer(async (req, res) => {
           agentId,
           registration.definition,
           workspace.path,
+          { publish: (event) => sseHub.publish(event) },
         ).finally(() => {
           commandProbeInFlight.delete(probeKey);
         });
@@ -1787,7 +1743,6 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     draftAttachments?: unknown;
     approvalMode?: unknown;
     clientMessageId?: unknown;
-    delivery?: unknown;
   };
   const content = typeof input.content === "string" ? input.content.trim() : "";
   const approvalMode: ApprovalMode = input.approvalMode === "full-access" ? "full-access" : "ask";
@@ -1798,21 +1753,6 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
 
   if (!canSendMessage(content, draftAttachments.length)) {
     sendJson(res, 400, { ok: false, message: "Message cannot be empty." });
-    return;
-  }
-
-  // 原生斜杠命令投递标记（issue #160）：携带 delivery 的请求把命令文本原样
-  // 发给指定员工，跳过指派路由；格式非法时整条消息拒绝，避免误当成普通消息。
-  const parsedDelivery = parseNativeCommandDelivery(input.delivery);
-  if (!parsedDelivery.ok) {
-    sendJson(res, 400, { ok: false, message: parsedDelivery.message });
-    return;
-  }
-  const delivery = parsedDelivery.delivery;
-  // 原生命令绕过指派直达 runtime 的 prompt 通道，没有承载附件的路径；
-  // 带附件时拒绝而不是丢弃附件，避免用户以为附件已随命令送达。
-  if (delivery && draftAttachments.length > 0) {
-    sendJson(res, 400, { ok: false, message: "原生命令消息不支持附件，请先移除附件再发送命令。" });
     return;
   }
 
@@ -1861,20 +1801,23 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  // 原生斜杠命令的语义校验（issue #160）：目标必须是当前会话已启用的普通
-  // 员工，且命令名在该员工 runtime 会话通告的列表中。
-  if (delivery) {
-    const profile = context.agents.profile(delivery.agentId);
-    if (!profile || profile.internal) {
-      sendJson(res, 400, { ok: false, message: "目标数字员工不存在或未启用。" });
-      return;
-    }
-    const commands = context.availableCommands()[delivery.agentId] ?? [];
-    const commandName = nativeCommandName(delivery.prompt);
-    if (!commandName || !commands.some((command) => command.name === commandName)) {
-      sendJson(res, 400, { ok: false, message: "该数字员工当前未通告此命令，命令未发送。" });
-      return;
-    }
+  // 原生斜杠命令（issue #160 + review）：是否按命令投递、投递给谁、发什么
+  // 文本，全部由服务端从消息原文推导——协作模式、@员工: 前缀与权威命令
+  // 快照共同决定，客户端不提交投递标记。这样频道历史保留的 content 与
+  // runtime 实际执行的命令文本同源，审计上不可能再分叉；命令词不在目标
+  // 员工通告列表里时按普通消息走路由。
+  const delivery = resolveSlashSendTarget(
+    content,
+    conversation.interactionMode ?? "direct",
+    conversation.lastDirectAgentId,
+    context.agents.states().map((state) => ({ id: state.id, label: state.label })),
+    context.availableCommands(),
+  );
+  // 命令直达 runtime 的 prompt 通道，没有承载附件的路径；带附件时拒绝
+  // 而不是丢弃附件，避免用户以为附件已随命令送达。
+  if (delivery && draftAttachments.length > 0) {
+    sendJson(res, 400, { ok: false, message: "原生命令消息不支持附件，请先移除附件再发送命令。" });
+    return;
   }
 
   const clientMessageId = typeof input.clientMessageId === "string" ? input.clientMessageId.trim() : "";
@@ -1923,9 +1866,10 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
       interactionMode: conversation!.interactionMode ?? "direct",
     });
     eventBus.publish({ type: "message.created", workspaceId, conversationId: conversation!.id, message: userMessage });
-    // 原生斜杠命令（issue #160）：绕过指派路由直通员工；普通消息维持路由。
+    // 原生斜杠命令（issue #160）：绕过指派路由直通员工，下发的是从 content
+    // 推导出的命令文本；普通消息维持路由。
     if (delivery) {
-      context.runManager.enqueueNativeCommand(delivery.agentId, delivery.prompt, userMessage);
+      context.runManager.enqueueNativeCommand(delivery.agentId, delivery.commandText, userMessage);
     } else {
       context.messageRouter.process(userMessage);
     }
@@ -1936,33 +1880,6 @@ async function handlePostMessage(req: http.IncomingMessage, res: http.ServerResp
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseNativeCommandDelivery(
-  input: unknown,
-): { ok: true; delivery: NativeCommandDelivery | null } | { ok: false; message: string } {
-  if (input === undefined || input === null) return { ok: true, delivery: null };
-  if (!isRecord(input) || input.type !== "acp_command") {
-    return { ok: false, message: "delivery 格式不正确。" };
-  }
-  if (typeof input.agentId !== "string" || !input.agentId.trim()) {
-    return { ok: false, message: "delivery.agentId 不能为空。" };
-  }
-  if (typeof input.prompt !== "string" || !input.prompt.trim().startsWith("/")) {
-    return { ok: false, message: "delivery.prompt 必须是以 / 开头的命令文本。" };
-  }
-  return {
-    ok: true,
-    delivery: { type: "acp_command", agentId: input.agentId.trim(), prompt: input.prompt.trim() },
-  };
-}
-
-/** 从命令文本提取命令名（去掉前导 "/" 与参数），如 "/init src" → "init"。 */
-function nativeCommandName(content: string): string | null {
-  const firstToken = content.trim().split(/\s+/)[0] ?? "";
-  if (!firstToken.startsWith("/")) return null;
-  const name = firstToken.slice(1);
-  return name || null;
 }
 
 function parseElicitationResponse(input: unknown): ElicitationResponse | null {

@@ -144,12 +144,16 @@ export class AgentRegistry {
     return result;
   }
 
-  /** 把主动探测得到的命令写回员工会话缓存（issue #160 收尾）。 */
+  /** 把主动探测得到的命令写回员工会话缓存；正式通告已存在时拒绝并返回 false。 */
   adoptProbedCommands(agentId: AgentId, commands: readonly AgentCommand[]): boolean {
     const session = this.sessions.get(agentId);
     if (!session) return false;
-    session.adoptProbedCommands(commands);
-    return true;
+    return session.adoptProbedCommands(commands);
+  }
+
+  /** 该员工当前快照是否来自正式 runtime 会话的通告（探测写回不算）。 */
+  hasRuntimeSessionCommands(agentId: AgentId): boolean {
+    return this.sessions.get(agentId)?.hasRuntimeSessionCommands() ?? false;
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {

@@ -220,14 +220,21 @@ export class AgentSession {
   /**
    * 主动探测得到的命令写回缓存（issue #160 收尾）：/api/state、探测短路和
    * 发送校验共用这一份权威快照，探测出的命令才能直接发送。已有正式会话的
-   * 通告时不覆盖，避免探测竞态冲掉真实数据；写回不广播——探测结果由服务端
-   * 探测路径自己按会话广播。
+   * 通告时拒绝写回并返回 false，让调用方放弃广播探测结果（探测竞态：
+   * 正式通告必须赢过迟到的探测帧）；写回不广播——探测结果由服务端探测
+   * 路径自己按会话广播。
    */
-  adoptProbedCommands(commands: readonly AgentCommand[]): void {
-    if (this.sessionCommands !== null && this.sessionCommands.sessionId !== PROBED_COMMANDS_SESSION_ID) {
-      return;
+  adoptProbedCommands(commands: readonly AgentCommand[]): boolean {
+    if (this.hasRuntimeSessionCommands()) {
+      return false;
     }
     this.sessionCommands = { sessionId: PROBED_COMMANDS_SESSION_ID, commands: [...commands] };
+    return true;
+  }
+
+  /** 当前快照是否来自员工的正式 runtime 会话（探测写回的哨兵不算）。 */
+  hasRuntimeSessionCommands(): boolean {
+    return this.sessionCommands !== null && this.sessionCommands.sessionId !== PROBED_COMMANDS_SESSION_ID;
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
