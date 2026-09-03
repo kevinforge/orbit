@@ -83,6 +83,37 @@ const bareLocalPath = new RegExp(
 // 路径末尾紧邻的半角标点属于正文而非路径（"…/App.tsx."、"…/a.txt),"）。
 const trailingPunctuation = /[.,;:!?)>'"。，、！？；：（）［］｛｝《》「」『』【】…]+$/u;
 
+// 裸 POSIX 路径是三种前缀里信号最弱的：正文里「词/词/词」形态（工具栏/
+// 翻页/搜索、http/https/mailto、加载/错误/404/截断）与 /段/段 的形状完
+// 全重合，且 inline tokenizer 只能看到后续文本、看不到斜杠前的正文，无
+// 法用前文区分（用户反馈的截图样例，issue #165）。因此裸 POSIX 仅在路
+// 径形态足够强时识别：末段是带扩展名的文件名（不以点开头，支持 Unicode
+// 文件名）、末段是常见无扩展名文件名、首段是常见根目录或单字母盘符段
+// （Git Bash 的 /d/…、WSL 的 /mnt/…）、或以目录斜杠结尾。其余无扩展
+// 目录串请写显式链接；[x](/path) 与 file:/// 分支意图明确，不受此收紧
+// 影响。
+const posixRootSegments = new Set([
+  "usr", "home", "tmp", "var", "etc", "opt", "mnt", "srv", "root", "bin",
+  "sbin", "lib", "lib64", "media", "run", "data", "app", "apps", "workspace",
+  "workspaces", "users", "projects", "code", "repo", "www", "logs", "sites",
+  "source", "src", "storage",
+]);
+const extensionlessFileNames = new Set([
+  "makefile", "dockerfile", "license", "licence", "notice", "codeowners",
+  "readme", "changelog", "gemfile", "rakefile", "brewfile", "procfile", "jenkinsfile",
+]);
+
+function looksLikePosixFilePath(path: string): boolean {
+  if (/\/$/.test(path)) return true; // 目录形态 /var/log/
+  const segments = path.split("/").filter(Boolean);
+  const last = segments[segments.length - 1] ?? "";
+  // name.ext：不以点开头（".docx/.doc" 这类扩展名串不是文件名）。
+  if (/^[^./][^/]*\.[^./]+$/.test(last)) return true;
+  if (extensionlessFileNames.has(last.toLowerCase())) return true;
+  const first = segments[0] ?? "";
+  return /^[a-z]$/i.test(first) || posixRootSegments.has(first.toLowerCase());
+}
+
 const localPathLinkExtension = {
   name: "localPathLink",
   level: "inline" as const,
@@ -96,6 +127,8 @@ const localPathLinkExtension = {
     const trimmed = match[0].replace(trailingPunctuation, "");
     // 剥掉尾随标点后可能只剩 "D:/" 之类的残段，重新校验避免生成坏入口。
     if (!bareLocalPath.test(trimmed)) return undefined;
+    // 裸 POSIX 形态过弱，需通过强路径特征才生成入口，否则词组会被误链。
+    if (trimmed.startsWith("/") && !looksLikePosixFilePath(trimmed)) return undefined;
     return { type: "localPathLink", raw: trimmed, tokens: [], path: trimmed };
   },
   renderer(token: { path: string }): string {
