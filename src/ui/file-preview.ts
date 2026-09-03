@@ -47,3 +47,31 @@ export function formatPreviewSize(size: number): string {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// ── 面板宽度拖拽（与侧边栏 sidebarWidth 同一套 clamp 思路）────
+
+export const PREVIEW_MIN_WIDTH = 300;
+export const PREVIEW_MAX_WIDTH = 760;
+export const PREVIEW_DEFAULT_WIDTH = 480;
+
+/**
+ * 把拖拽得到的宽度收敛到面板允许区间。视口上限（viewportWidth - 480）
+ * 保证侧边栏 + 会话栏至少还有约 480px；小视口下退回最小宽度。
+ */
+export function clampPreviewWidth(value: number, viewportWidth: number): number {
+  const dynamicMax = Math.max(
+    PREVIEW_MIN_WIDTH,
+    Math.min(PREVIEW_MAX_WIDTH, viewportWidth - 480),
+  );
+  if (!Number.isFinite(value)) return PREVIEW_DEFAULT_WIDTH;
+  return Math.min(dynamicMax, Math.max(PREVIEW_MIN_WIDTH, Math.round(value)));
+}
+
+/** 行号栏内容："1\n2\n…\nN"，行数按换行符计数（末尾换行不产生空行号）。 */
+export function buildPreviewLineNumbers(text: string): string {
+  if (text === "") return "";
+  const lines = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+  const parts: string[] = [];
+  for (let index = 1; index <= lines; index += 1) parts.push(String(index));
+  return parts.join("\n");
+}

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildPreviewLineNumbers,
   buildPreviewMetadataUrl,
   buildPreviewRawUrl,
+  clampPreviewWidth,
   formatPreviewSize,
+  PREVIEW_DEFAULT_WIDTH,
   previewFileName,
   prettifyJsonText,
 } from "../src/ui/file-preview.ts";
@@ -43,4 +46,20 @@ test("formatPreviewSize renders human byte sizes", () => {
   assert.equal(formatPreviewSize(2048), "2.0 KB");
   assert.equal(formatPreviewSize(5 * 1024 * 1024), "5.0 MB");
   assert.equal(formatPreviewSize(Number.NaN), "");
+});
+
+test("clampPreviewWidth bounds the panel to min/max and the viewport cap", () => {
+  assert.equal(clampPreviewWidth(120, 1920), 300, "below minimum clamps up");
+  assert.equal(clampPreviewWidth(5000, 1920), 760, "above maximum clamps down");
+  assert.equal(clampPreviewWidth(700, 1000), 520, "narrow viewports keep ~480px for the rest of the shell");
+  assert.equal(clampPreviewWidth(700, 600), 300, "tiny viewports fall back to the minimum");
+  assert.equal(clampPreviewWidth(480.6, 1920), 481, "widths round to whole pixels");
+  assert.equal(clampPreviewWidth(Number.NaN, 1920), PREVIEW_DEFAULT_WIDTH, "invalid input falls back to the default");
+});
+
+test("buildPreviewLineNumbers numbers logical lines without a trailing blank", () => {
+  assert.equal(buildPreviewLineNumbers("a\nb\nc"), "1\n2\n3");
+  assert.equal(buildPreviewLineNumbers("single"), "1");
+  assert.equal(buildPreviewLineNumbers("ends with newline\n"), "1");
+  assert.equal(buildPreviewLineNumbers(""), "");
 });

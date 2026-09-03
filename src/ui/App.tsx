@@ -1,5 +1,6 @@
 import { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
+import { clampPreviewWidth, PREVIEW_DEFAULT_WIDTH } from "./file-preview.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
@@ -191,6 +192,9 @@ export function App() {
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
   /** 右侧只读预览面板（issue #165）：单面板，点新文件替换 path。 */
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  // 预览面板宽度（issue #165 跟进）：与侧边栏宽度同一套持久化 + clamp 模式，
+  // 经 --preview-width 同时驱动第三栏列宽与窄视口浮层宽度。
+  const [previewWidth, setPreviewWidth] = useState(() => loadPreviewWidth());
   const isCompactViewport = useMediaQueryActive("(max-width: 920px)");
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   /** 附件上传生命周期：上下文版本绑定的上传计数与附件槽位（PR #147 M1 竞态修复）。 */
@@ -630,6 +634,10 @@ export function App() {
     if (sidebarCollapsed) return;
     window.localStorage.setItem("orbit.sidebarWidth", String(sidebarWidth));
   }, [sidebarCollapsed, sidebarWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem("orbit.previewWidth", String(previewWidth));
+  }, [previewWidth]);
 
   useEffect(() => {
     if (!isResizingSidebar) return;
@@ -1624,6 +1632,7 @@ export function App() {
       style={{
         gridTemplateColumns: sidebarCollapsed ? "0 minmax(0, 1fr)" : `${sidebarWidth}px minmax(0, 1fr)`,
         "--sidebar-resize-left": `${sidebarWidth}px`,
+        ...(previewPath ? { "--preview-width": `${previewWidth}px` } : {}),
       } as CSSProperties}
     >
       <aside className="sidebar" aria-label="工作区导航" aria-hidden={sidebarCollapsed}>
@@ -2257,6 +2266,7 @@ export function App() {
           onClose={() => setPreviewPath(null)}
           onReveal={(path) => { void revealLocalPath(path); }}
           onOpenPath={(path) => setPreviewPath(path)}
+          onResizeWidth={setPreviewWidth}
         />
       ) : null}
       {showSettings ? (
@@ -4555,6 +4565,15 @@ function loadSidebarWidth(): number {
 
 function clampSidebarWidth(value: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)));
+}
+
+function loadPreviewWidth(): number {
+  if (typeof window === "undefined") {
+    return PREVIEW_DEFAULT_WIDTH;
+  }
+  const stored = window.localStorage.getItem("orbit.previewWidth");
+  const parsed = stored ? Number(stored) : PREVIEW_DEFAULT_WIDTH;
+  return clampPreviewWidth(Number.isFinite(parsed) ? parsed : PREVIEW_DEFAULT_WIDTH, window.innerWidth);
 }
 
 /** 响应式媒体查询状态：用于决定预览面板占第三栏还是转为浮层。 */
