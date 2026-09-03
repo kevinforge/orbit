@@ -547,6 +547,298 @@ button:active:not(:disabled) {
   background: var(--subtext);
 }
 
+/* ── File preview panel（issue #165）──────────────────────── */
+
+.previewPanel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+/* 窄视口（≤920px，由 App 的 matchMedia 判定）下转为右侧浮层；宽度与
+   第三栏共用 --preview-width（App 拖拽调宽时写入）。 */
+.previewPanel.overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(92vw, var(--preview-width, 420px));
+  z-index: 60;
+  box-shadow: var(--shadow-lg);
+}
+
+/* 左缘拖拽调宽手柄：与 sidebarResizeHandle 同一套交互（8px 热区、悬停/
+   拖拽中显示 accent 竖线），锚在面板自身左边缘，三栏与浮层两种形态通用。 */
+.previewResizeHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 5;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.previewResizeHandle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+}
+
+.previewResizeHandle:hover::after,
+.previewResizing .previewResizeHandle::after {
+  background: var(--accent);
+}
+
+.previewResizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.previewPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.previewPanelTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.previewPanelTitle strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewPanelPath {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewPanelActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.previewPanelRevealBtn,
+.previewPanelCloseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.previewPanelRevealBtn:hover,
+.previewPanelCloseBtn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.previewPanelBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+/* 代码/文本预览：行号栏 + 代码横向滚动（保持行号与代码对齐，长行不折行）。
+   水平内边距移到行号栏与代码自身，滚动可达面板两缘。 */
+.previewCodeBody {
+  padding: 12px 0;
+}
+
+.previewCode {
+  display: flex;
+  align-items: flex-start;
+  min-width: 100%;
+  width: max-content;
+}
+
+.previewLineNumbers {
+  position: sticky;
+  left: 0;
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 0 10px 0 14px;
+  border-right: 1px solid var(--border-light);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+}
+
+.previewText {
+  flex: 0 1 auto;
+  margin: 0;
+  padding: 0 16px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+/* highlight.js token 主题：不引入 hljs 官方主题（硬编码色），全部映射到
+   现有 custom properties——关键字/标签 accent、字符串 success、数值与常量
+   warning、注释 muted、diff 增删走 success/error。 */
+.previewText .hljs-comment,
+.previewText .hljs-quote,
+.previewText .hljs-meta {
+  color: var(--text-muted);
+}
+
+.previewText .hljs-keyword,
+.previewText .hljs-selector-tag,
+.previewText .hljs-doctag,
+.previewText .hljs-template_tag,
+.previewText .hljs-type,
+.previewText .hljs-title,
+.previewText .hljs-section,
+.previewText .hljs-selector-id,
+.previewText .hljs-selector-class {
+  color: var(--accent);
+}
+
+.previewText .hljs-string,
+.previewText .hljs-regexp,
+.previewText .hljs-addition,
+.previewText .hljs-symbol,
+.previewText .hljs-bullet {
+  color: var(--success);
+}
+
+.previewText .hljs-number,
+.previewText .hljs-literal,
+.previewText .hljs-deletion,
+.previewText .hljs-selector-attr {
+  color: var(--warning);
+}
+
+.previewText .hljs-attr,
+.previewText .hljs-attribute,
+.previewText .hljs-variable,
+.previewText .hljs-template_variable,
+.previewText .hljs-params,
+.previewText .hljs-operator,
+.previewText .hljs-punctuation {
+  color: var(--text-secondary);
+}
+
+.previewText .hljs-name,
+.previewText .hljs-tag {
+  color: var(--error);
+}
+
+.previewText .hljs-built_in,
+.previewText .hljs-builtin-name,
+.previewText .hljs-class .hljs-title,
+.previewText .hljs-title.class_,
+.previewText .hljs-title.function_ {
+  color: var(--warning);
+}
+
+.previewText .hljs-strong {
+  font-weight: 600;
+}
+
+.previewText .hljs-emphasis {
+  font-style: italic;
+}
+
+.previewMarkdown {
+  font-size: 13px;
+}
+
+.previewImageBody {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.previewImage {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.previewPdf {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+}
+
+.previewPanelState {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.previewPanelState p {
+  margin: 0;
+}
+
+.previewPanelError {
+  color: var(--error);
+}
+
+.previewPanelHint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.previewTruncatedNotice {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 12px;
+}
+
 /* ── Conversation ──────────────────────────────────────────── */
 
 .conversation {
@@ -6233,6 +6525,17 @@ button:active:not(:disabled) {
 
   .shell.sidebarCollapsed {
     grid-template-columns: 0 minmax(0, 1fr) !important;
+  }
+
+  /* 预览面板第三栏（issue #165）：面板打开时扩展为三栏；列宽用 App 写入的
+     --preview-width（拖拽可调），未写入时退回响应式 clamp。窄视口（≤920px）
+     下 App 不挂该类，面板转浮层。 */
+  .shell.previewOpen {
+    grid-template-columns: 288px minmax(0, 1fr) var(--preview-width, clamp(300px, 34vw, 480px)) !important;
+  }
+
+  .shell.sidebarCollapsed.previewOpen {
+    grid-template-columns: 0 minmax(0, 1fr) var(--preview-width, clamp(300px, 34vw, 480px)) !important;
   }
 
   .sidebar {

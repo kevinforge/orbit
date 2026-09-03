@@ -161,6 +161,38 @@ describe("renderMarkdown", () => {
     assert.ok(!result.includes("localPathLink"), `expected no path entry in: ${result}`);
   });
 
+  it("does not treat slash-separated word groups as paths (user-reported samples)", () => {
+    // 用户截图反馈的四个误判样例（issue #165 交付后反馈）。
+    const samples = [
+      "自带工具栏/翻页/搜索",
+      "链接/图片只放行 http/https/mailto/tel 协议。",
+      "**Word/Office**（.docx/.doc/.xlsx 等）",
+      "（含窄视口折叠规则、加载/错误/404/截断各状态）",
+    ];
+    for (const markdown of samples) {
+      const result = renderMarkdown(markdown);
+      assert.ok(!result.includes("localPathLink"), `expected no path entry for: ${markdown}`);
+    }
+  });
+
+  it("still recognizes bare POSIX paths with strong path shapes", () => {
+    const byExtension = renderMarkdown("读 /项目/资料/笔记.md 复核");
+    assert.ok(byExtension.includes('data-path="/项目/资料/笔记.md"'), `expected Unicode path entry in: ${byExtension}`);
+    const byFileName = renderMarkdown("编译 /项目/构建/Makefile");
+    assert.ok(byFileName.includes('data-path="/项目/构建/Makefile"'), `expected extensionless-file entry in: ${byFileName}`);
+    const byDirectorySlash = renderMarkdown("备份在 /日志/存档/");
+    assert.ok(byDirectorySlash.includes('data-path="/日志/存档/"'), `expected directory entry in: ${byDirectorySlash}`);
+    const byDriveSegment = renderMarkdown("Git Bash 路径 /d/tools/node");
+    assert.ok(byDriveSegment.includes('data-path="/d/tools/node"'), `expected drive-segment entry in: ${byDriveSegment}`);
+  });
+
+  it("no longer links extensionless posix strings outside known roots", () => {
+    // 收紧后的行为边界：无扩展名、首段也不在根目录清单里的裸 POSIX 串不再
+    // 自动识别；需要时写成显式链接 [x](/path) 或 file:/// 形式。
+    const result = renderMarkdown("配置在 /项目/资料 目录");
+    assert.ok(!result.includes("localPathLink"), `expected no path entry in: ${result}`);
+  });
+
   it("keeps paths inside code spans as code", () => {
     const result = renderMarkdown("`D:/quoted/a.txt` 是代码");
     assert.ok(!result.includes("localPathLink"), `expected code span untouched in: ${result}`);

@@ -1,5 +1,6 @@
 import { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown, LOCAL_PATH_LINK_CLASS } from "./markdown-renderer.ts";
+import { clampPreviewWidth, PREVIEW_DEFAULT_WIDTH } from "./file-preview.ts";
 import { isSafeExternalUrl } from "./url-guard.ts";
 import { AGENT_RUNTIME_PRIORITY, runtimeKindToCliKey, runtimeMeta } from "../core/runtime-meta.ts";
 import { INTERNAL_SUPERVISOR_ID } from "../core/agent-profiles.ts";
@@ -13,6 +14,7 @@ import { createAttachmentUploadLifecycle } from "./attachment-upload-state.ts";
 import { createConversationForUpload } from "./attachment-upload-conversation.ts";
 import { appendTransientProcessActivity, collapseToolExecutions, type ProcessToolActivity, type ProcessToolExecution } from "../shared/process-activity.ts";
 import { WorkAnalysisPanel } from "./WorkAnalysisPanel.tsx";
+import { FilePreviewPanel } from "./FilePreviewPanel.tsx";
 import * as TDesign from "tdesign-react";
 import {
   AddIcon,
@@ -188,6 +190,12 @@ export function App() {
   const [attachmentToast, setAttachmentToast] = useState<string | null>(null);
   const [pathToast, setPathToast] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<DraftAttachmentInfo | null>(null);
+  /** 右侧只读预览面板（issue #165）：单面板，点新文件替换 path。 */
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  // 预览面板宽度（issue #165 跟进）：与侧边栏宽度同一套持久化 + clamp 模式，
+  // 经 --preview-width 同时驱动第三栏列宽与窄视口浮层宽度。
+  const [previewWidth, setPreviewWidth] = useState(() => loadPreviewWidth());
+  const isCompactViewport = useMediaQueryActive("(max-width: 920px)");
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   /** 附件上传生命周期：上下文版本绑定的上传计数与附件槽位（PR #147 M1 竞态修复）。 */
   const attachmentUploadLifecycleRef = useRef(createAttachmentUploadLifecycle());
@@ -628,6 +636,10 @@ export function App() {
   }, [sidebarCollapsed, sidebarWidth]);
 
   useEffect(() => {
+    window.localStorage.setItem("orbit.previewWidth", String(previewWidth));
+  }, [previewWidth]);
+
+  useEffect(() => {
     if (!isResizingSidebar) return;
     function handlePointerMove(event: PointerEvent) {
       setSidebarWidth(clampSidebarWidth(event.clientX));
@@ -711,12 +723,23 @@ export function App() {
   }
 
   // 消息区事件委托：markdown 渲染出的本地路径入口（issue #143）点击或
-  // Enter/Space 激活后调用 /api/local-path/reveal 在资源管理器中定位；
-  // 失败或越界时提示原因，并把路径复制到剪贴板兜底。
+  // Enter/Space 激活后在右侧打开只读预览面板（issue #165）；"在资源管理
+  // 器中定位"降级为面板内按钮，revealLocalPath 仍保留该链路与目录兜底。
   function localPathEntryFromEventTarget(target: EventTarget | null): HTMLElement | null {
     if (!(target instanceof HTMLElement)) return null;
     return target.closest<HTMLElement>(`.${LOCAL_PATH_LINK_CLASS}`);
   }
+
+  // Esc 关闭预览面板，与菜单的 Esc 关闭相互独立。
+  useEffect(() => {
+    if (!previewPath) return;
+    function closePreviewOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setPreviewPath(null);
+    }
+    window.addEventListener("keydown", closePreviewOnEscape);
+    return () => window.removeEventListener("keydown", closePreviewOnEscape);
+  }, [previewPath]);
 
   async function revealLocalPath(path: string) {
     let reason = "";
@@ -740,11 +763,11 @@ export function App() {
     }
   }
 
-  async function handleMessagesClick(event: MouseEvent<HTMLDivElement>) {
+  function handleMessagesClick(event: MouseEvent<HTMLDivElement>) {
     const entry = localPathEntryFromEventTarget(event.target);
     const path = entry?.dataset.path;
     if (!path) return;
-    await revealLocalPath(path);
+    setPreviewPath(path);
   }
 
   // 入口带 role="button" tabindex="0"，键盘激活必须与点击等价；Space 需
@@ -755,7 +778,7 @@ export function App() {
     const path = entry?.dataset.path;
     if (!path) return;
     event.preventDefault();
-    void revealLocalPath(path);
+    setPreviewPath(path);
   }
 
   useLayoutEffect(() => {
@@ -1599,12 +1622,17 @@ export function App() {
     }
   }
 
+  // 预览面板作为第三栏（previewOpen 类，宽度由 styles.css 定义）；窄视口
+  // （≤920px）下不挂类，面板转为浮层，不占用网格列。
+  const previewColumnActive = previewPath !== null && !isCompactViewport;
+
   return (
     <main
-      className={`shell ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}
+      className={`shell ${sidebarCollapsed ? "sidebarCollapsed" : ""}${previewColumnActive ? " previewOpen" : ""}`}
       style={{
         gridTemplateColumns: sidebarCollapsed ? "0 minmax(0, 1fr)" : `${sidebarWidth}px minmax(0, 1fr)`,
         "--sidebar-resize-left": `${sidebarWidth}px`,
+        ...(previewPath ? { "--preview-width": `${previewWidth}px` } : {}),
       } as CSSProperties}
     >
       <aside className="sidebar" aria-label="工作区导航" aria-hidden={sidebarCollapsed}>
@@ -2231,6 +2259,16 @@ export function App() {
         </form>
       </section>
       )}
+      {previewPath ? (
+        <FilePreviewPanel
+          path={previewPath}
+          overlay={isCompactViewport}
+          onClose={() => setPreviewPath(null)}
+          onReveal={(path) => { void revealLocalPath(path); }}
+          onOpenPath={(path) => setPreviewPath(path)}
+          onResizeWidth={setPreviewWidth}
+        />
+      ) : null}
       {showSettings ? (
         <SystemSettingsPanel
           onClose={() => setShowSettings(false)}
@@ -4527,6 +4565,30 @@ function loadSidebarWidth(): number {
 
 function clampSidebarWidth(value: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)));
+}
+
+function loadPreviewWidth(): number {
+  if (typeof window === "undefined") {
+    return PREVIEW_DEFAULT_WIDTH;
+  }
+  const stored = window.localStorage.getItem("orbit.previewWidth");
+  const parsed = stored ? Number(stored) : PREVIEW_DEFAULT_WIDTH;
+  return clampPreviewWidth(Number.isFinite(parsed) ? parsed : PREVIEW_DEFAULT_WIDTH, window.innerWidth);
+}
+
+/** 响应式媒体查询状态：用于决定预览面板占第三栏还是转为浮层。 */
+function useMediaQueryActive(query: string): boolean {
+  const [active, setActive] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia(query).matches : false,
+  );
+  useEffect(() => {
+    const mediaQueryList = window.matchMedia(query);
+    const onChange = () => setActive(mediaQueryList.matches);
+    onChange();
+    mediaQueryList.addEventListener("change", onChange);
+    return () => mediaQueryList.removeEventListener("change", onChange);
+  }, [query]);
+  return active;
 }
 
 function formatTime(value: string): string {
