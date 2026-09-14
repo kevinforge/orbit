@@ -21,7 +21,9 @@ React UI
 
 The runtime no longer uses PTY sessions or CLI hooks. A run is considered complete when the selected runtime turn returns a clean final answer.
 
-CodeBuddy can replay the previous answer immediately after prompting an already-loaded pooled session. Orbit buffers text received before CodeBuddy's first current-turn `agentPhase` response boundary and discards that buffer once the boundary arrives. If an older CodeBuddy version emits no phase signal, the buffered text is accepted only after the prompt settles successfully; failed, refused, and cancelled turns never promote it as the current answer.
+CodeBuddy replays conversation history after `session/new` (pushed asynchronously after the response) and `session/load`. Those frames identify themselves: the replay is bracketed by `session_info_update._meta["codebuddy.ai/historyReplay"]` `start`/`end`, and each replayed frame carries `_meta["codebuddy.ai"].mode === "history"` (mirrored on the notification-level `_meta`). The shared ACP layer drops them through `AcpRuntimeDefinition.isReplayedUpdate` before any turn-state advance or event emission, so replayed text, tool frames, and plans never reach the live activity, the final answer, or the persisted process timeline — regardless of whether the replay lands before or after the current turn's first model boundary. Frames inside a replay window that lack the per-frame marker are dropped as well, and a window that never receives its `end` marker is closed by the current turn's first model phase.
+
+For runtimes or versions that emit no replay marker, CodeBuddy additionally buffers answer text until the first current-turn `agentPhase` response boundary, and only while a pooled session is reused. Buffered text is accepted only after a clean settlement, so failed, refused, and cancelled turns never promote it as the current answer.
 
 ## Core Modules
 

@@ -24,6 +24,10 @@ No notable changes yet.
 
 ### Improvements & fixes
 
+- CodeBuddy history replays are now discarded by CodeBuddy's own replay markers, so
+  a previous turn's answer, tool calls, and plans can no longer appear in the new
+  turn's process text, final answer, or saved timeline — no matter whether the
+  replay arrives before or after the current turn's first response boundary.
 - The local server now binds IPv4 loopback only and rejects requests whose `Host`
   header is not a loopback address, so LAN clients and DNS-rebinding pages cannot
   reach the unauthenticated API.

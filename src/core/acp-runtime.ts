@@ -112,6 +112,8 @@ export type AcpTurnState = {
   inModelResponse: boolean;
   /** 池化会话复用时，在 runtime 给出当前回合响应边界前暂存可疑回放。 */
   awaitingResponseBoundary: boolean;
+  /** runtime 明确报告的历史回放窗口内（如 CodeBuddy 的 historyReplay start→end）。 */
+  inHistoryReplay: boolean;
 };
 
 /** 工具调用帧（tool_call / tool_call_update）的收窄类型。 */
@@ -141,6 +143,18 @@ export type AcpRuntimeDefinition = {
    * 发出新的模型响应边界就丢弃缓冲，避免把上一轮回放算作当前答案。
    */
   guardPooledSessionReplay?: boolean;
+  /**
+   * 判定该会话更新是否属于 runtime 的历史回放（issue #172）。
+   *
+   * 命中时共享层在推进任何回合状态、发出任何事件之前整帧丢弃，因此回放的
+   * 正文、过程叙述、工具帧与计划帧都不会进入实时活动、最终正文或持久化时间线。
+   * 这比按到达顺序推断可靠：回放可能落在当前轮首个模型边界之前或之后。
+   *
+   * 收到 notification 而非 update，便于 runtime 同时检查两级 `_meta`（CodeBuddy
+   * 把回放标记写在 update._meta 上，并镜像到通知级 _meta）。实现可以在 turn 上
+   * 维护回放窗口状态（如 historyReplay 的 start/end 区间）。
+   */
+  isReplayedUpdate?: (notification: SessionNotification, turn: AcpTurnState) => boolean;
   /**
    * 工具成功完成后的 runtime 专属投影（issue #161）。共享层先发出原
    * tool.completed，再调用该钩子并发出其返回的活动，保持事件顺序；返回
@@ -883,6 +897,12 @@ function handleSessionUpdate(
   definition: AcpRuntimeDefinition,
 ): void {
   const update = notification.update;
+  if (definition.isReplayedUpdate?.(notification, turnState)) {
+    // 历史回放整帧丢弃（issue #172）：先于状态推进，避免回放里的陈旧 agentPhase
+    // 推进响应序号、或把上一轮内容算进最终答案；也先于事件发射，因此过程时间线
+    // 与持久化投影都不会看到它。
+    return;
+  }
   definition.observeSessionUpdate?.(update, turnState);
   if (turnState.awaitingResponseBoundary && turnState.modelResponseIndex > 0) {
     // 当前回合的首个可靠模型边界已经出现；此前收到的文本属于上一轮回放。
@@ -1050,7 +1070,12 @@ function createAnswerState(): AnswerState {
 }
 
 function createTurnState(): AcpTurnState {
-  return { modelResponseIndex: 0, inModelResponse: false, awaitingResponseBoundary: false };
+  return {
+    modelResponseIndex: 0,
+    inModelResponse: false,
+    awaitingResponseBoundary: false,
+    inHistoryReplay: false,
+  };
 }
 
 function acceptAnswerChunk(

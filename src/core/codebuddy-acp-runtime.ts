@@ -5,6 +5,7 @@ import type {
   CreateElicitationResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionNotification,
 } from "@agentclientprotocol/sdk";
 
 import {
@@ -47,6 +48,70 @@ export function classifyCodeBuddyAnswerChunk(
   if (meta["codebuddy.ai/isCompactInternal"] === true) return "ignore";
   if (meta["codebuddy.ai/memberEvent"] !== undefined) return "progress";
   return undefined;
+}
+
+/**
+ * CodeBuddy 的历史回放标记（issue #172）。
+ *
+ * CodeBuddy 在 `session/new`（用 `setTimeout` 异步发出的初始帧）与 `session/load`
+ * 之后会把历史重新推一遍：回放区间由 `session_info_update._meta
+ * ["codebuddy.ai/historyReplay"]` 的 `start`/`end` 界定，区间内的每一帧还带
+ * `_meta["codebuddy.ai"] = { mode: "history", offset }`；同一份 meta 同时写在
+ * update 与通知两级。正因为它是异步发出的，回放可能落在当前轮首个模型边界
+ * 之前或之后，所以按显式标记整帧丢弃，而不是按到达顺序推断。
+ *
+ * 两级 `_meta` 都检查：内容帧的标记在 update 上，通知级是镜像，多认一处不会
+ * 误伤（只有帧自称 history 时才丢弃）。区间状态兜住不带逐帧标记的帧；观察到
+ * 本轮首个模型相位时也会收口，避免回放缺少 `end` 时把整轮吞掉。
+ */
+export function isCodeBuddyReplayFrame(
+  notification: Parameters<NonNullable<AcpRuntimeDefinition["isReplayedUpdate"]>>[0],
+  turn: AcpTurnState,
+): boolean {
+  const update = notification.update;
+  const boundary = historyReplayBoundary(update._meta) ?? historyReplayBoundary(notification._meta);
+  if (boundary === "start") {
+    turn.inHistoryReplay = true;
+    return true;
+  }
+  if (boundary === "end") {
+    turn.inHistoryReplay = false;
+    return true;
+  }
+  if (turn.inHistoryReplay) {
+    // 回放缺少 `end` 标记时用本轮首个模型相位收口：回放只重放历史条目，不带
+    // agentPhase，所以带模型相位的帧一定是本轮真正开始，不能因窗口开着就丢掉。
+    if (isCodeBuddyModelPhase(update)) {
+      turn.inHistoryReplay = false;
+      return false;
+    }
+    return true;
+  }
+  return codeBuddyMetaMode(update._meta) === "history" || codeBuddyMetaMode(notification._meta) === "history";
+}
+
+function isCodeBuddyModelPhase(update: SessionNotification["update"]): boolean {
+  if (update.sessionUpdate !== "session_info_update") return false;
+  const phase = readCodeBuddyAgentPhase(update._meta);
+  return phase === "model_requesting" || phase === "model_streaming";
+}
+
+function historyReplayBoundary(meta: unknown): "start" | "end" | undefined {
+  const value = readCodeBuddyMetaValue(meta, "codebuddy.ai/historyReplay");
+  return value === "start" || value === "end" ? value : undefined;
+}
+
+/** `_meta["codebuddy.ai"].mode`；回放帧为 "history"。 */
+function codeBuddyMetaMode(meta: unknown): string | undefined {
+  const nested = readCodeBuddyMetaValue(meta, "codebuddy.ai");
+  if (!nested || typeof nested !== "object") return undefined;
+  const mode = (nested as Record<string, unknown>).mode;
+  return typeof mode === "string" && mode ? mode : undefined;
+}
+
+function readCodeBuddyMetaValue(meta: unknown, key: string): unknown {
+  if (!meta || typeof meta !== "object") return undefined;
+  return (meta as Record<string, unknown>)[key];
 }
 
 /**
@@ -163,6 +228,7 @@ export const CODEBUDDY_ACP: AcpRuntimeDefinition = {
   observeSessionUpdate: observeCodeBuddySessionUpdate,
   answerGroupKey: codeBuddyAnswerGroupKey,
   guardPooledSessionReplay: true,
+  isReplayedUpdate: isCodeBuddyReplayFrame,
   projectToolCompletion: projectCodeBuddyToolCompletion,
 };
 

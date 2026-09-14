@@ -145,6 +145,15 @@ cannot run until its selected runtime CLI is available and authenticated.
   4.131.1, and `@cloudflare/workers-types` 5.20260914.1 so `npm ci` resolves and
   the website dependency audit is clean.
 
+### CodeBuddy session reuse
+
+- CodeBuddy replays history after `session/new` and `session/load`. Those frames
+  carry CodeBuddy's own replay markers, and Orbit now discards them before they
+  reach the process text, the final answer, or the saved timeline, so a previous
+  turn's answer can no longer surface as the new turn's output or result.
+- The discard does not depend on timing: it also covers replays that arrive after
+  the current turn's first response boundary.
+
 ## Security And Governance
 
 - License: MIT.
@@ -179,6 +188,10 @@ cannot run until its selected runtime CLI is available and authenticated.
   snapshots are in-memory and are discovered again after a server restart.
 - CodeBuddy does not emit a distinct final-answer signal for task-driven turns,
   so final settlement still relies on its ACP stop reason.
+- CodeBuddy discards replayed history through the markers its own ACP server
+  reports (`historyReplay` and the per-frame `codebuddy.ai.mode`). On a CodeBuddy
+  build that emits neither those markers nor `agentPhase`, answer text on a reused
+  pooled session is shown at settlement instead of streaming live.
 - Private license enforcement remains only as an explicit opt-in via
   `ORBIT_REQUIRE_LICENSE=true`; the default public build remains unblocked.
 - Platform binary and restart-recovery evidence is produced by the GitHub Actions

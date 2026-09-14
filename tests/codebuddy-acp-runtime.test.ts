@@ -454,6 +454,118 @@ test("never promotes a pooled-session replay when the new prompt fails before a 
   assert.equal(activities.length, 0);
 });
 
+test("drops history-replay frames that arrive after the current response boundary", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const output: string[] = [];
+  const fake = fakeConnector({
+    capabilities: {},
+    loadedSessionId: "existing-session",
+    onPrompt(notify) {
+      // CodeBuddy 用 setTimeout 异步发出回放，因此它可能排在当前轮首个模型边界
+      // 之后；按到达顺序推断会漏掉这种顺序（issue #172）。
+      notify(codebuddyPhaseUpdate("existing-session", "model_requesting"));
+      notify(codebuddyReplayText("existing-session", "previous-message", "上一轮完整回答"));
+      notify(codebuddyReplayTool("existing-session", "previous-tool"));
+      notify(codebuddyTextUpdate("existing-session", "current-message", "本轮回答"));
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  const handle = runtime.run(runOptions({
+    resumeSessionId: "existing-session",
+    onOutput: (text: string) => output.push(text),
+    onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+  }));
+
+  assert.equal(await handle.result, "本轮回答");
+  assert.deepEqual(output, ["本轮回答"]);
+  assert.ok(!activities.some((activity) => activity.type === "process.text" && activity.text.includes("上一轮")));
+  assert.ok(
+    !activities.some((activity) => activity.type === "tool.started" || activity.type === "tool.completed"),
+    "replayed tool frames must not reach the live activity or the persisted process timeline",
+  );
+});
+
+test("drops unmarked frames inside a historyReplay window", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const output: string[] = [];
+  const fake = fakeConnector({
+    capabilities: {},
+    onPrompt(notify) {
+      notify(codebuddyHistoryReplay("new-session", "start"));
+      notify(codebuddyTextUpdate("new-session", "previous-message", "窗口内未标记的旧内容"));
+      notify(codebuddyHistoryReplay("new-session", "end"));
+      notify(codebuddyPhaseUpdate("new-session", "model_requesting"));
+      notify(codebuddyTextUpdate("new-session", "current-message", "本轮回答"));
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+
+  assert.equal(
+    await runtime.run(runOptions({
+      onOutput: (text: string) => output.push(text),
+      onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+    })).result,
+    "本轮回答",
+  );
+  assert.deepEqual(output, ["本轮回答"]);
+  assert.ok(!activities.some((activity) => activity.type === "process.text" && activity.text.includes("旧内容")));
+});
+
+test("closes an unclosed historyReplay window at the current model phase", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const output: string[] = [];
+  const fake = fakeConnector({
+    capabilities: {},
+    onPrompt(notify) {
+      // 回放缺少 end 标记时窗口不能把整轮吞掉：回放只重放历史条目、不带
+      // agentPhase，因此带模型相位的帧一定是本轮真正开始。
+      notify(codebuddyHistoryReplay("new-session", "start"));
+      notify(codebuddyTextUpdate("new-session", "previous-message", "旧内容"));
+      notify(codebuddyPhaseUpdate("new-session", "model_requesting"));
+      notify(codebuddyTextUpdate("new-session", "current-message", "本轮回答"));
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+
+  assert.equal(
+    await runtime.run(runOptions({
+      onOutput: (text: string) => output.push(text),
+      onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+    })).result,
+    "本轮回答",
+  );
+  assert.deepEqual(output, ["本轮回答"]);
+});
+
+test("a replayed model phase never advances the response group", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({
+    capabilities: {},
+    loadedSessionId: "existing-session",
+    onPrompt(notify) {
+      // 回放帧自称 history，必须在本轮状态推进之前被丢弃：否则它会递增响应
+      // 序号，把真正回答挤到下一个分组。
+      notify(codebuddyReplayPhase("existing-session", "model_streaming"));
+      notify(codebuddyPhaseUpdate("existing-session", "model_requesting"));
+      notify(codebuddyTextUpdate("existing-session", "current-message", "本轮回答"));
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+  const handle = runtime.run(runOptions({
+    resumeSessionId: "existing-session",
+    onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+  }));
+
+  assert.equal(await handle.result, "本轮回答");
+  const snapshot = activities.at(-1);
+  assert.ok(snapshot?.type === "process.text" && snapshot.snapshot);
+  assert.equal(
+    snapshot.type === "process.text" ? snapshot.excludedAnswerGroup : undefined,
+    "codebuddy-response-1",
+    "the replayed phase must not consume a response index",
+  );
+});
+
 test("prefers session/resume when the agent advertises it", async () => {
   const fake = fakeConnector({
     capabilities: { sessionCapabilities: { resume: {} } },
@@ -903,6 +1015,54 @@ function codebuddyTextUpdate(sessionId: string, messageId: string, text: string)
       sessionUpdate: "agent_message_chunk" as const,
       messageId,
       content: { type: "text" as const, text },
+    },
+  };
+}
+
+/**
+ * CodeBuddy 历史回放帧的标记（issue #172）：区间由 historyReplay start/end 界定，
+ * 区间内每帧带 `_meta["codebuddy.ai"] = { mode: "history", offset }`。
+ */
+function codebuddyReplayMeta(offset: number) {
+  return { "codebuddy.ai": { mode: "history", offset } };
+}
+
+function codebuddyReplayText(sessionId: string, messageId: string, text: string) {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "agent_message_chunk" as const,
+      messageId,
+      content: { type: "text" as const, text },
+      _meta: codebuddyReplayMeta(3),
+    },
+  };
+}
+
+function codebuddyReplayTool(sessionId: string, toolCallId: string) {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call_update" as const,
+      toolCallId,
+      title: "ReplayedTool",
+      status: "completed" as const,
+      _meta: codebuddyReplayMeta(4),
+    },
+  };
+}
+
+function codebuddyReplayPhase(sessionId: string, agentPhase: string) {
+  const base = codebuddyPhaseUpdate(sessionId, agentPhase);
+  return { sessionId, update: { ...base.update, _meta: { ...base.update._meta, ...codebuddyReplayMeta(5) } } };
+}
+
+function codebuddyHistoryReplay(sessionId: string, boundary: "start" | "end") {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "session_info_update" as const,
+      _meta: { "codebuddy.ai/historyReplay": boundary },
     },
   };
 }
