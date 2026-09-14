@@ -21,6 +21,7 @@ type FakeOptions = {
   onLoad?: (notify: Parameters<CodeBuddyAcpConnector>[1]) => void;
   onPrompt?: (notify: Parameters<CodeBuddyAcpConnector>[1]) => void;
   promptResponse?: Awaited<ReturnType<CodeBuddyAcpConnection["prompt"]>>;
+  promptError?: unknown;
 };
 
 function fakeConnector(options: FakeOptions = {}) {
@@ -52,6 +53,7 @@ function fakeConnector(options: FakeOptions = {}) {
     async prompt(request) {
       calls.push({ method: "session/prompt", value: request });
       options.onPrompt?.(notify);
+      if (options.promptError !== undefined) throw options.promptError;
       return options.promptResponse ?? { stopReason: cancelled ? "cancelled" : "end_turn" };
     },
     async setConfigOption(request) {
@@ -373,6 +375,7 @@ test("loads an existing session and suppresses replayed history", async () => {
 });
 
 test("prompts an existing session directly when the pooled process already has it loaded", async () => {
+  const activities: AgentActivityEvent[] = [];
   const fake = fakeConnector({
     capabilities: { sessionCapabilities: { resume: {} } },
     loadedSessionId: "existing-session",
@@ -389,14 +392,66 @@ test("prompts an existing session directly when the pooled process already has i
   const runtime = createCodeBuddyAcpRuntime(fake.connector);
 
   assert.equal(
-    await runtime.run(runOptions({ resumeSessionId: "existing-session" })).result,
+    await runtime.run(runOptions({
+      resumeSessionId: "existing-session",
+      onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+    })).result,
     "continued answer",
+  );
+  assert.ok(
+    activities.some((activity) => activity.type === "process.text" && activity.text === "continued answer"),
+    "CodeBuddy versions without agentPhase still flush their buffered answer on clean settlement",
   );
   assert.deepEqual(fake.calls.map((call) => call.method), [
     "initialize",
     "session/prompt",
     "close",
   ]);
+});
+
+test("drops replayed answer text before the first response boundary in a pooled session", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const output: string[] = [];
+  const fake = fakeConnector({
+    capabilities: { sessionCapabilities: { resume: {} } },
+    loadedSessionId: "existing-session",
+    onPrompt(notify) {
+      notify(codebuddyTextUpdate("existing-session", "previous-message", "上一轮完整回答"));
+      notify(codebuddyPhaseUpdate("existing-session", "model_requesting"));
+      notify(codebuddyTextUpdate("existing-session", "current-message", "本轮回答"));
+    },
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+
+  assert.equal(await runtime.run(runOptions({
+    resumeSessionId: "existing-session",
+    onOutput: (text: string) => output.push(text),
+    onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+  })).result, "本轮回答");
+  assert.deepEqual(output, ["本轮回答"]);
+  assert.ok(!activities.some((activity) => activity.type === "process.text" && activity.text.includes("上一轮")));
+});
+
+test("never promotes a pooled-session replay when the new prompt fails before a response boundary", async () => {
+  const activities: AgentActivityEvent[] = [];
+  const fake = fakeConnector({
+    capabilities: { sessionCapabilities: { resume: {} } },
+    loadedSessionId: "existing-session",
+    onPrompt(notify) {
+      notify(codebuddyTextUpdate("existing-session", "previous-message", "上一轮完整回答"));
+    },
+    promptError: new Error("ACP connection closed"),
+  });
+  const runtime = createCodeBuddyAcpRuntime(fake.connector);
+
+  await assert.rejects(
+    runtime.run(runOptions({
+      resumeSessionId: "existing-session",
+      onActivity: (activity: AgentActivityEvent) => activities.push(activity),
+    })).result,
+    /ACP connection closed/,
+  );
+  assert.equal(activities.length, 0);
 });
 
 test("prefers session/resume when the agent advertises it", async () => {

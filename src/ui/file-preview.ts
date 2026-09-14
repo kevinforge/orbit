@@ -44,6 +44,15 @@ export function prettifyJsonText(path: string, content: string, truncated: boole
   }
 }
 
+/**
+ * Resolve the actual text rendered by the code preview before applying any
+ * size-based work limits. Compact JSON can grow substantially when formatted,
+ * so callers must measure this value rather than the raw response body.
+ */
+export function prepareCodePreviewText(path: string, content: string, truncated: boolean): string {
+  return prettifyJsonText(path, content, truncated) ?? content;
+}
+
 /** Human-readable byte size for the panel hints. */
 export function formatPreviewSize(size: number): string {
   if (!Number.isFinite(size) || size < 0) return "";

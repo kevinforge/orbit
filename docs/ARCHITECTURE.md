@@ -21,6 +21,8 @@ React UI
 
 The runtime no longer uses PTY sessions or CLI hooks. A run is considered complete when the selected runtime turn returns a clean final answer.
 
+CodeBuddy can replay the previous answer immediately after prompting an already-loaded pooled session. Orbit buffers text received before CodeBuddy's first current-turn `agentPhase` response boundary and discards that buffer once the boundary arrives. If an older CodeBuddy version emits no phase signal, the buffered text is accepted only after the prompt settles successfully; failed, refused, and cancelled turns never promote it as the current answer.
+
 ## Core Modules
 
 | Path | Responsibility |

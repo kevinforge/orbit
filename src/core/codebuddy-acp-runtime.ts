@@ -162,6 +162,7 @@ export const CODEBUDDY_ACP: AcpRuntimeDefinition = {
   classifyAnswerChunk: classifyCodeBuddyAnswerChunk,
   observeSessionUpdate: observeCodeBuddySessionUpdate,
   answerGroupKey: codeBuddyAnswerGroupKey,
+  guardPooledSessionReplay: true,
   projectToolCompletion: projectCodeBuddyToolCompletion,
 };
 

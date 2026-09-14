@@ -7,9 +7,11 @@ import {
   clampPreviewWidth,
   formatPreviewSize,
   PREVIEW_DEFAULT_WIDTH,
+  prepareCodePreviewText,
   previewFileName,
   prettifyJsonText,
 } from "../src/ui/file-preview.ts";
+import { PREVIEW_HIGHLIGHT_LIMIT_CHARS, shouldHighlightCode } from "../src/ui/code-highlight.ts";
 
 test("preview urls scope the request to a workspace and encode the raw path", () => {
   assert.equal(
@@ -39,6 +41,15 @@ test("prettifyJsonText only pretty-prints complete parseable json files", () => 
   assert.equal(prettifyJsonText("D:\\repo\\data.json", '{"a":1}', true), null, "truncated content is never re-serialized");
   assert.equal(prettifyJsonText("D:\\repo\\data.json", "{broken", false), null);
   assert.equal(prettifyJsonText("D:\\repo\\notes.md", '{"a":1}', false), null, "non-json paths stay untouched");
+});
+
+test("formatted JSON is measured after expansion before syntax highlighting", () => {
+  const compact = JSON.stringify(Array(60_000).fill(0));
+  assert.ok(compact.length < PREVIEW_HIGHLIGHT_LIMIT_CHARS);
+
+  const prepared = prepareCodePreviewText("D:\\repo\\large.json", compact, false);
+  assert.ok(prepared.length > PREVIEW_HIGHLIGHT_LIMIT_CHARS);
+  assert.equal(shouldHighlightCode(prepared), false, "expanded JSON must render as plain text");
 });
 
 test("formatPreviewSize renders human byte sizes", () => {

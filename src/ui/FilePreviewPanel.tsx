@@ -8,8 +8,8 @@ import {
   buildPreviewRawUrl,
   clampPreviewWidth,
   formatPreviewSize,
+  prepareCodePreviewText,
   previewFileName,
-  prettifyJsonText,
   type FilePreviewMeta,
 } from "./file-preview.ts";
 
@@ -101,10 +101,8 @@ export function FilePreviewPanel(props: {
   // （PR #169 审查修复）：hljs 与行号栏都在主线程同步执行，大文件会卡住界面。
   const codeView = useMemo(() => {
     if (meta?.kind !== "text") return null;
-    if (!shouldHighlightCode(meta.content)) {
-      return { plainText: true as const, text: meta.content };
-    }
-    const text = prettifyJsonText(meta.target, meta.content, meta.truncated) ?? meta.content;
+    const text = prepareCodePreviewText(meta.target, meta.content, meta.truncated);
+    if (!shouldHighlightCode(text)) return { plainText: true as const, text };
     return {
       plainText: false as const,
       html: highlightCodeHtml(text, previewLanguageFromPath(meta.target)),
