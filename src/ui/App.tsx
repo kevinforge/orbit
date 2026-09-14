@@ -2262,6 +2262,7 @@ export function App() {
       {previewPath ? (
         <FilePreviewPanel
           path={previewPath}
+          workspaceId={state.workspace.id}
           overlay={isCompactViewport}
           onClose={() => setPreviewPath(null)}
           onReveal={(path) => { void revealLocalPath(path); }}

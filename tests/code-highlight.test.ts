@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { highlightCodeHtml, previewLanguageFromPath } from "../src/ui/code-highlight.ts";
+import {
+  highlightCodeHtml,
+  PREVIEW_HIGHLIGHT_LIMIT_CHARS,
+  previewLanguageFromPath,
+  shouldHighlightCode,
+} from "../src/ui/code-highlight.ts";
 
 test("previewLanguageFromPath maps known extensions and file names case-insensitively", () => {
   assert.equal(previewLanguageFromPath("D:\\repo\\src\\App.tsx"), "typescript");
@@ -33,4 +38,12 @@ test("highlightCodeHtml emits token spans for registered languages", () => {
   const html = highlightCodeHtml('const value = "orbit";', "typescript");
   assert.match(html, /<span class="hljs-keyword">const<\/span>/);
   assert.match(html, /<span class="hljs-string">/);
+});
+
+test("shouldHighlightCode degrades large previews to plain text", () => {
+  // hljs 与行号栏都在主线程同步执行；超过上限时面板按纯文本渲染，避免卡界面。
+  assert.equal(shouldHighlightCode(""), true);
+  assert.equal(shouldHighlightCode("x".repeat(PREVIEW_HIGHLIGHT_LIMIT_CHARS)), true, "the limit itself still highlights");
+  assert.equal(shouldHighlightCode("x".repeat(PREVIEW_HIGHLIGHT_LIMIT_CHARS + 1)), false);
+  assert.equal(shouldHighlightCode("x".repeat(1_000_000)), false, "a 1 MB preview must not be tokenized");
 });

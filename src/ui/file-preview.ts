@@ -11,12 +11,16 @@ export type FilePreviewMeta =
   | { ok: true; kind: "image" | "pdf"; target: string; size: number; mimeType: string }
   | { ok: true; kind: "binary"; target: string; size: number };
 
-export function buildPreviewMetadataUrl(path: string): string {
-  return `/api/local-path/preview?path=${encodeURIComponent(path)}`;
+/**
+ * 预览请求必须带上当前工作区：服务端只允许读取该工作区内的文件
+ * （PR #169 审查修复，避免会话跨工作区读取文件内容）。
+ */
+export function buildPreviewMetadataUrl(path: string, workspaceId: string): string {
+  return `/api/local-path/preview?workspaceId=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(path)}`;
 }
 
-export function buildPreviewRawUrl(path: string): string {
-  return `/api/local-path/preview/raw?path=${encodeURIComponent(path)}`;
+export function buildPreviewRawUrl(path: string, workspaceId: string): string {
+  return `/api/local-path/preview/raw?workspaceId=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(path)}`;
 }
 
 /** Display name for the panel title: the final path segment. */

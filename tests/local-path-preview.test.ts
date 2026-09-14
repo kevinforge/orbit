@@ -9,6 +9,7 @@ import {
   buildRawPreviewHeaders,
   classifyPreviewFile,
   decodePreviewText,
+  previewRoots,
   rawPreviewMimeType,
   readRawPreview,
 } from "../src/server/local-path-preview.ts";
@@ -19,6 +20,7 @@ test("classifyPreviewFile maps extensions onto the preview kinds", () => {
   assert.equal(classifyPreviewFile("D:/repo/data.json"), "text");
   assert.equal(classifyPreviewFile("D:/repo/styles.css"), "text");
   assert.equal(classifyPreviewFile("D:/repo/notes.txt"), "text");
+  assert.equal(classifyPreviewFile("D:/repo/logo.svg"), "text", "svg is previewed as xml text, never as live image content");
   assert.equal(classifyPreviewFile(path.join("D:/repo", "Makefile")), "text");
   assert.equal(classifyPreviewFile(path.join("D:/repo", ".gitignore")), "text");
   assert.equal(classifyPreviewFile("D:/repo/logo.PNG"), "image", "extension matching is case-insensitive");
@@ -30,13 +32,34 @@ test("classifyPreviewFile maps extensions onto the preview kinds", () => {
 });
 
 test("rawPreviewMimeType only allows whitelisted image extensions and pdf", () => {
-  assert.equal(rawPreviewMimeType("D:/repo/logo.svg"), "image/svg+xml");
+  assert.equal(
+    rawPreviewMimeType("D:/repo/logo.svg"),
+    null,
+    "svg must never be served inline from the Orbit origin (PR #169 review)",
+  );
   assert.equal(rawPreviewMimeType("D:/repo/photo.jpeg"), "image/jpeg");
   assert.equal(rawPreviewMimeType("D:/repo/icon.ico"), "image/x-icon");
   assert.equal(rawPreviewMimeType("D:/repo/manual.PDF"), "application/pdf");
   assert.equal(rawPreviewMimeType("D:/repo/index.html"), null, "html must never be raw-previewable");
   assert.equal(rawPreviewMimeType("D:/repo/data.json"), null, "text kinds never serve raw bytes");
   assert.equal(rawPreviewMimeType("D:/repo/unknown.zzz"), null);
+});
+
+test("previewRoots authorizes only the requested workspace", () => {
+  const workspaces = [
+    { id: "ws-a", path: "D:/repo/a" },
+    { id: "ws-b", path: "D:/repo/b" },
+  ];
+  assert.deepEqual(previewRoots("ws-a", workspaces), ["D:/repo/a"]);
+  assert.deepEqual(previewRoots("ws-b", workspaces), ["D:/repo/b"]);
+  assert.equal(previewRoots(null, workspaces), null, "a request without a workspace is refused");
+  assert.equal(previewRoots("", workspaces), null);
+  assert.equal(previewRoots("ws-gone", workspaces), null, "an unknown workspace is refused, never widened");
+  assert.equal(
+    previewRoots("ws-a", [{ id: "ws-a", path: "" }]),
+    null,
+    "a workspace without a path cannot authorize anything",
+  );
 });
 
 test("buildRawPreviewHeaders pins exact content type with nosniff and no-store", () => {
@@ -121,6 +144,13 @@ test("readRawPreview serves whitelisted bytes and rejects other kinds", async ()
     const refused = await readRawPreview(path.join(root, "notes.txt"));
     assert.ok(!refused.ok);
     assert.equal(refused.status, 403);
+
+    // SVG 同样按字节拒绝：同源 inline 的脚本可执行内容不能从预览路由出去。
+    const svg = path.join(root, "logo.svg");
+    fs.writeFileSync(svg, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    const svgRefused = await readRawPreview(svg);
+    assert.ok(!svgRefused.ok);
+    assert.equal(svgRefused.status, 403);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

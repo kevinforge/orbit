@@ -32,7 +32,7 @@ const TEXT_EXTENSIONS = new Set([
   ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties",
   ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro",
   ".css", ".scss", ".less",
-  ".html", ".htm", ".xml",
+  ".html", ".htm", ".xml", ".svg",
   ".md", ".markdown",
   ".csv", ".tsv", ".sql",
   ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd",
@@ -53,15 +53,15 @@ const TEXT_FILENAMES = new Set([
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
 
 // Raw 预览只放行图片与 PDF：MIME 由扩展名白名单映射出精确值，绝不送
-// text/html。SVG 通过 <img> 加载时脚本不执行；PDF 是用户确认的策略放宽
-// （issue #165），仅此路由 inline，附件下载策略不变。
+// text/html。PDF 是用户确认的策略放宽（issue #165），仅此路由 inline，
+// 附件下载策略不变。SVG 不在列：<img> 加载时脚本不执行，但直接访问该 URL
+// 会在 Orbit 同源执行脚本，故只按 XML 文本预览（PR #169 审查修复）。
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".svg": "image/svg+xml",
   ".bmp": "image/bmp",
   ".ico": "image/x-icon",
 };
@@ -70,6 +70,23 @@ const PDF_MIME = "application/pdf";
 
 function basenameLower(target: string): string {
   return path.basename(target).toLowerCase();
+}
+
+/**
+ * 预览的授权根目录（PR #169 审查修复）：只允许读取请求指定的那个工作区。
+ *
+ * 此前两条预览路由把**所有**工作区路径一起当作授权根，于是工作区 A 的会话
+ * 可以读到工作区 B 的文件内容。返回 null 表示工作区缺失或未知，调用方应
+ * 拒绝请求而不是回退到全量根目录。
+ */
+export function previewRoots(
+  workspaceId: string | null,
+  workspaces: readonly { id: string; path: string }[],
+): string[] | null {
+  if (!workspaceId) return null;
+  const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
+  if (!workspace || !workspace.path) return null;
+  return [workspace.path];
 }
 
 /** Classify a resolved file by extension. Unknown extensions stay binary. */

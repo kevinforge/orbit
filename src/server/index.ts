@@ -45,9 +45,12 @@ import { serveStatic } from "./static-server.ts";
 import { SseHub } from "./sse-hub.ts";
 import { buildWorkspaceWorkAnalysis } from "./workspace-work-analysis.ts";
 import { resolveRevealTarget, revealInFileManager } from "./local-path-reveal.ts";
-import { buildFilePreview, buildRawPreviewHeaders, readRawPreview } from "./local-path-preview.ts";
+import { buildFilePreview, buildRawPreviewHeaders, previewRoots, readRawPreview } from "./local-path-preview.ts";
+import { isLoopbackHostHeader } from "./request-host.ts";
 
 const DEFAULT_PORT = 4317;
+/** 本地 API 无鉴权，只监听 IPv4 回环；浏览器访问 localhost 会回落到 127.0.0.1。 */
+const LOOPBACK_HOST = "127.0.0.1";
 const requestedPort = Number(process.env.ORBIT_PORT ?? DEFAULT_PORT);
 let activePort = requestedPort;
 const UNTITLED_CONVERSATION_NAME = "新会话";
@@ -737,9 +740,30 @@ function parseSupervisorConfig(input: { runtime?: unknown; model?: unknown }):
   };
 }
 
+/**
+ * 预览路由的授权根（PR #169 审查修复）：请求必须指明工作区，且只允许读它。
+ * 缺参返回 400，工作区未知返回 403——都不回退到"全部工作区"。
+ */
+function previewRequestRoots(
+  searchParams: URLSearchParams,
+): { roots: string[] } | { status: 400 | 403; message: string } {
+  const workspaceId = searchParams.get("workspaceId");
+  if (!workspaceId) return { status: 400, message: "workspaceId is required." };
+  const roots = previewRoots(workspaceId, workspaceStore.list());
+  if (!roots) return { status: 403, message: "无法预览：该工作区不存在。" };
+  return { roots };
+}
+
 // --- HTTP Server (created before probe to avoid blocking setup) ---
 const server = http.createServer(async (req, res) => {
   try {
+    // 无鉴权的本地 API 只服务本机页面（PR #169 审查修复）：绑定 127.0.0.1 之后
+    // 仍存在 DNS rebinding——恶意页面用攻击者域名解析到回环地址，浏览器按同源
+    // 发送请求，Host 却是攻击者域名。校验 Host 才能关掉这条读取路径。
+    if (!isLoopbackHostHeader(req.headers.host)) {
+      sendJson(res, 403, { ok: false, message: "Orbit 仅接受来自本机的请求。" });
+      return;
+    }
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
     // SSE
@@ -1285,8 +1309,12 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "path is required." });
         return;
       }
-      const roots = workspaceStore.list().map((ws) => ws.path);
-      const resolution = await resolveRevealTarget(rawPath, roots);
+      const scoped = previewRequestRoots(url.searchParams);
+      if ("status" in scoped) {
+        sendJson(res, scoped.status, { ok: false, message: scoped.message });
+        return;
+      }
+      const resolution = await resolveRevealTarget(rawPath, scoped.roots);
       if (!resolution.ok) {
         sendJson(res, resolution.status, { ok: false, message: resolution.message });
         return;
@@ -1310,8 +1338,12 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "path is required." });
         return;
       }
-      const roots = workspaceStore.list().map((ws) => ws.path);
-      const resolution = await resolveRevealTarget(rawPath, roots);
+      const scoped = previewRequestRoots(url.searchParams);
+      if ("status" in scoped) {
+        sendJson(res, scoped.status, { ok: false, message: scoped.message });
+        return;
+      }
+      const resolution = await resolveRevealTarget(rawPath, scoped.roots);
       if (!resolution.ok) {
         sendJson(res, resolution.status, { ok: false, message: resolution.message });
         return;
@@ -1746,7 +1778,10 @@ function listenOnce(port: number): Promise<void> {
     };
     server.once("error", onError);
     server.once("listening", onListening);
-    server.listen(port);
+    // 只监听 IPv4 回环（PR #169 审查修复）：API 无鉴权，默认监听全部网卡会让
+    // 同一局域网内的任何人都能枚举工作区路径并读取文件内容。产品文档一直只
+    // 承诺 http://localhost:<port>，因此这个收紧不改变对外契约。
+    server.listen(port, LOOPBACK_HOST);
   });
 }
 

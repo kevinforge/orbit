@@ -24,6 +24,14 @@ No notable changes yet.
 
 ### Improvements & fixes
 
+- The local server now binds IPv4 loopback only and rejects requests whose `Host`
+  header is not a loopback address, so LAN clients and DNS-rebinding pages cannot
+  reach the unauthenticated API.
+- File preview is authorized against the requested workspace only, so a
+  conversation can no longer read files that belong to another workspace. SVG is
+  no longer served as raw image content and previews as XML text instead, and
+  large text previews skip syntax highlighting and line numbers to keep the main
+  thread responsive.
 - Bare POSIX path detection now requires a strong path shape, so slash-separated
   word groups such as `工具栏/翻页/搜索` or `http/https/mailto/tel` stay plain text
   instead of becoming file links.

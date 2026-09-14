@@ -110,7 +110,19 @@ cannot run until its selected runtime CLI is available and authenticated.
   boundary check. Raw bytes are served only for images and PDFs, capped at 32 MB,
   with an extension-derived `Content-Type`, `X-Content-Type-Options: nosniff`, and
   `Cache-Control: no-store`.
+- Preview requests are authorized against the active workspace only, so a
+  conversation cannot read files that belong to another workspace. SVG is not
+  served as raw image content and previews as XML text instead.
+- Large text previews degrade to plain text without syntax highlighting or line
+  numbers, keeping the panel responsive on multi-hundred-kilobyte files.
 - On narrow viewports the panel becomes a fixed overlay rather than a grid column.
+
+### Local server access
+
+- The server now binds IPv4 loopback only, so the unauthenticated local API is
+  not reachable from other machines on the network.
+- Requests whose `Host` header is not a loopback address are rejected, which
+  closes the DNS-rebinding path that binding alone leaves open.
 
 ### Bare POSIX path detection
 
@@ -151,9 +163,16 @@ cannot run until its selected runtime CLI is available and authenticated.
 - Text previews are capped at the first 1 MB and show a truncation notice beyond
   that. Non-UTF-8 text is tolerated through replacement characters rather than
   detected and re-decoded.
-- PDFs larger than 32 MB are refused by the raw endpoint, so the inline viewer
-  shows the refusal. There is no Office, audio, video, archive, or CSV preview,
-  and HTML is never rendered inline.
+- Text previews larger than roughly 200 KB render as plain text: syntax
+  highlighting and the line-number gutter are dropped to keep the interface
+  responsive.
+- SVG previews as XML text and is never served as raw bytes, so script-capable
+  markup can never execute in Orbit's own origin. PDFs larger than 32 MB are
+  refused by the raw endpoint, so the inline viewer shows the refusal. There is no
+  Office, audio, video, archive, or CSV preview, and HTML is never rendered inline.
+- The local API is reachable from the same machine only and rejects non-loopback
+  `Host` headers. Orbit is not intended to be exposed to other devices, and the
+  API has no authentication.
 - An extensionless POSIX directory string outside the known roots (for example
   `/项目/资料`) is no longer auto-recognized and needs an explicit link.
 - Native slash commands depend on the runtime's ACP announcements. Probed command

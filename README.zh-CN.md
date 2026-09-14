@@ -131,6 +131,9 @@ npm run dev
 
 然后在浏览器打开 [http://localhost:4317](http://localhost:4317)。
 
+Orbit 只监听本机。本地 API 没有鉴权，并会拒绝 Host 头不是回环地址的请求，因此不应
+暴露给其他设备。
+
 ### 安装发布包
 
 从 [GitHub Releases](https://github.com/kevinforge/orbit/releases) 下载与你的操作系统匹配的安装包，然后在本地安装：

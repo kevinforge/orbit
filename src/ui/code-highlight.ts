@@ -78,6 +78,18 @@ export function previewLanguageFromPath(path: string): string | null {
   return extensionLanguages.get(name.slice(dot + 1)) ?? null;
 }
 
+/**
+ * 语法高亮的体积上限（字符数）。hljs 在主线程同步 tokenize，1 MB 级文本实测
+ * 约 500 ms 并产出数 MB HTML；超过上限时按纯文本渲染，预览仍可用但不高亮，
+ * 避免打开大文件时长时间卡住界面（PR #169 审查修复）。
+ */
+export const PREVIEW_HIGHLIGHT_LIMIT_CHARS = 200_000;
+
+/** 文本是否值得做语法高亮。行号栏与高亮共用这个判断。 */
+export function shouldHighlightCode(code: string): boolean {
+  return code.length <= PREVIEW_HIGHLIGHT_LIMIT_CHARS;
+}
+
 /** 高亮代码并返回安全的 HTML 片段；language 为 null 或未注册时按纯文本转义。 */
 export function highlightCodeHtml(code: string, language: string | null): string {
   if (language && hljs.getLanguage(language)) {

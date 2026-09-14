@@ -11,18 +11,19 @@ import {
   prettifyJsonText,
 } from "../src/ui/file-preview.ts";
 
-test("preview urls encode the raw path as a single query parameter", () => {
+test("preview urls scope the request to a workspace and encode the raw path", () => {
   assert.equal(
-    buildPreviewMetadataUrl("D:\\repo\\我的文件 notes.md"),
-    "/api/local-path/preview?path=D%3A%5Crepo%5C%E6%88%91%E7%9A%84%E6%96%87%E4%BB%B6%20notes.md",
+    buildPreviewMetadataUrl("D:\\repo\\我的文件 notes.md", "ws-1"),
+    "/api/local-path/preview?workspaceId=ws-1&path=D%3A%5Crepo%5C%E6%88%91%E7%9A%84%E6%96%87%E4%BB%B6%20notes.md",
   );
   assert.equal(
-    buildPreviewRawUrl("/home/orbit/a b.png"),
-    "/api/local-path/preview/raw?path=%2Fhome%2Forbit%2Fa%20b.png",
+    buildPreviewRawUrl("/home/orbit/a b.png", "ws 1"),
+    "/api/local-path/preview/raw?workspaceId=ws%201&path=%2Fhome%2Forbit%2Fa%20b.png",
   );
   // 解码后仍能还原原始路径（Windows 盘符与反斜杠不被 URL 结构破坏）。
-  const url = new URL(buildPreviewMetadataUrl("D:\\x\\y.txt:12"), "https://orbit.local");
+  const url = new URL(buildPreviewMetadataUrl("D:\\x\\y.txt:12", "ws-1"), "https://orbit.local");
   assert.equal(url.searchParams.get("path"), "D:\\x\\y.txt:12");
+  assert.equal(url.searchParams.get("workspaceId"), "ws-1");
 });
 
 test("previewFileName extracts the final segment across separators", () => {

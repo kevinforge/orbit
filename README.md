@@ -160,6 +160,10 @@ npm run dev
 
 Open [http://localhost:4317](http://localhost:4317) in your browser.
 
+Orbit listens on the local machine only. The local API has no authentication and
+rejects requests whose `Host` header is not a loopback address, so it is not meant
+to be exposed to other devices.
+
 ### Install a release package
 
 Download the package for your operating system from [GitHub Releases](https://github.com/kevinforge/orbit/releases), then install it locally:
