@@ -3,6 +3,11 @@
  * Occupy a local port, start the built Orbit binary with ORBIT_PORT set to that
  * port, and verify Orbit exits with a clear recovery hint.
  *
+ * The occupancy must use the address Orbit binds (`127.0.0.1`, see
+ * `LOOPBACK_HOST` in src/server/index.ts). Occupying the wildcard address is not
+ * a conflict on Windows once Orbit binds loopback explicitly: both sockets can
+ * listen and Orbit would start successfully, so this smoke would time out.
+ *
  * Usage:
  *   node scripts/smoke-port-conflict.mjs
  *   node scripts/smoke-port-conflict.mjs --binary ./dist/bin/orbit.exe
@@ -76,7 +81,7 @@ function cleanupSmokeHome(homeDir) {
 
 async function occupyPort() {
   const primary = net.createServer();
-  await listen(primary, { port: 0, host: "0.0.0.0" });
+  await listen(primary, { port: 0, host: "127.0.0.1" });
   const address = primary.address();
   if (!address || typeof address === "string") {
     primary.close();

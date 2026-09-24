@@ -190,7 +190,7 @@ test("repository exposes open source contribution and release guidance", () => {
   assert.match(readme, /CONTRIBUTING\.md/);
   assert.match(readme, /SUPPORT\.md/);
   assert.match(readme, /docs\/RELEASE_CHECKLIST\.md/);
-  assert.match(readme, /docs\/RELEASE_NOTES_v1\.0\.0-rc\.1\.md/);
+  assert.match(readme, /docs\/RELEASE_NOTES_v1\.4\.0\.md/);
   assert.match(readiness, /Contributor baseline/);
   assert.match(readiness, /Issue intake baseline/);
   assert.match(readiness, /SUPPORT\.md/);

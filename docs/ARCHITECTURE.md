@@ -21,6 +21,10 @@ React UI
 
 The runtime no longer uses PTY sessions or CLI hooks. A run is considered complete when the selected runtime turn returns a clean final answer.
 
+CodeBuddy replays conversation history after `session/new` (pushed asynchronously after the response) and `session/load`. Those frames identify themselves: the replay is bracketed by `session_info_update._meta["codebuddy.ai/historyReplay"]` `start`/`end`, and each replayed frame carries `_meta["codebuddy.ai"].mode === "history"` (mirrored on the notification-level `_meta`). The shared ACP layer drops them through `AcpRuntimeDefinition.isReplayedUpdate` before any turn-state advance or event emission, so replayed text, tool frames, and plans never reach the live activity, the final answer, or the persisted process timeline — regardless of whether the replay lands before or after the current turn's first model boundary. Frames inside a replay window that lack the per-frame marker are dropped as well, and a window that never receives its `end` marker is closed by the current turn's first model phase.
+
+For runtimes or versions that emit no replay marker, CodeBuddy additionally buffers answer text until the first current-turn `agentPhase` response boundary, and only while a pooled session is reused. Buffered text is accepted only after a clean settlement, so failed, refused, and cancelled turns never promote it as the current answer.
+
 ## Core Modules
 
 | Path | Responsibility |
@@ -314,6 +318,14 @@ Each project directory gets its own isolated workspace via `src/core/workspace-s
   - `last-active.json` - last active workspace and conversation for restart recovery
 - **Lifecycle**: on startup, the server checks `last-active.json` for the previously active workspace/conversation. Switching does not stop active work; running conversation contexts remain alive in the context map.
 
+### Local API Access
+
+The local HTTP API has no authentication, so access is bounded by the transport and by request-scoped authorization instead:
+
+- The server binds IPv4 loopback (`127.0.0.1`) in `src/server/index.ts`, which is where the documented entry point `http://localhost:<port>` lands. LAN clients cannot reach the API.
+- Every request must carry a loopback `Host` header (`localhost`, `127.0.0.1`, or `[::1]`), enforced by `src/server/request-host.ts`. The bind alone does not stop DNS rebinding: a page on an attacker-controlled hostname that resolves to the loopback address issues a request the browser treats as same-origin, with that hostname as `Host`.
+- File preview is authorized per workspace. `GET /api/local-path/preview` and `GET /api/local-path/preview/raw` require an explicit `workspaceId` and check the target against that workspace's path only (`previewRoots`), so a conversation cannot read files belonging to another workspace. `POST /api/local-path/reveal` keeps its multi-workspace roots because it only asks the OS file manager to open a path and returns no file content.
+
 ## Workspace & Conversation Management
 
 The server retains multiple live conversation contexts through `src/server/conversation-context.ts`. Each browser page owns its workspace and conversation through URL query parameters; the server's active pointer is retained only as a compatibility fallback for older clients and restart recovery:
@@ -382,7 +394,9 @@ Raw tool activity and tool results are live-only: they flow through the in-memor
 
 Agent replies are rendered as markdown in the UI (`src/ui/markdown-renderer.ts`). Link hrefs are sanitized to a small protocol allowlist; rejected hrefs fall back to plain text instead of dead empty anchors, and CJK characters that GFM autolink swallows into a trailing URL are stripped back into the body text. Local paths — drive-letter paths, `~/`, absolute POSIX paths, and `file:///` hrefs, as explicit links or bare path tokens — render as clickable entries carrying a `data-path` attribute instead of a navigable URL; bare POSIX paths require at least two segments so ordinary slash-separated words are left alone.
 
-Clicking an entry calls `POST /api/local-path/reveal`. The endpoint (`src/server/local-path-reveal.ts`) expands `~`, strips `:line`/`:line:col` suffixes, resolves the path with `fs.realpath`, and only reveals paths inside a configured workspace; files are selected in the system file manager (`explorer /select,`, `open -R`, or the parent directory via `xdg-open`) while directories are opened directly. Out-of-workspace paths are refused with 403, and the UI falls back to a toast with the path copied to the clipboard.
+Clicking an entry opens the read-only file preview panel on the right side of the shell (issue #165); `Enter`/`Space` are equivalent. The panel (`src/ui/FilePreviewPanel.tsx`) fetches `GET /api/local-path/preview?workspaceId=…&path=…`, which classifies the file by extension whitelist: text and markdown previews embed the first 1 MB of decoded content (UTF-8 with BOM stripping and replacement characters for non-UTF-8 bytes), images and PDFs render through `GET /api/local-path/preview/raw` with the browser's native `<img>`/`<iframe>` decoding, and every other kind shows a hint with a locate action. Both endpoints (`src/server/local-path-preview.ts`) reuse `resolveRevealTarget` from the reveal flow — `~` expansion, `:line`/`:line:col` suffix stripping, `fs.realpath`, and the workspace boundary check against the requested workspace only — and raw serving maps exact Content-Types from an extension whitelist (never `text/html`), refuses non-image/non-PDF kinds, caps raw files at 32 MB, and always sends `nosniff`. SVG is deliberately excluded from raw serving and previews as XML text instead: inside an `<img>` its scripts stay inert, but opening the raw URL directly would execute them in Orbit's own origin. Serving PDFs inline is a deliberate relaxation that applies only to the preview routes; attachment downloads keep their force-download policy. The panel is a single panel — clicking another file replaces its content — and collapses into a fixed overlay on viewports narrower than 920px; its loaded result is bound to the requested path, so switching files cannot render the previous file's body under the new title. Text previews render with syntax highlighting and a sticky line-number gutter (`src/ui/code-highlight.ts` registers a curated highlight.js language set and maps extensions deterministically; unknown extensions stay plain text); above `PREVIEW_HIGHLIGHT_LIMIT_CHARS` the preview degrades to plain text without highlighting or line numbers, because highlight.js and the gutter both run synchronously on the main thread. The panel width is drag-resizable from its left edge with the value persisted in `localStorage` (`orbit.previewWidth`) and shared by the third grid column and the overlay through the `--preview-width` custom property.
+
+"Locate in file manager" remains available as a button inside the panel header and calls `POST /api/local-path/reveal` (`src/server/local-path-reveal.ts`), which selects the file in the system file manager (`explorer /select,`, `open -R`, or the parent directory via `xdg-open`) while directories are opened directly. Directory path entries bypass the panel and reveal directly; out-of-workspace paths are refused with 403, and the reveal fallback copies the path to the clipboard with a toast.
 
 ## State
 

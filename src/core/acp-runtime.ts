@@ -110,6 +110,10 @@ export type AcpTurnState = {
   modelResponseIndex: number;
   /** 是否处于一次模型响应中（用于去重递增，避免 requesting→streaming 重复计数）。 */
   inModelResponse: boolean;
+  /** 池化会话复用时，在 runtime 给出当前回合响应边界前暂存可疑回放。 */
+  awaitingResponseBoundary: boolean;
+  /** runtime 明确报告的历史回放窗口内（如 CodeBuddy 的 historyReplay start→end）。 */
+  inHistoryReplay: boolean;
 };
 
 /** 工具调用帧（tool_call / tool_call_update）的收窄类型。 */
@@ -134,6 +138,23 @@ export type AcpRuntimeDefinition = {
    * 其余组的文本在结算时归入过程文本（process.text 快照）。
    */
   answerGroupKey?: (update: SessionNotification["update"], turn: AcpTurnState) => string | undefined;
+  /**
+   * 池化连接直接复用已加载 session 时，先缓冲响应边界前的文本。runtime 一旦
+   * 发出新的模型响应边界就丢弃缓冲，避免把上一轮回放算作当前答案。
+   */
+  guardPooledSessionReplay?: boolean;
+  /**
+   * 判定该会话更新是否属于 runtime 的历史回放（issue #172）。
+   *
+   * 命中时共享层在推进任何回合状态、发出任何事件之前整帧丢弃，因此回放的
+   * 正文、过程叙述、工具帧与计划帧都不会进入实时活动、最终正文或持久化时间线。
+   * 这比按到达顺序推断可靠：回放可能落在当前轮首个模型边界之前或之后。
+   *
+   * 收到 notification 而非 update，便于 runtime 同时检查两级 `_meta`（CodeBuddy
+   * 把回放标记写在 update._meta 上，并镜像到通知级 _meta）。实现可以在 turn 上
+   * 维护回放窗口状态（如 historyReplay 的 start/end 区间）。
+   */
+  isReplayedUpdate?: (notification: SessionNotification, turn: AcpTurnState) => boolean;
   /**
    * 工具成功完成后的 runtime 专属投影（issue #161）。共享层先发出原
    * tool.completed，再调用该钩子并发出其返回的活动，保持事件顺序；返回
@@ -182,6 +203,16 @@ type AnswerState = {
   unscopedCandidateParts: string[];
   unscopedFinalParts: string[];
   segments: AnswerSegment[];
+  deferredChunks: DeferredAnswerChunk[];
+};
+
+type AgentTextUpdate = Extract<SessionNotification["update"], { sessionUpdate: "agent_message_chunk" }> & {
+  content: { type: "text"; text: string };
+};
+
+type DeferredAnswerChunk = {
+  update: AgentTextUpdate;
+  disposition: Exclude<AcpAnswerChunkDisposition, "ignore">;
 };
 
 export function createAcpRuntime(
@@ -325,6 +356,9 @@ export function runAcp(
         },
       );
       activeSessionId = session.sessionId;
+      turnState.awaitingResponseBoundary = Boolean(
+        definition.guardPooledSessionReplay && session.reusedConnectionSession,
+      );
       resolveSessionId(activeSessionId);
       // 窗口期通告的命令快照现在可以安全交付（会话 ID 已匹配）。
       flushPendingCommands(activeSessionId);
@@ -360,6 +394,10 @@ export function runAcp(
           `${definition.displayName} ACP refused the request. 建议：请切换到其他可用模型后重试。`,
         );
       }
+
+      // 旧版 CodeBuddy 不提供 agentPhase。只有 prompt 正常结算且始终没有边界
+      // 时才接纳缓冲文本；异常、取消或拒绝路径绝不会把历史回放当成本轮答案。
+      flushDeferredAnswerChunks(answerState, turnState, options, definition);
 
       const selection = selectFinalAnswer(answerState);
       const answer = selection.text.trim();
@@ -536,6 +574,7 @@ export async function probeAcpCommands(
 export type AcpSessionSetup = {
   sessionId: string;
   configOptions: Array<SessionConfigOption> | null | undefined;
+  reusedConnectionSession: boolean;
 };
 
 async function prepareSession(
@@ -548,12 +587,12 @@ async function prepareSession(
   const absoluteCwd = path.resolve(cwd);
   if (!existingSessionId) {
     const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
-    return { sessionId: created.sessionId, configOptions: created.configOptions };
+    return { sessionId: created.sessionId, configOptions: created.configOptions, reusedConnectionSession: false };
   }
 
   if (connection.hasSession?.(existingSessionId)) {
     // 池复用捷径：不发任何 RPC，没有新快照；调用方用上一次快照补发模型偏好。
-    return { sessionId: existingSessionId, configOptions: undefined };
+    return { sessionId: existingSessionId, configOptions: undefined, reusedConnectionSession: true };
   }
 
   const request = {
@@ -563,11 +602,11 @@ async function prepareSession(
   };
   if (capabilities?.sessionCapabilities?.resume) {
     const resumed = await connection.resumeSession(request satisfies ResumeSessionRequest);
-    return { sessionId: existingSessionId, configOptions: resumed.configOptions };
+    return { sessionId: existingSessionId, configOptions: resumed.configOptions, reusedConnectionSession: false };
   }
   if (capabilities?.loadSession) {
     const loaded = await connection.loadSession(request);
-    return { sessionId: existingSessionId, configOptions: loaded.configOptions };
+    return { sessionId: existingSessionId, configOptions: loaded.configOptions, reusedConnectionSession: false };
   }
 
   throw new Error(
@@ -619,7 +658,7 @@ async function restoreOrRecoverSession(
   const absoluteCwd = path.resolve(options.cwd);
   if (!options.resumeSessionId) {
     const created = await connection.newSession({ cwd: absoluteCwd, mcpServers: [] });
-    return { sessionId: created.sessionId, configOptions: created.configOptions };
+    return { sessionId: created.sessionId, configOptions: created.configOptions, reusedConnectionSession: false };
   }
   try {
     return await prepareSession(connection, capabilities, options.cwd, options.resumeSessionId, definition.displayName);
@@ -646,7 +685,7 @@ async function restoreOrRecoverSession(
     options.onOutput?.(
       `原 ${definition.displayName} 会话无法恢复（${summarizeRestoreFailure(error)}），已使用新的会话继续。`,
     );
-    return { sessionId: created.sessionId, configOptions: created.configOptions };
+    return { sessionId: created.sessionId, configOptions: created.configOptions, reusedConnectionSession: false };
   }
 }
 
@@ -858,7 +897,18 @@ function handleSessionUpdate(
   definition: AcpRuntimeDefinition,
 ): void {
   const update = notification.update;
+  if (definition.isReplayedUpdate?.(notification, turnState)) {
+    // 历史回放整帧丢弃（issue #172）：先于状态推进，避免回放里的陈旧 agentPhase
+    // 推进响应序号、或把上一轮内容算进最终答案；也先于事件发射，因此过程时间线
+    // 与持久化投影都不会看到它。
+    return;
+  }
   definition.observeSessionUpdate?.(update, turnState);
+  if (turnState.awaitingResponseBoundary && turnState.modelResponseIndex > 0) {
+    // 当前回合的首个可靠模型边界已经出现；此前收到的文本属于上一轮回放。
+    answerState.deferredChunks.length = 0;
+    turnState.awaitingResponseBoundary = false;
+  }
   if (update.sessionUpdate === "config_option_update") {
     // 部分运行时（如 CodeBuddy）会在运行中主动推送配置变化；刷新模型快照即可。
     const snapshot = toModelSnapshot(update.configOptions, options, definition);
@@ -931,19 +981,11 @@ function handleSessionUpdate(
 
       const disposition = definition.classifyAnswerChunk?.(update) ?? "candidate";
       if (disposition === "ignore") return;
-
-      options.onOutput?.(update.content.text);
-      if (disposition === "progress") {
-        // 明确的过程叙述：不进入最终答案候选，直接作为过程文本流式输出。
-        recordSegment(answerState, { group: "", kind: "progress", text: update.content.text });
-        emitProcessText(options, update.content.text, "progress", "");
+      if (turnState.awaitingResponseBoundary) {
+        answerState.deferredChunks.push({ update: update as AgentTextUpdate, disposition });
         return;
       }
-
-      const answerGroup = appendAnswerChunk(answerState, update, disposition, update.content.text, definition, turnState);
-      // 流式期间当前分组的文本同样进入过程区实时展示；结算快照会剔除
-      // 归入最终回复的部分。
-      emitProcessText(options, update.content.text, "answer", answerGroup, disposition === "final");
+      acceptAnswerChunk(answerState, update as AgentTextUpdate, disposition, turnState, options, definition);
     }
     return;
   }
@@ -1023,11 +1065,57 @@ function createAnswerState(): AnswerState {
     unscopedCandidateParts: [],
     unscopedFinalParts: [],
     segments: [],
+    deferredChunks: [],
   };
 }
 
 function createTurnState(): AcpTurnState {
-  return { modelResponseIndex: 0, inModelResponse: false };
+  return {
+    modelResponseIndex: 0,
+    inModelResponse: false,
+    awaitingResponseBoundary: false,
+    inHistoryReplay: false,
+  };
+}
+
+function acceptAnswerChunk(
+  state: AnswerState,
+  update: AgentTextUpdate,
+  disposition: Exclude<AcpAnswerChunkDisposition, "ignore">,
+  turnState: AcpTurnState,
+  options: AcpRunOptions,
+  definition: AcpRuntimeDefinition,
+): void {
+  options.onOutput?.(update.content.text);
+  if (disposition === "progress") {
+    recordSegment(state, { group: "", kind: "progress", text: update.content.text });
+    emitProcessText(options, update.content.text, "progress", "");
+    return;
+  }
+
+  const answerGroup = appendAnswerChunk(
+    state,
+    update,
+    disposition,
+    update.content.text,
+    definition,
+    turnState,
+  );
+  emitProcessText(options, update.content.text, "answer", answerGroup, disposition === "final");
+}
+
+function flushDeferredAnswerChunks(
+  state: AnswerState,
+  turnState: AcpTurnState,
+  options: AcpRunOptions,
+  definition: AcpRuntimeDefinition,
+): void {
+  if (!turnState.awaitingResponseBoundary || state.deferredChunks.length === 0) return;
+  turnState.awaitingResponseBoundary = false;
+  const chunks = state.deferredChunks.splice(0);
+  for (const chunk of chunks) {
+    acceptAnswerChunk(state, chunk.update, chunk.disposition, turnState, options, definition);
+  }
 }
 
 function recordSegment(state: AnswerState, segment: AnswerSegment): void {

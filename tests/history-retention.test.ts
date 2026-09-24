@@ -46,38 +46,44 @@ test("cleanupHistory removes expired message shards but keeps active conversatio
   }
 });
 
-test("cleanupHistory falls back to default retention days for invalid env values", () => {
-  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-retention-test-"));
-  try {
-    const inactiveMessagesDir = path.join(baseDir, "conversations", "ws1", "conv-old", "messages");
-    fs.mkdirSync(inactiveMessagesDir, { recursive: true });
-    fs.writeFileSync(path.join(inactiveMessagesDir, "2026-01-01.ndjson"), "{}\n");
-    fs.writeFileSync(path.join(inactiveMessagesDir, "2026-05-30.ndjson"), "{}\n");
-    fs.writeFileSync(path.join(inactiveMessagesDir, "manifest.json"), JSON.stringify({
+test("cleanupHistory falls back to the default window for a non-finite retention value", () => {
+  // 旧行为下 NaN 会让 cutoff 变成 NaN，`shardTime >= cutoff` 恒为 false，
+  // 于是把仍在窗口内的分片也删掉。这里用 4 个分片钉住默认 90 天窗口：
+  // 保留最近 2 个（05-30、06-02），只应清掉 01-01，04-01 必须留存。
+  const runWith = (messageRetentionDays: number) => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-retention-"));
+    const messagesDir = path.join(baseDir, "conversations", "ws1", "conv-old", "messages");
+    fs.mkdirSync(messagesDir, { recursive: true });
+    const days = ["2026-01-01", "2026-04-01", "2026-05-30", "2026-06-02"];
+    for (const day of days) fs.writeFileSync(path.join(messagesDir, `${day}.ndjson`), "{}\n");
+    fs.writeFileSync(path.join(messagesDir, "manifest.json"), JSON.stringify({
       version: 1,
       nextId: 1,
-      shards: [
-        { name: "2026-01-01.ndjson", firstCreatedAt: "2026-01-01T00:00:00.000Z", lastCreatedAt: "2026-01-01T00:00:00.000Z", count: 1, bytes: 3 },
-        { name: "2026-05-30.ndjson", firstCreatedAt: "2026-05-30T00:00:00.000Z", lastCreatedAt: "2026-05-30T00:00:00.000Z", count: 1, bytes: 3 },
-      ],
+      shards: days.map((day) => ({
+        name: `${day}.ndjson`,
+        firstCreatedAt: `${day}T00:00:00.000Z`,
+        lastCreatedAt: `${day}T00:00:00.000Z`,
+        count: 1,
+        bytes: 3,
+      })),
     }));
 
-    // Pass NaN as retainDays — should be clamped to 0, meaning everything older than now is deleted
     const result = cleanupHistory({
       baseDir,
       now: new Date("2026-06-03T00:00:00.000Z"),
-      messageRetentionDays: NaN,
+      messageRetentionDays,
       transcriptRetentionDays: 30,
       activeConversations: [],
     });
-
-    // With NaN retention, cutoffTime returns NaN, so no shard matches cutoff comparison
-    // Nothing should be deleted because NaN comparisons are always false
-    assert.equal(result.deletedMessageShards, 0, "NaN retention should not delete anything");
-    assert.equal(fs.existsSync(path.join(inactiveMessagesDir, "2026-01-01.ndjson")), true);
-    assert.equal(fs.existsSync(path.join(inactiveMessagesDir, "2026-05-30.ndjson")), true);
-  } finally {
+    const remaining = fs.readdirSync(messagesDir).filter((entry) => entry.endsWith(".ndjson")).sort();
     fs.rmSync(baseDir, { recursive: true, force: true });
+    return { deleted: result.deletedMessageShards, remaining };
+  };
+
+  const expected = { deleted: 1, remaining: ["2026-04-01.ndjson", "2026-05-30.ndjson", "2026-06-02.ndjson"] };
+  assert.deepEqual(runWith(90), expected, "the documented 90-day default is the reference behavior");
+  for (const invalid of [NaN, Number.POSITIVE_INFINITY, 30.5]) {
+    assert.deepEqual(runWith(invalid), expected, `retention ${invalid} must fall back to the default window`);
   }
 });
 

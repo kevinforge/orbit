@@ -10,6 +10,44 @@ No notable changes yet.
 
 ---
 
+## v1.4.0 — 2026-09-14
+
+### New things you can do
+
+- **Preview local files without leaving the conversation.** Clicking a file path
+  in a message opens a read-only panel beside the conversation instead of handing
+  the file to the system file manager. Text and code render with syntax
+  highlighting and line numbers, Markdown reuses the conversation renderer, and
+  images and PDFs display inline. The panel remembers its dragged width and closes
+  with `Esc`; a folder button still locates the file in the file manager, and
+  directory entries keep opening there directly.
+
+### Improvements & fixes
+
+- CodeBuddy history replays are now discarded by CodeBuddy's own replay markers, so
+  a previous turn's answer, tool calls, and plans can no longer appear in the new
+  turn's process text, final answer, or saved timeline — no matter whether the
+  replay arrives before or after the current turn's first response boundary.
+- The local server now binds IPv4 loopback only and rejects requests whose `Host`
+  header is not a loopback address, so LAN clients and DNS-rebinding pages cannot
+  reach the unauthenticated API.
+- File preview is authorized against the requested workspace only, so a
+  conversation can no longer read files that belong to another workspace. SVG is
+  no longer served as raw image content and previews as XML text instead, and
+  large text previews skip syntax highlighting and line numbers to keep the main
+  thread responsive.
+- Bare POSIX path detection now requires a strong path shape, so slash-separated
+  word groups such as `工具栏/翻页/搜索` or `http/https/mailto/tel` stay plain text
+  instead of becoming file links.
+- History retention falls back to the configured default window when a retention
+  value is not a non-negative integer, instead of computing a cutoff that deletes
+  shards still inside the intended window.
+- Dependency security upgrades: `fast-uri` 3.1.7, `hono` 4.13.7, and `qs` 6.16.0,
+  plus the website toolchain (`@cloudflare/vite-plugin` 1.54.8, `wrangler`
+  4.131.1, `@cloudflare/workers-types` 5.20260914.1).
+
+---
+
 ## v1.3.0 — 2026-09-02
 
 ### New things you can do

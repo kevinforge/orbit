@@ -50,17 +50,27 @@ export function cleanupHistory(options: HistoryRetentionOptions = {}): HistoryRe
 
   result.deletedMessageShards += cleanupMessageShards(
     path.join(baseDir, "conversations"),
-    cutoffTime(now, options.messageRetentionDays ?? DEFAULT_MESSAGE_RETAIN_DAYS),
+    cutoffTime(now, resolveRetentionDays(options.messageRetentionDays, DEFAULT_MESSAGE_RETAIN_DAYS)),
     activeKeys,
     result,
   );
   result.deletedTranscriptSegments += cleanupTranscriptSegments(
     path.join(baseDir, "transcripts"),
-    cutoffTime(now, options.transcriptRetentionDays ?? DEFAULT_TRANSCRIPT_RETAIN_DAYS),
+    cutoffTime(now, resolveRetentionDays(options.transcriptRetentionDays, DEFAULT_TRANSCRIPT_RETAIN_DAYS)),
     activeKeys,
   );
 
   return result;
+}
+
+/**
+ * 保留天数只接受非负整数。环境变量已由 `parsePositiveIntEnv` 兜底，但直接传入
+ * 的 options 没有校验：`NaN`/`Infinity`/小数会让 cutoff 变成 `NaN`，使
+ * `shardTime >= cutoff` 恒为 false，反而把窗口内本该保留的分片删掉。
+ */
+function resolveRetentionDays(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) return fallback;
+  return value;
 }
 
 function cleanupMessageShards(
