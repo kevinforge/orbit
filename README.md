@@ -174,9 +174,15 @@ orbit
 ```
 
 Linux and macOS users should use the package matching their platform. The
-scoped npm package will be available as `@kevinforge/orbit` after public npm
-publishing is enabled. Do not install the unrelated public package named
-`orbit`.
+stable releases are also published as `@kevinforge/orbit` on npm. For the
+current release:
+
+```powershell
+npm install -g @kevinforge/orbit@1.4.0
+orbit
+```
+
+Do not install the unrelated public package named `orbit`.
 
 ### Send the first task
 
@@ -263,11 +269,11 @@ match the changed surface and report exactly what was run.
 
 ## Project status
 
-Orbit is being prepared as an open-source 1.0 release. The repository already
-contains the CI, release, support, security, and contribution workflows used to
-validate the project. See [Open Source Readiness](docs/OPEN_SOURCE_READINESS.md)
-and the [release notes](docs/RELEASE_NOTES_v1.0.0-rc.1.md) for current gaps and
-release-candidate context.
+The current stable release line is `v1.4.0`. The repository includes the CI,
+release, support, security, and contribution workflows used to validate it. See
+the [v1.4.0 release notes](docs/RELEASE_NOTES_v1.4.0.md) for this release and
+the [release checklist](docs/RELEASE_CHECKLIST.md) for the remaining tag and
+cross-platform release evidence.
 
 ## Contributing
 

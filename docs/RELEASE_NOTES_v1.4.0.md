@@ -211,7 +211,7 @@ cannot run until its selected runtime CLI is available and authenticated.
 | `npm run smoke:start` | Passed locally | Built standalone server startup and state endpoint |
 | `npm run smoke:port-conflict` | Passed locally | Occupied-port startup behavior |
 | `npm pack --dry-run --json` | Passed locally | Package payload inspected against the release allowlist |
-| `npm publish --dry-run --access public --ignore-scripts` | Passed locally | Final registry payload validation |
+| `npm publish --dry-run --access public` | Passed locally | Final registry payload validation, including the prepublish test and build hooks |
 | Four-platform packages and checksums | Release workflow | Native GitHub-hosted runners after tag push |
 | GitHub Release and npm publish | Release workflow | Tag workflow evidence |
 

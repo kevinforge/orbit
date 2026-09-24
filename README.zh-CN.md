@@ -143,7 +143,15 @@ npm install -g .\orbit-<version>-windows-x64.tgz
 orbit
 ```
 
-Linux 和 macOS 用户请使用对应平台的 `.tgz` 包。公开 npm 发布启用后，包名会是 `@kevinforge/orbit`。不要安装公开 npm 上那个无关的 `orbit` 包。
+Linux 和 macOS 用户请使用对应平台的 `.tgz` 包。稳定版本也会发布到 npm 的
+`@kevinforge/orbit` 作用域。当前版本可以这样安装：
+
+```powershell
+npm install -g @kevinforge/orbit@1.4.0
+orbit
+```
+
+不要安装公开 npm 上那个无关的 `orbit` 包。
 
 ### 发出第一条任务
 
@@ -214,7 +222,8 @@ npm run release:check
 
 ## 项目状态
 
-Orbit 正在准备开源 1.0 版本。仓库已经包含用于验证项目的 CI、发布、支持、安全和贡献流程。当前的缺口和发布候选背景见[开源准备情况](docs/OPEN_SOURCE_READINESS.md)以及[发布说明](docs/RELEASE_NOTES_v1.0.0-rc.1.md)。
+当前稳定版本线是 `v1.4.0`。仓库已经包含用于验证它的 CI、发布、支持、安全和贡献流程。当前版本说明见
+[v1.4.0 发布说明](docs/RELEASE_NOTES_v1.4.0.md)，标签发布和跨平台证据要求见[发布检查清单](docs/RELEASE_CHECKLIST.md)。
 
 ## 参与贡献
 
